@@ -31,14 +31,15 @@ from bpy.types import PropertyGroup
 # ============================================================
 class RemiSceneSettings(PropertyGroup):
     # ── SDF Remesh ────────────────────────────────────────────
-    detail: FloatProperty(
-        name="Detail",
-        description="Higher = finer voxel grid (more geometry). "
-                    "Maps to voxel size internally (0.1 → 0.002)",
-        default=0.5,
-        min=0.0,
-        max=1.0,
-        precision=3,
+    voxel_size: FloatProperty(
+        name="Voxel Size",
+        description="Shared value used for both MeshToSDFGrid voxel size "
+                    "and GridToMesh threshold. Smaller = higher detail.",
+        default=0.02,
+        min=0.001,
+        max=0.1,
+        precision=4,
+        subtype="DISTANCE",
     )
     use_sdf_fillet: BoolProperty(
         name="Fillet",

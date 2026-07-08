@@ -494,6 +494,11 @@ class Remi_OT_FullPipeline(Operator):
     def fail(self, context, msg):
         self.report({"ERROR"}, msg)
 
+    def go(self, context, state, msg=None):
+        if msg:
+            self.status(context, msg)
+        self.pipe_state = state
+
     def _total(self, settings):
         return 3 + (1 if settings.use_autoremesher else 0) + (1 if settings.use_baking else 0)
 

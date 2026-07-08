@@ -170,7 +170,6 @@ def bake_textures(
     bake_st = scene.render.bake
     bake_st.use_selected_to_active = True
     bake_st.margin = 16
-    # Flat diffuse/albedo only — no direct or indirect lighting
     bake_st.use_pass_direct = False
     bake_st.use_pass_indirect = False
     bake_st.use_pass_color = True
@@ -186,7 +185,7 @@ def bake_textures(
     # COMBINED, AO, SHADOW, POSITION, NORMAL, UV, ROUGHNESS, EMIT,
     # ENVIRONMENT, DIFFUSE, GLOSSY, TRANSMISSION
     bake_configs = [
-        ("diffuse", "DIFFUSE"),
+        ("diffuse", "GLOSSY"),
         ("roughness", "ROUGHNESS"),
         ("normal", "NORMAL"),
     ]

@@ -4,6 +4,8 @@ Blender operators for the Remi pipeline.
 
 import os
 import sys
+import json
+import select
 import subprocess
 import tempfile
 from pathlib import Path
@@ -663,14 +665,34 @@ class Remi_OT_FullPipeline(Operator):
         # ── Subprocess polling ──────────────────────────────────
         sp = getattr(self, "_subproc", None)
         if sp is not None:
+            # Read progress lines from stdout (non-blocking)
+            sout = getattr(sp, "stdout", None)
+            if sout is not None:
+                r, _, _ = select.select([sout], [], [], 0)
+                while r and sout:
+                    line = sout.readline()
+                    if not line:
+                        break
+                    try:
+                        data = json.loads(line.strip())
+                        if "pass" in data and "passes" in data:
+                            p, tp = data["pass"], data["passes"]
+                            self.status(context, f"Decimating... pass {p}/{tp}")
+                    except json.JSONDecodeError:
+                        pass
+                    r, _, _ = select.select([sout], [], [], 0)
+
             ret = sp.poll()
             if ret is None:
                 return {"RUNNING_MODAL"}
-            stdout, stderr = sp.communicate()
+
+            # Subprocess finished
             self._subproc = None
             if ret != 0:
-                self.fail(context, (stderr or stdout or "Subprocess failed").strip())
+                err = (sp.stderr.read() or "").strip()
+                self.fail(context, err or "Subprocess failed")
                 return {"RUNNING_MODAL"}
+
             ns = self.pipe_next
             self.pipe_next = ""
             self.go(context, ns)

@@ -21,7 +21,20 @@ Import a GLB or use any mesh, and Remi produces an optimized, textured result �
 - **PyMeshLab** — installed automatically on first use via Blender's Python (`pip install pymeshlab`). Requires an internet connection.
 - **AutoRemesher** (optional) — download from [github.com/huxingyi/autoremesher/releases](https://github.com/huxingyi/autoremesher/releases). Set the executable path in the addon panel or via the `AUTOREMESHER_PATH` environment variable.
 
+## Download
+
+[**Download the latest release**](https://github.com/shaderko/remi-blender-addon/releases/latest) (`remi_blender_addon_v*.zip`)
+
 ## Installation
+
+### Option 1: Blender Install from Disk (recommended)
+
+1. Download the zip from the [releases page](https://github.com/shaderko/remi-blender-addon/releases/latest)
+2. In Blender: **Edit → Preferences → Add-ons → Install from Disk**
+3. Select the downloaded zip
+4. Enable **Remi** in the addon list
+
+### Option 2: Manual install
 
 ```bash
 # From the remi directory:

@@ -527,7 +527,12 @@ class Remi_OT_FullPipeline(Operator):
         self.go(context, "_SUB", status_msg)
 
     def _total(self, settings):
-        return 3 + (1 if settings.use_autoremesher else 0) + (1 if settings.use_baking else 0)
+        n = 0
+        n += 1 if settings.use_sdf_remesh else 0
+        n += 1 if settings.use_decimation else 0
+        n += 1 if settings.use_autoremesher else 0
+        n += 1 if settings.use_baking else 0
+        return n or 1
 
     # ── Synchronous fallback for background mode ───────────────
     def _sync_run(self, context, settings):
@@ -536,56 +541,67 @@ class Remi_OT_FullPipeline(Operator):
         if not obj or obj.type != "MESH":
             self.report({"ERROR"}, "Select a mesh object")
             return {"CANCELLED"}
-        self.report({"INFO"}, "SDF remeshing...")
-        dup = _duplicate_object(obj, "_remesh")
-        context.view_layer.objects.active = dup
-        dup.select_set(True)
-        gn_setup.apply_remi_modifier(
-            obj=dup,
-            voxel_size=settings.voxel_size,
-            fillet_radius=settings.fillet_radius if settings.use_sdf_fillet else 0.0,
-            smooth_iterations=settings.smoothing_iterations if settings.use_sdf_smoothing else 0,
-        )
-        _apply_modifiers(dup)
 
-        self.report({"INFO"}, "Decimating...")
-        if not mlw.ensure_pymeshlab():
-            self.report({"ERROR"}, "PyMeshLab not available")
-            return {"CANCELLED"}
-        td = _get_temp_dir()
-        base = bpy.path.clean_name(dup.name)
-        inp = os.path.join(td, f"{base}_input.ply")
-        out = os.path.join(td, f"{base}_decimated.ply")
-        if not _export_ply(dup, inp):
-            return {"CANCELLED"}
-        mlw.run_multi_pass_decimation(
-            input_path=inp, output_path=out,
-            passes=settings.decimation_passes,
-            target_percentage=settings.target_percentage)
-        current = _import_ply(out)
-        if not current:
-            self.report({"ERROR"}, "Failed to import decimated mesh")
-            return {"CANCELLED"}
-        current.name = dup.name
-        bpy.data.objects.remove(dup, do_unlink=True)
-        for f in (inp, out):
-            try:
-                os.remove(f)
-            except OSError:
-                pass
+        current = None
+        dup = None
+
+        if settings.use_sdf_remesh:
+            self.report({"INFO"}, "SDF remeshing...")
+            dup = _duplicate_object(obj, "_remesh")
+            context.view_layer.objects.active = dup
+            dup.select_set(True)
+            gn_setup.apply_remi_modifier(
+                obj=dup,
+                voxel_size=settings.voxel_size,
+                fillet_radius=settings.fillet_radius if settings.use_sdf_fillet else 0.0,
+                smooth_iterations=settings.smoothing_iterations if settings.use_sdf_smoothing else 0,
+            )
+            _apply_modifiers(dup)
+
+        if settings.use_decimation:
+            self.report({"INFO"}, "Decimating...")
+            if not mlw.ensure_pymeshlab():
+                self.report({"ERROR"}, "PyMeshLab not available")
+                return {"CANCELLED"}
+            td = _get_temp_dir()
+            source = dup if dup else obj
+            base = bpy.path.clean_name(source.name)
+            inp = os.path.join(td, f"{base}_input.ply")
+            out = os.path.join(td, f"{base}_decimated.ply")
+            if not _export_ply(source, inp):
+                return {"CANCELLED"}
+            mlw.run_multi_pass_decimation(
+                input_path=inp, output_path=out,
+                passes=settings.decimation_passes,
+                target_percentage=settings.target_percentage)
+            current = _import_ply(out)
+            if not current:
+                self.report({"ERROR"}, "Failed to import decimated mesh")
+                return {"CANCELLED"}
+            if dup:
+                current.name = dup.name
+                bpy.data.objects.remove(dup, do_unlink=True)
+                dup = None
+            for f in (inp, out):
+                try:
+                    os.remove(f)
+                except OSError:
+                    pass
 
         if settings.use_autoremesher:
             self.report({"INFO"}, "AutoRemesher...")
+            source = current if current else (dup if dup else obj)
             exe = arm.resolve_executable(settings.autoremesher_executable)
             err = arm.validate_executable(exe)
             if err:
                 self.report({"ERROR"}, err)
                 return {"CANCELLED"}
-            base = bpy.path.clean_name(current.name)
+            td = _get_temp_dir()
+            base = bpy.path.clean_name(source.name)
             ar_in = os.path.join(td, f"{base}_ar_in.obj")
             ar_out = os.path.join(td, f"{base}_ar_out.obj")
             ar_rpt = os.path.join(td, f"{base}_ar_report.txt")
-            if not _export_obj_for_tool(current, ar_in):
+            if not _export_obj_for_tool(source, ar_in):
                 return {"CANCELLED"}
             cmd = arm.build_command(
                 exe, Path(ar_in), Path(ar_out), Path(ar_rpt),
@@ -602,30 +618,36 @@ class Remi_OT_FullPipeline(Operator):
             if not os.path.isfile(ar_out):
                 self.report({"ERROR"}, "AutoRemesher produced no output")
                 return {"CANCELLED"}
-            rem = current.name
-            bpy.data.objects.remove(current, do_unlink=True)
+            if current:
+                bpy.data.objects.remove(current, do_unlink=True)
+            elif dup:
+                bpy.data.objects.remove(dup, do_unlink=True)
+                dup = None
             current = _import_obj_result(ar_out)
             if not current:
                 self.report({"ERROR"}, "Failed to import AutoRemesher result")
                 return {"CANCELLED"}
-            current.name = rem
+            current.name = base
             for f in (ar_in, ar_out, ar_rpt):
                 try:
                     os.remove(f)
                 except OSError:
                     pass
 
-        final_name = obj.name + settings.output_name_suffix
         if settings.use_baking:
             self.report({"INFO"}, "Baking textures...")
+            target = current if current else (dup if dup else obj)
+            final_name = obj.name + settings.output_name_suffix
             baking.bake_textures(
-                obj, current,
+                obj, target,
                 texture_size=settings.bake_texture_size,
                 final_name=final_name,
                 uv_method=settings.bake_uv_method,
                 uv_island_margin=settings.bake_uv_island_margin)
+            target.name = final_name
+        elif current:
+            current.name = obj.name + settings.output_name_suffix
 
-        current.name = final_name
         self.report({"INFO"}, "Remi pipeline complete!")
         return {"FINISHED"}
 
@@ -653,7 +675,17 @@ class Remi_OT_FullPipeline(Operator):
 
         context.window_manager.modal_handler_add(self)
         context.window_manager.progress_begin(0, self.pipe_total)
-        self.pipe_state = "SDF"
+        # Start at the first enabled step
+        if settings.use_sdf_remesh:
+            self.pipe_state = "SDF"
+        elif settings.use_decimation:
+            self.pipe_state = "EXPORT"
+        elif settings.use_autoremesher:
+            self.pipe_state = "AR_EXPORT"
+        elif settings.use_baking:
+            self.pipe_state = "BAKE"
+        else:
+            self.pipe_state = "DONE"
         return {"RUNNING_MODAL"}
 
     def modal(self, context, event):
@@ -720,7 +752,16 @@ class Remi_OT_FullPipeline(Operator):
             )
             _apply_modifiers(dup)
             self.pipe_dup = dup.name
-            self.go(context, "EXPORT", "SDF remesh done, exporting...")
+            if settings.use_decimation:
+                self.go(context, "EXPORT", "SDF remesh done, exporting...")
+            elif settings.use_autoremesher:
+                self.pipe_step += 1  # skip decimation step
+                self.go(context, "AR_EXPORT", "Exporting for AutoRemesher...")
+            elif settings.use_baking:
+                self.pipe_step += 2  # skip decimation + autoremesher
+                self.go(context, "BAKE", "Baking textures...")
+            else:
+                self.go(context, "DONE", "Finalizing...")
 
         # ── Export PLY + start PyMeshLab subprocess ─────────────
         elif state == "EXPORT":

@@ -31,6 +31,11 @@ from bpy.types import PropertyGroup
 # ============================================================
 class RemiSceneSettings(PropertyGroup):
     # ── SDF Remesh ────────────────────────────────────────────
+    use_sdf_remesh: BoolProperty(
+        name="SDF Remesh",
+        description="Enable SDF voxel remesh step in the pipeline",
+        default=True,
+    )
     voxel_size: FloatProperty(
         name="Voxel Size",
         description="Shared value used for both MeshToSDFGrid voxel size "
@@ -68,6 +73,11 @@ class RemiSceneSettings(PropertyGroup):
     )
 
     # ── MeshLab Decimation ────────────────────────────────────
+    use_decimation: BoolProperty(
+        name="Decimation",
+        description="Enable MeshLab decimation step in the pipeline",
+        default=True,
+    )
     decimation_passes: IntProperty(
         name="Decimation Passes",
         description="Number of sequential quadric edge collapse passes",

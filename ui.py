@@ -30,7 +30,9 @@ class Remi_PT_MainPanel(Panel):
 
         # ── SDF Voxel Remesh ───────────────────────────────────
         box = layout.box()
-        box.label(text="SDF Voxel Remesh")
+        row = box.row()
+        row.prop(s, "use_sdf_remesh", text="")
+        row.label(text="SDF Voxel Remesh")
         box.prop(s, "voxel_size")
 
         row = box.row()
@@ -70,7 +72,9 @@ class Remi_PT_MainPanel(Panel):
 
         # ── MeshLab Decimation ──────────────────────────────────
         box = layout.box()
-        box.label(text="MeshLab Decimation")
+        row = box.row()
+        row.prop(s, "use_decimation", text="")
+        row.label(text="MeshLab Decimation")
         box.prop(s, "decimation_passes")
         box.prop(s, "target_percentage")
         box.separator(factor=0.3)

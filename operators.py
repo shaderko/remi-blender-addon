@@ -499,6 +499,12 @@ class Remi_OT_FullPipeline(Operator):
             self.status(context, msg)
         self.pipe_state = state
 
+    def start_subproc(self, cmd, next_state, context, status_msg):
+        self._subproc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.pipe_next = next_state
+        self.go(context, "_SUB", status_msg)
+
     def _total(self, settings):
         return 3 + (1 if settings.use_autoremesher else 0) + (1 if settings.use_baking else 0)
 

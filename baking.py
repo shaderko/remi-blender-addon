@@ -176,6 +176,9 @@ def bake_textures(
     bake_st.use_pass_color = True
     bake_st.target = "IMAGE_TEXTURES"
     bake_st.use_clear = True
+    # Small cage extrusion helps rays reach the source when the remesh
+    # surface doesn't perfectly align with the original (common at large scales).
+    bake_st.cage_extrusion = 0.01
 
     # In Blender 5.1, the bake TYPE is passed directly to the operator,
     # not set on BakeSettings (which only accepts NORMALS/DISPLACEMENT).

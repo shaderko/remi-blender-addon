@@ -495,6 +495,24 @@ class Remi_OT_FullPipeline(Operator):
     def fail(self, context, msg):
         self.report({"ERROR"}, msg)
 
+    def cleanup(self, context):
+        if hasattr(self, "_timer") and self._timer:
+            context.window_manager.event_timer_remove(self._timer)
+            self._timer = None
+        context.window_manager.progress_end()
+        if hasattr(self, "_subproc") and self._subproc:
+            try:
+                self._subproc.kill()
+            except Exception:
+                pass
+            self._subproc = None
+        for f in getattr(self, "_files", []):
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+        self.pipe_state = ""
+
     def go(self, context, state, msg=None):
         if msg:
             self.status(context, msg)

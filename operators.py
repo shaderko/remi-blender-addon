@@ -3,6 +3,7 @@ Blender operators for the Remi pipeline.
 """
 
 import os
+import sys
 import subprocess
 import tempfile
 from pathlib import Path

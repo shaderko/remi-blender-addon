@@ -239,8 +239,7 @@ class Remi_OT_SDFRemesh(Operator):
         # Apply the SDF geometry nodes modifier
         gn_setup.apply_remi_modifier(
             obj=dup,
-            voxel_size=settings.voxel_size,
-            grid_threshold=settings.grid_threshold,
+            detail=settings.detail,
             fillet_radius=settings.fillet_radius if settings.use_sdf_fillet else 0.0,
             smooth_iterations=settings.smoothing_iterations if settings.use_sdf_smoothing else 0,
         )
@@ -507,8 +506,7 @@ class Remi_OT_FullPipeline(Operator):
         dup.select_set(True)
         gn_setup.apply_remi_modifier(
             obj=dup,
-            voxel_size=settings.voxel_size,
-            grid_threshold=settings.grid_threshold,
+            detail=settings.detail,
             fillet_radius=settings.fillet_radius if settings.use_sdf_fillet else 0.0,
             smooth_iterations=settings.smoothing_iterations if settings.use_sdf_smoothing else 0,
         )

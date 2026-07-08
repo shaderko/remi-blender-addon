@@ -7,6 +7,16 @@ import bpy
 from mathutils import Vector
 
 
+def detail_to_voxel_size(detail: float) -> float:
+    """Convert a 0-1 detail slider to voxel size (quadratic falloff).
+
+    0.0 (low detail) → 0.100 (very coarse)
+    0.5 (medium)     → 0.026 (close to old default 0.02)
+    1.0 (high)       → 0.001 (very fine)
+    """
+    return max(0.001, 0.1 * (1.0 - detail) ** 2 + 0.001)
+
+
 def ensure_remi_node_group() -> bpy.types.GeometryNodeTree:
     """Create or return the shared Remi geometry node group.
 
@@ -153,8 +163,7 @@ def ensure_remi_node_group() -> bpy.types.GeometryNodeTree:
 
 def apply_remi_modifier(
     obj: bpy.types.Object,
-    voxel_size: float = 0.02,
-    grid_threshold: float = 0.0,
+    detail: float = 0.5,
     fillet_radius: float = 0.0,
     smooth_iterations: int = 0,
 ) -> bpy.types.Modifier:
@@ -168,11 +177,10 @@ def apply_remi_modifier(
     mod = obj.modifiers.new(name="Remi_SDF_Remesh", type="NODES")
     mod.node_group = group
 
+    voxel_size = detail_to_voxel_size(detail)
+    grid_threshold = 0.0  # fixed — detail slider covers this
+
     # --- Set modifier parameter values ---
-    # In Blender 5.1, the modifier stores socket values under internal
-    # identifiers like "Socket_0", "Socket_1" etc.  Setting via display
-    # name ("Voxel Size") silently fails, so we map names -> identifiers
-    # from the node group interface.
     param_map = {
         "Voxel Size": voxel_size,
         "Grid Threshold": grid_threshold,

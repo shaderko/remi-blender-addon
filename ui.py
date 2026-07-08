@@ -31,8 +31,7 @@ class Remi_PT_MainPanel(Panel):
         # ── SDF Voxel Remesh ───────────────────────────────────
         box = layout.box()
         box.label(text="SDF Voxel Remesh")
-        box.prop(s, "voxel_size")
-        box.prop(s, "grid_threshold")
+        box.prop(s, "detail", slider=True)
 
         row = box.row()
         row.prop(s, "use_sdf_fillet", text="Fillet")

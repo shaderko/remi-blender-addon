@@ -31,20 +31,12 @@ from bpy.types import PropertyGroup
 # ============================================================
 class RemiSceneSettings(PropertyGroup):
     # ── SDF Remesh ────────────────────────────────────────────
-    voxel_size: FloatProperty(
-        name="Voxel Size",
-        description="Voxel size for Mesh to SDF Grid (smaller = higher res)",
-        default=0.02,
-        min=0.001,
-        max=1.0,
-        precision=4,
-        subtype="DISTANCE",
-    )
-    grid_threshold: FloatProperty(
-        name="Grid Threshold",
-        description="Isosurface threshold for Grid to Mesh",
-        default=0.0,
-        min=-1.0,
+    detail: FloatProperty(
+        name="Detail",
+        description="Higher = finer voxel grid (more geometry). "
+                    "Maps to voxel size internally (0.1 → 0.002)",
+        default=0.5,
+        min=0.0,
         max=1.0,
         precision=3,
     )

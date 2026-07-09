@@ -37,6 +37,8 @@ def _scale_obj(obj: bpy.types.Object, factor: float):
     bm.to_mesh(me)
     bm.free()
     me.update()
+    # Force depsgraph to pick up the mesh change
+    bpy.context.view_layer.update()
 
 
 def _make_world_space_copy(obj: bpy.types.Object, name: str) -> bpy.types.Object:
@@ -218,13 +220,20 @@ def bake_textures(
     target_result.select_set(True)
     bpy.context.view_layer.objects.active = target_result
 
-    # ── Half-scale baking ────────────────────────────────────────
-    # Temporarily scale both meshes down so the surface displacement
-    # from the SDF remesh is smaller in absolute units, improving
-    # ray hit rate.  Restored after baking.
+    # ── Half-scale ──────────────────────────────────────────────
+    # When the original mesh is at a large scale (e.g. 15x from AI
+    # generation), the absolute displacement between the remeshed
+    # surface and the original is large enough that bake rays miss.
+    # Baking at half scale shrinks the displacement so rays hit.
     if half_scale:
-        _scale_obj(temp_source, 0.5)
-        _scale_obj(target_result, 0.5)
+        for _ob in (temp_source, target_result):
+            bpy.context.view_layer.objects.active = _ob
+            _ob.select_set(True)
+            bpy.ops.object.transform_apply(
+                location=False, rotation=False, scale=True)
+            _ob.scale = (0.5, 0.5, 0.5)
+            bpy.ops.object.transform_apply(
+                location=False, rotation=False, scale=True)
 
     # Configure bake settings (Blender 5.1+)
     bake_st = scene.render.bake
@@ -257,10 +266,16 @@ def bake_textures(
 
         bpy.ops.object.bake(type=bake_type)
 
-    # 6. Cleanup
+    # 6. Restore original scale + cleanup
     bpy.ops.object.select_all(action="DESELECT")
     if half_scale:
-        _scale_obj(target_result, 2.0)  # restore target scale
+        bpy.context.view_layer.objects.active = target_result
+        target_result.select_set(True)
+        bpy.ops.object.transform_apply(
+            location=False, rotation=False, scale=True)
+        target_result.scale = (2.0, 2.0, 2.0)
+        bpy.ops.object.transform_apply(
+            location=False, rotation=False, scale=True)
     bpy.data.objects.remove(temp_source, do_unlink=True)
     scene.render.engine = prev_engine
 

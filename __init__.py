@@ -40,7 +40,7 @@ class RemiSceneSettings(PropertyGroup):
         name="Voxel Size",
         description="Shared value used for both MeshToSDFGrid voxel size "
                     "and GridToMesh threshold. Smaller = higher detail.",
-        default=0.02,
+        default=0.01,
         min=0.001,
         max=0.1,
         precision=4,
@@ -81,7 +81,7 @@ class RemiSceneSettings(PropertyGroup):
     decimation_passes: IntProperty(
         name="Decimation Passes",
         description="Number of sequential quadric edge collapse passes",
-        default=1,
+        default=6,
         min=1,
         max=20,
     )
@@ -182,7 +182,7 @@ class RemiSceneSettings(PropertyGroup):
     bake_uv_island_margin: FloatProperty(
         name="UV Island Margin",
         description="Margin between UV islands as fraction of image (0.0-0.1)",
-        default=0.02,
+        default=0.01,
         min=0.0,
         max=0.1,
         precision=3,
@@ -213,7 +213,7 @@ class RemiSceneSettings(PropertyGroup):
         name="Max Ray Distance",
         description="Maximum ray distance for baking. "
                     "Increase if baking misses areas on large meshes.",
-        default=1.0,
+        default=0.1,
         min=0.001,
         max=100.0,
         precision=3,

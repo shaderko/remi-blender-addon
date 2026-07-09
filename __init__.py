@@ -204,10 +204,10 @@ class RemiSceneSettings(PropertyGroup):
     )
     bake_max_ray_distance: FloatProperty(
         name="Max Ray Distance",
-        description="Maximum ray distance for baking (0 = no limit). "
+        description="Maximum ray distance for baking. "
                     "Increase if baking misses areas on large meshes.",
-        default=0.0,
-        min=0.0,
+        default=0.1,
+        min=0.001,
         max=100.0,
         precision=3,
         subtype="DISTANCE",

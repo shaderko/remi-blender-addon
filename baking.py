@@ -152,7 +152,7 @@ def bake_textures(
     uv_island_margin: float = 0.02,
     recalc_normals: bool = True,
     cage_extrusion: float = 0.1,
-    max_ray_distance: float = 0.0,
+    max_ray_distance: float = 0.1,
 ) -> dict:
     """Bake diffuse, roughness, and normal maps from source to target.
 

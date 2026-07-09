@@ -192,6 +192,26 @@ class RemiSceneSettings(PropertyGroup):
         description="Recalculate normals on the target mesh before baking (fixes SDF remesh artifacts)",
         default=True,
     )
+    bake_cage_extrusion: FloatProperty(
+        name="Cage Extrusion",
+        description="Distance to extrude the target surface when casting bake rays. "
+                    "Helps rays reach the source when meshes don't perfectly align.",
+        default=0.1,
+        min=0.0,
+        max=10.0,
+        precision=3,
+        subtype="DISTANCE",
+    )
+    bake_max_ray_distance: FloatProperty(
+        name="Max Ray Distance",
+        description="Maximum ray distance for baking (0 = no limit). "
+                    "Increase if baking misses areas on large meshes.",
+        default=0.0,
+        min=0.0,
+        max=100.0,
+        precision=3,
+        subtype="DISTANCE",
+    )
 
 
 # ============================================================

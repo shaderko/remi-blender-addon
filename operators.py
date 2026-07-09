@@ -466,9 +466,11 @@ class Remi_OT_BakeTextures(Operator):
             uv_method=s.bake_uv_method,
             uv_island_margin=s.bake_uv_island_margin,
             recalc_normals=s.bake_recalc_normals,
+            cage_extrusion=s.bake_cage_extrusion,
+            max_ray_distance=s.bake_max_ray_distance,
         )
         if result["success"]:
-            self.report({"INFO"}, f"Baked textures: {', '.join(result['images'])}")
+            self.report({"INFO"}, f"Baked: {', '.join(result['images'])}")
         else:
             self.report({"ERROR"}, "Baking failed")
             return {"CANCELLED"}
@@ -645,7 +647,9 @@ class Remi_OT_FullPipeline(Operator):
                 final_name=final_name,
                 uv_method=settings.bake_uv_method,
                 uv_island_margin=settings.bake_uv_island_margin,
-                recalc_normals=settings.bake_recalc_normals)
+                recalc_normals=settings.bake_recalc_normals,
+                cage_extrusion=settings.bake_cage_extrusion,
+                max_ray_distance=settings.bake_max_ray_distance)
             target.name = final_name
         elif current:
             current.name = obj.name + settings.output_name_suffix
@@ -880,6 +884,8 @@ class Remi_OT_FullPipeline(Operator):
                 uv_method=settings.bake_uv_method,
                 uv_island_margin=settings.bake_uv_island_margin,
                 recalc_normals=settings.bake_recalc_normals,
+                cage_extrusion=settings.bake_cage_extrusion,
+                max_ray_distance=settings.bake_max_ray_distance,
             )
             if result["success"]:
                 self.status(context, f"Baked: {', '.join(result['images'])}")

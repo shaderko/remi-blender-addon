@@ -151,6 +151,8 @@ def bake_textures(
     uv_method: str = "SMART",
     uv_island_margin: float = 0.02,
     recalc_normals: bool = True,
+    cage_extrusion: float = 0.1,
+    max_ray_distance: float = 0.0,
 ) -> dict:
     """Bake diffuse, roughness, and normal maps from source to target.
 
@@ -211,9 +213,9 @@ def bake_textures(
     bake_st.use_pass_color = True
     bake_st.target = "IMAGE_TEXTURES"
     bake_st.use_clear = True
-    # Small cage extrusion helps rays reach the source when the remesh
-    # surface doesn't perfectly align with the original (common at large scales).
-    bake_st.cage_extrusion = 0.01
+    bake_st.use_cage = cage_extrusion > 0
+    bake_st.cage_extrusion = cage_extrusion
+    bake_st.max_ray_distance = max_ray_distance
 
     # In Blender 5.1, the bake TYPE is passed directly to the operator,
     # not set on BakeSettings (which only accepts NORMALS/DISPLACEMENT).

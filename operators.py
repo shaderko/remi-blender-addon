@@ -468,7 +468,6 @@ class Remi_OT_BakeTextures(Operator):
             recalc_normals=s.bake_recalc_normals,
             cage_extrusion=s.bake_cage_extrusion,
             max_ray_distance=s.bake_max_ray_distance,
-            half_scale=s.bake_half_scale,
         )
         if result["success"]:
             self.report({"INFO"}, f"Baked: {', '.join(result['images'])}")
@@ -651,7 +650,7 @@ class Remi_OT_FullPipeline(Operator):
                 recalc_normals=settings.bake_recalc_normals,
                 cage_extrusion=settings.bake_cage_extrusion,
                 max_ray_distance=settings.bake_max_ray_distance,
-                half_scale=settings.bake_half_scale)
+                )
             target.name = final_name
         elif current:
             current.name = obj.name + settings.output_name_suffix
@@ -888,7 +887,6 @@ class Remi_OT_FullPipeline(Operator):
                 recalc_normals=settings.bake_recalc_normals,
                 cage_extrusion=settings.bake_cage_extrusion,
                 max_ray_distance=settings.bake_max_ray_distance,
-                half_scale=settings.bake_half_scale,
             )
             if result["success"]:
                 self.status(context, f"Baked: {', '.join(result['images'])}")

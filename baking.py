@@ -168,7 +168,6 @@ def bake_textures(
     recalc_normals: bool = True,
     cage_extrusion: float = 0.1,
     max_ray_distance: float = 0.0,
-    half_scale: bool = False,
 ) -> dict:
     """Bake diffuse, roughness, and normal maps from source to target.
 
@@ -220,21 +219,6 @@ def bake_textures(
     target_result.select_set(True)
     bpy.context.view_layer.objects.active = target_result
 
-    # ── Half-scale ──────────────────────────────────────────────
-    # When the original mesh is at a large scale (e.g. 15x from AI
-    # generation), the absolute displacement between the remeshed
-    # surface and the original is large enough that bake rays miss.
-    # Baking at half scale shrinks the displacement so rays hit.
-    if half_scale:
-        for _ob in (temp_source, target_result):
-            bpy.context.view_layer.objects.active = _ob
-            _ob.select_set(True)
-            bpy.ops.object.transform_apply(
-                location=False, rotation=False, scale=True)
-            _ob.scale = (0.5, 0.5, 0.5)
-            bpy.ops.object.transform_apply(
-                location=False, rotation=False, scale=True)
-
     # Configure bake settings (Blender 5.1+)
     bake_st = scene.render.bake
     bake_st.use_selected_to_active = True
@@ -259,6 +243,26 @@ def bake_textures(
         ("normal", "NORMAL"),
     ]
 
+    # ── Half-scale ──────────────────────────────────────────────
+    # Scale both meshes to 0.5× so bake rays hit reliably. This
+    # exactly replicates the manual workflow that the user verified.
+    _half = bpy.context.scene.remi_settings.bake_half_scale
+    if _half:
+        for _ob in (temp_source, target_result):
+            bpy.context.view_layer.objects.active = _ob
+            _ob.select_set(True)
+            bpy.ops.object.transform_apply(
+                location=True, rotation=True, scale=True)
+            _ob.scale = (0.5, 0.5, 0.5)
+            bpy.ops.object.transform_apply(
+                location=False, rotation=False, scale=True)
+        # Re-select for baking
+        bpy.ops.object.select_all(action="DESELECT")
+        temp_source.select_set(True)
+        target_result.select_set(True)
+        bpy.context.view_layer.objects.active = target_result
+        bpy.context.view_layer.update()
+
     for channel, bake_type in bake_configs:
         node = channels[channel]
         bake_mat.node_tree.nodes.active = node
@@ -266,16 +270,19 @@ def bake_textures(
 
         bpy.ops.object.bake(type=bake_type)
 
-    # 6. Restore original scale + cleanup
-    bpy.ops.object.select_all(action="DESELECT")
-    if half_scale:
+    # ── Restore target scale after half-scale bake ─────────────
+    if _half:
         bpy.context.view_layer.objects.active = target_result
         target_result.select_set(True)
         bpy.ops.object.transform_apply(
-            location=False, rotation=False, scale=True)
+            location=True, rotation=True, scale=True)
         target_result.scale = (2.0, 2.0, 2.0)
         bpy.ops.object.transform_apply(
             location=False, rotation=False, scale=True)
+        bpy.context.view_layer.update()
+
+    # 6. Cleanup
+    bpy.ops.object.select_all(action="DESELECT")
     bpy.data.objects.remove(temp_source, do_unlink=True)
     scene.render.engine = prev_engine
 

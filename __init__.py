@@ -192,6 +192,13 @@ class RemiSceneSettings(PropertyGroup):
         description="Recalculate normals on the target mesh before baking (fixes SDF remesh artifacts)",
         default=True,
     )
+    bake_half_scale: BoolProperty(
+        name="Half-Scale Bake",
+        description="Temporarily scale both meshes to 50% before baking. "
+                    "Improves bake quality when the remesh doesn't perfectly "
+                    "align with the original at larger scales.",
+        default=True,
+    )
     bake_cage_extrusion: FloatProperty(
         name="Cage Extrusion",
         description="Distance to extrude the target surface when casting bake rays. "
@@ -206,7 +213,7 @@ class RemiSceneSettings(PropertyGroup):
         name="Max Ray Distance",
         description="Maximum ray distance for baking. "
                     "Increase if baking misses areas on large meshes.",
-        default=0.1,
+        default=1.0,
         min=0.001,
         max=100.0,
         precision=3,

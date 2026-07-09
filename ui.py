@@ -49,6 +49,18 @@ class Remi_PT_MainPanel(Panel):
         col.operator("remi.sdf_remesh", text="SDF Remesh (Copy)")
         col.operator("remi.apply_remesh", text="Apply Modifier")
 
+        # ── MeshLab Decimation ──────────────────────────────────
+        box = layout.box()
+        row = box.row()
+        row.prop(s, "use_decimation", text="")
+        row.label(text="MeshLab Decimation")
+        box.prop(s, "decimation_passes")
+        box.prop(s, "target_percentage")
+        box.separator(factor=0.3)
+        box.prop(s, "output_name_suffix")
+        box.separator(factor=0.3)
+        box.operator("remi.decimate", text="Decimate via MeshLab")
+
         # ── AutoRemesher ────────────────────────────────────────
         box = layout.box()
         row = box.row()
@@ -70,18 +82,6 @@ class Remi_PT_MainPanel(Panel):
         sub.separator(factor=0.3)
         sub.operator("remi.autoremesher", text="Run AutoRemesher")
 
-        # ── MeshLab Decimation ──────────────────────────────────
-        box = layout.box()
-        row = box.row()
-        row.prop(s, "use_decimation", text="")
-        row.label(text="MeshLab Decimation")
-        box.prop(s, "decimation_passes")
-        box.prop(s, "target_percentage")
-        box.separator(factor=0.3)
-        box.prop(s, "output_name_suffix")
-        box.separator(factor=0.3)
-        box.operator("remi.decimate", text="Decimate via MeshLab")
-
         # ── Baking ──────────────────────────────────────────────
         box = layout.box()
         row = box.row()
@@ -93,6 +93,7 @@ class Remi_PT_MainPanel(Panel):
         box.prop(s, "bake_uv_method")
         box.prop(s, "bake_uv_island_margin")
         box.prop(s, "bake_recalc_normals")
+        box.prop(s, "bake_half_scale")
         box.prop(s, "bake_cage_extrusion")
         box.prop(s, "bake_max_ray_distance")
         box.operator("remi.bake_textures", text="Bake Textures")

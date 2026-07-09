@@ -26,6 +26,19 @@ def _ensure_uv(obj: bpy.types.Object, method: str = "SMART", island_margin: floa
     print(f"Baking: Created UV map on '{obj.name}' ({method})")
 
 
+def _scale_obj(obj: bpy.types.Object, factor: float):
+    """Uniform-scale an object's vertex data directly."""
+    import bmesh
+    me = obj.data
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    for v in bm.verts:
+        v.co *= factor
+    bm.to_mesh(me)
+    bm.free()
+    me.update()
+
+
 def _make_world_space_copy(obj: bpy.types.Object, name: str) -> bpy.types.Object:
     """Create a duplicate with all modifiers + transform applied (world-space)."""
     dup = obj.copy()
@@ -152,7 +165,8 @@ def bake_textures(
     uv_island_margin: float = 0.02,
     recalc_normals: bool = True,
     cage_extrusion: float = 0.1,
-    max_ray_distance: float = 0.1,
+    max_ray_distance: float = 0.0,
+    half_scale: bool = False,
 ) -> dict:
     """Bake diffuse, roughness, and normal maps from source to target.
 
@@ -204,6 +218,14 @@ def bake_textures(
     target_result.select_set(True)
     bpy.context.view_layer.objects.active = target_result
 
+    # ── Half-scale baking ────────────────────────────────────────
+    # Temporarily scale both meshes down so the surface displacement
+    # from the SDF remesh is smaller in absolute units, improving
+    # ray hit rate.  Restored after baking.
+    if half_scale:
+        _scale_obj(temp_source, 0.5)
+        _scale_obj(target_result, 0.5)
+
     # Configure bake settings (Blender 5.1+)
     bake_st = scene.render.bake
     bake_st.use_selected_to_active = True
@@ -237,6 +259,8 @@ def bake_textures(
 
     # 6. Cleanup
     bpy.ops.object.select_all(action="DESELECT")
+    if half_scale:
+        _scale_obj(target_result, 2.0)  # restore target scale
     bpy.data.objects.remove(temp_source, do_unlink=True)
     scene.render.engine = prev_engine
 

@@ -187,6 +187,11 @@ class RemiSceneSettings(PropertyGroup):
         max=0.1,
         precision=3,
     )
+    bake_recalc_normals: BoolProperty(
+        name="Recalculate Normals",
+        description="Recalculate normals on the target mesh before baking (fixes SDF remesh artifacts)",
+        default=True,
+    )
 
 
 # ============================================================

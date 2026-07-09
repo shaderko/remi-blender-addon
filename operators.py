@@ -465,6 +465,7 @@ class Remi_OT_BakeTextures(Operator):
             texture_size=s.bake_texture_size,
             uv_method=s.bake_uv_method,
             uv_island_margin=s.bake_uv_island_margin,
+            recalc_normals=s.bake_recalc_normals,
         )
         if result["success"]:
             self.report({"INFO"}, f"Baked textures: {', '.join(result['images'])}")
@@ -643,7 +644,8 @@ class Remi_OT_FullPipeline(Operator):
                 texture_size=settings.bake_texture_size,
                 final_name=final_name,
                 uv_method=settings.bake_uv_method,
-                uv_island_margin=settings.bake_uv_island_margin)
+                uv_island_margin=settings.bake_uv_island_margin,
+                recalc_normals=settings.bake_recalc_normals)
             target.name = final_name
         elif current:
             current.name = obj.name + settings.output_name_suffix
@@ -877,6 +879,7 @@ class Remi_OT_FullPipeline(Operator):
                 final_name=final_name,
                 uv_method=settings.bake_uv_method,
                 uv_island_margin=settings.bake_uv_island_margin,
+                recalc_normals=settings.bake_recalc_normals,
             )
             if result["success"]:
                 self.status(context, f"Baked: {', '.join(result['images'])}")

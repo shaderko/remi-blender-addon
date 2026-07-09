@@ -150,6 +150,7 @@ def bake_textures(
     final_name: str = "",
     uv_method: str = "SMART",
     uv_island_margin: float = 0.02,
+    recalc_normals: bool = True,
 ) -> dict:
     """Bake diffuse, roughness, and normal maps from source to target.
 
@@ -166,6 +167,15 @@ def bake_textures(
 
     # 1. Ensure the target has UVs
     _ensure_uv(target_result, method=uv_method, island_margin=uv_island_margin)
+
+    # 1b. Recalculate normals on the target if requested
+    if recalc_normals:
+        bpy.context.view_layer.objects.active = target_result
+        target_result.select_set(True)
+        bpy.ops.object.mode_set(mode="EDIT")
+        bpy.ops.mesh.select_all(action="SELECT")
+        bpy.ops.mesh.normals_make_consistent(inside=False)
+        bpy.ops.object.mode_set(mode="OBJECT")
 
     # 2. Create a world-space copy of the original for baking (source)
     temp_source = _make_world_space_copy(source_original, "_bake_source_tmp")

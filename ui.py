@@ -92,6 +92,7 @@ class Remi_PT_MainPanel(Panel):
         box.prop(s, "bake_texture_size")
         box.prop(s, "bake_uv_method")
         box.prop(s, "bake_uv_island_margin")
+        box.prop(s, "bake_recalc_normals")
         box.operator("remi.bake_textures", text="Bake Textures")
 
         # ── Full Pipeline ───────────────────────────────────────

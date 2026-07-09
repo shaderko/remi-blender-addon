@@ -122,6 +122,27 @@ def _build_bake_material(obj: bpy.types.Object, images: dict) -> dict:
     return channels
 
 
+def _force_metallic_zero(obj: bpy.types.Object):
+    """Walk the object's material nodes and set Principled BSDF metallic to 0.
+
+    DIFFUSE bake returns black on metallic materials because the
+    Principled BSDF sets the diffuse contribution to zero when
+    metallic = 1.  This temporarily disables metallic on the
+    baking-source copy so we get the full diffuse colour.
+    """
+    for slot in obj.data.materials:
+        if not slot or not slot.node_tree:
+            continue
+        for node in slot.node_tree.nodes:
+            if node.type != "BSDF_PRINCIPLED":
+                continue
+            # Try to set the Metallic input value
+            for inp in node.inputs:
+                if inp.identifier == "Metallic":
+                    inp.default_value = 0.0
+                    return
+
+
 def bake_textures(
     source_original: bpy.types.Object,
     target_result: bpy.types.Object,
@@ -148,6 +169,11 @@ def bake_textures(
 
     # 2. Create a world-space copy of the original for baking (source)
     temp_source = _make_world_space_copy(source_original, "_bake_source_tmp")
+
+    # Force metallic to 0 on the baking source.
+    # DIFFUSE bake returns black on metallic materials because
+    # Principled BSDF sets diffuse contribution to zero when metallic=1.
+    _force_metallic_zero(temp_source)
 
     # 3. Create blank images (use final_name for clean naming)
     images = _create_bake_images(img_base, texture_size)
@@ -185,7 +211,7 @@ def bake_textures(
     # COMBINED, AO, SHADOW, POSITION, NORMAL, UV, ROUGHNESS, EMIT,
     # ENVIRONMENT, DIFFUSE, GLOSSY, TRANSMISSION
     bake_configs = [
-        ("diffuse", "GLOSSY"),
+        ("diffuse", "DIFFUSE"),
         ("roughness", "ROUGHNESS"),
         ("normal", "NORMAL"),
     ]

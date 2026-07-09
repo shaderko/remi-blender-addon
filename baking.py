@@ -244,24 +244,15 @@ def bake_textures(
     ]
 
     # ── Half-scale ──────────────────────────────────────────────
-    # Scale both meshes to 0.5× so bake rays hit reliably. This
-    # exactly replicates the manual workflow that the user verified.
+    # Temporarily set both objects to 0.5× scale (no transform apply).
+    # This shrinks the absolute surface displacement so bake rays hit
+    # reliably.  The target's scale is restored after baking.
     _half = bpy.context.scene.remi_settings.bake_half_scale
     if _half:
-        for _ob in (temp_source, target_result):
-            bpy.context.view_layer.objects.active = _ob
-            _ob.select_set(True)
-            bpy.ops.object.transform_apply(
-                location=True, rotation=True, scale=True)
-            _ob.scale = (0.5, 0.5, 0.5)
-            bpy.ops.object.transform_apply(
-                location=False, rotation=False, scale=True)
-        # Re-select for baking
-        bpy.ops.object.select_all(action="DESELECT")
-        temp_source.select_set(True)
-        target_result.select_set(True)
-        bpy.context.view_layer.objects.active = target_result
-        bpy.context.view_layer.update()
+        _s_save = temp_source.scale.copy()
+        _t_save = target_result.scale.copy()
+        temp_source.scale = (0.5, 0.5, 0.5)
+        target_result.scale = (0.5, 0.5, 0.5)
 
     for channel, bake_type in bake_configs:
         node = channels[channel]
@@ -272,14 +263,7 @@ def bake_textures(
 
     # ── Restore target scale after half-scale bake ─────────────
     if _half:
-        bpy.context.view_layer.objects.active = target_result
-        target_result.select_set(True)
-        bpy.ops.object.transform_apply(
-            location=True, rotation=True, scale=True)
-        target_result.scale = (2.0, 2.0, 2.0)
-        bpy.ops.object.transform_apply(
-            location=False, rotation=False, scale=True)
-        bpy.context.view_layer.update()
+        target_result.scale = _t_save
 
     # 6. Cleanup
     bpy.ops.object.select_all(action="DESELECT")

@@ -5,13 +5,19 @@ high-poly mesh onto the remeshed/decimated result.
 """
 
 import bpy
-import mathutils
 
 
-def _ensure_uv(obj: bpy.types.Object, method: str = "SMART", island_margin: float = 0.02):
-    """Create a UV map on the target mesh if it doesn't have one."""
+def _ensure_uv(
+    obj: bpy.types.Object,
+    method: str = "SMART",
+    island_margin: float = 0.02,
+    auto_unwrap: bool = True,
+):
+    """Ensure the target has UVs, optionally generating them automatically."""
     if obj.data.uv_layers:
-        return
+        return True
+    if not auto_unwrap:
+        return False
     bpy.context.view_layer.objects.active = obj
     obj.select_set(True)
     bpy.ops.object.mode_set(mode="EDIT")
@@ -24,6 +30,7 @@ def _ensure_uv(obj: bpy.types.Object, method: str = "SMART", island_margin: floa
 
     bpy.ops.object.mode_set(mode="OBJECT")
     print(f"Baking: Created UV map on '{obj.name}' ({method})")
+    return True
 
 
 def _scale_obj(obj: bpy.types.Object, factor: float):
@@ -45,6 +52,11 @@ def _make_world_space_copy(obj: bpy.types.Object, name: str) -> bpy.types.Object
     """Create a duplicate with all modifiers + transform applied (world-space)."""
     dup = obj.copy()
     dup.data = obj.data.copy()
+    # The baking source may need temporary material edits.  Give it private
+    # materials so the original object's shader setup is never changed.
+    dup.data.materials.clear()
+    for material in obj.data.materials:
+        dup.data.materials.append(material.copy() if material else None)
     bpy.context.collection.objects.link(dup)
     bpy.context.view_layer.objects.active = dup
     dup.select_set(True)
@@ -60,8 +72,8 @@ def _make_world_space_copy(obj: bpy.types.Object, name: str) -> bpy.types.Object
     return dup
 
 
-def _create_bake_images(name_prefix: str, size: int) -> dict:
-    """Create blank image textures for baking."""
+def _create_bake_images(name_prefix: str, size: int, channels: tuple[str, ...]) -> dict:
+    """Create or reuse blank image textures for the requested bake channels."""
     images = {}
     # Color space per channel: diffuse=sRGB for display, rough/normal=Non-Color
     for key, suffix, color, cs in [
@@ -69,7 +81,14 @@ def _create_bake_images(name_prefix: str, size: int) -> dict:
         ("roughness", "_roughness", (0.5, 0.5, 0.5, 1.0), "Non-Color"),
         ("normal", "_normal", (0.5, 0.5, 1.0, 1.0), "Non-Color"),
     ]:
-        img = bpy.data.images.new(name=f"{name_prefix}{suffix}", width=size, height=size, alpha=True)
+        if key not in channels:
+            continue
+        image_name = f"{name_prefix}{suffix}"
+        img = bpy.data.images.get(image_name)
+        if img is None:
+            img = bpy.data.images.new(name=image_name, width=size, height=size, alpha=True)
+        elif img.size[0] != size or img.size[1] != size:
+            img.scale(size, size)
         img.generated_color = color
         img.colorspace_settings.name = cs
         img.file_format = "PNG"
@@ -78,25 +97,26 @@ def _create_bake_images(name_prefix: str, size: int) -> dict:
 
 
 def _build_bake_material(obj: bpy.types.Object, images: dict) -> dict:
-    """Create a material on the object with image-texture nodes for each bake channel.
-
-    Returns dict of {channel_name: ShaderNodeTexImage} for each image node.
-    """
-    mat = bpy.data.materials.new(name=f"{obj.name}_baked")
+    """Create or update Remi's baked material and return image nodes by channel."""
+    material_name = f"{obj.name}_baked"
+    mat = bpy.data.materials.get(material_name)
+    if mat is None:
+        mat = bpy.data.materials.new(name=material_name)
     mat.use_nodes = True
     mat.blend_method = "OPAQUE"
     nodes = mat.node_tree.nodes
     links = mat.node_tree.links
-    nodes.clear()
 
-    # Principled BSDF
-    bsdf = nodes.new("ShaderNodeBsdfPrincipled")
-    bsdf.location = (400, 0)
-
-    # Output
-    out = nodes.new("ShaderNodeOutputMaterial")
-    out.location = (700, 0)
-    links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
+    bsdf = next((node for node in nodes if node.type == "BSDF_PRINCIPLED"), None)
+    if bsdf is None:
+        bsdf = nodes.new("ShaderNodeBsdfPrincipled")
+        bsdf.location = (400, 0)
+    out = next((node for node in nodes if node.type == "OUTPUT_MATERIAL"), None)
+    if out is None:
+        out = nodes.new("ShaderNodeOutputMaterial")
+        out.location = (700, 0)
+    if not bsdf.outputs["BSDF"].is_linked:
+        links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
 
     # Position helper
     def tex_node(name, img, x, y):
@@ -110,28 +130,34 @@ def _build_bake_material(obj: bpy.types.Object, images: dict) -> dict:
 
     channels = {}
 
-    # Diffuse → Base Color
-    n = tex_node("bake_diffuse", images["diffuse"], -200, 400)
-    links.new(n.outputs["Color"], bsdf.inputs["Base Color"])
-    channels["diffuse"] = n
+    def existing_or_new(name, image, x, y):
+        node = nodes.get(name)
+        if node is None or node.type != "TEX_IMAGE":
+            node = tex_node(name, image, x, y)
+        node.image = image
+        return node
 
-    # Roughness
-    n = tex_node("bake_roughness", images["roughness"], -200, 150)
-    links.new(n.outputs["Color"], bsdf.inputs["Roughness"])
-    channels["roughness"] = n
-
-    # Normal
-    tex_n = tex_node("bake_normal", images["normal"], -200, -100)
-    nmap = nodes.new("ShaderNodeNormalMap")
-    nmap.location = (50, -100)
-    links.new(tex_n.outputs["Color"], nmap.inputs["Color"])
-    links.new(nmap.outputs["Normal"], bsdf.inputs["Normal"])
-    channels["normal"] = tex_n
+    if "diffuse" in images:
+        n = existing_or_new("bake_diffuse", images["diffuse"], -200, 400)
+        links.new(n.outputs["Color"], bsdf.inputs["Base Color"])
+        channels["diffuse"] = n
+    if "roughness" in images:
+        n = existing_or_new("bake_roughness", images["roughness"], -200, 150)
+        links.new(n.outputs["Color"], bsdf.inputs["Roughness"])
+        channels["roughness"] = n
+    if "normal" in images:
+        tex_n = existing_or_new("bake_normal", images["normal"], -200, -100)
+        nmap = nodes.get("bake_normal_map")
+        if nmap is None or nmap.type != "NORMAL_MAP":
+            nmap = nodes.new("ShaderNodeNormalMap")
+            nmap.name = "bake_normal_map"
+            nmap.location = (50, -100)
+        links.new(tex_n.outputs["Color"], nmap.inputs["Color"])
+        links.new(nmap.outputs["Normal"], bsdf.inputs["Normal"])
+        channels["normal"] = tex_n
 
     # Assign material
-    if obj.data.materials:
-        obj.data.materials[0] = mat
-    else:
+    if mat.name not in [slot.name for slot in obj.data.materials if slot]:
         obj.data.materials.append(mat)
 
     return channels
@@ -159,20 +185,23 @@ def _force_metallic_zero(obj: bpy.types.Object):
 
 
 def bake_textures(
-    source_original: bpy.types.Object,
+    source_original: bpy.types.Object | list[bpy.types.Object],
     target_result: bpy.types.Object,
     texture_size: int = 2048,
     final_name: str = "",
     uv_method: str = "SMART",
     uv_island_margin: float = 0.02,
+    auto_unwrap: bool = True,
     recalc_normals: bool = True,
     cage_extrusion: float = 0.1,
     max_ray_distance: float = 0.0,
+    passes: tuple[str, ...] = ("diffuse", "roughness", "normal"),
 ) -> dict:
     """Bake diffuse, roughness, and normal maps from source to target.
 
-    Both objects must overlap in world space. This function creates a
-    world-space copy of the source for baking, then cleans it up.
+    Source and target meshes must overlap in world space. This function
+    accepts one source or a list of source meshes, creates world-space copies
+    for baking, then cleans them up.
 
     Returns dict with keys 'success' and 'images' (list of created image names).
     """
@@ -182,8 +211,23 @@ def bake_textures(
     # Use final_name for image naming if provided
     img_base = final_name or target_result.name
 
-    # 1. Ensure the target has UVs
-    _ensure_uv(target_result, method=uv_method, island_margin=uv_island_margin)
+    valid_passes = ("diffuse", "roughness", "normal")
+    passes = tuple(channel for channel in passes if channel in valid_passes)
+    if not passes:
+        return {"success": False, "images": [], "error": "No valid bake passes selected"}
+
+    # 1. Ensure the target has UVs, unless the user is managing them externally.
+    if not _ensure_uv(
+        target_result,
+        method=uv_method,
+        island_margin=uv_island_margin,
+        auto_unwrap=auto_unwrap,
+    ):
+        return {
+            "success": False,
+            "images": [],
+            "error": f"'{target_result.name}' has no UV map. Enable Auto Unwrap or unwrap the target first.",
+        }
 
     # 1b. Recalculate normals on the target if requested
     if recalc_normals:
@@ -194,20 +238,26 @@ def bake_textures(
         bpy.ops.mesh.normals_make_consistent(inside=False)
         bpy.ops.object.mode_set(mode="OBJECT")
 
-    # 2. Create a world-space copy of the original for baking (source)
-    temp_source = _make_world_space_copy(source_original, "_bake_source_tmp")
-
-    # Force metallic to 0 on the baking source.
-    # DIFFUSE bake returns black on metallic materials because
-    # Principled BSDF sets diffuse contribution to zero when metallic=1.
-    _force_metallic_zero(temp_source)
+    # 2. Create world-space copies of the originals for baking (sources).
+    source_objects = source_original if isinstance(source_original, (list, tuple)) else [source_original]
+    temp_sources = []
+    for index, source in enumerate(source_objects):
+        temp_source = _make_world_space_copy(source, f"_bake_source_tmp_{index}")
+        # DIFFUSE bake returns black on metallic materials because the
+        # Principled BSDF suppresses diffuse contribution when metallic = 1.
+        _force_metallic_zero(temp_source)
+        temp_sources.append(temp_source)
 
     # 3. Create blank images (use final_name for clean naming)
-    images = _create_bake_images(img_base, texture_size)
+    images = _create_bake_images(img_base, texture_size, passes)
 
     # 4. Build material on target with image nodes
     channels = _build_bake_material(target_result, images)
-    bake_mat = target_result.data.materials[0]
+    bake_mat = bpy.data.materials.get(f"{target_result.name}_baked")
+    if bake_mat is None:
+        for temp_source in temp_sources:
+            bpy.data.objects.remove(temp_source, do_unlink=True)
+        return {"success": False, "images": [], "error": "Could not create baked material"}
 
     # 5. Set up scene for baking
     scene.render.engine = "CYCLES"
@@ -215,7 +265,8 @@ def bake_textures(
 
     # Select source and make target active
     bpy.ops.object.select_all(action="DESELECT")
-    temp_source.select_set(True)
+    for temp_source in temp_sources:
+        temp_source.select_set(True)
     target_result.select_set(True)
     bpy.context.view_layer.objects.active = target_result
 
@@ -249,12 +300,14 @@ def bake_textures(
     # reliably.  The target's scale is restored after baking.
     _half = bpy.context.scene.remi_settings.bake_half_scale
     if _half:
-        _s_save = temp_source.scale.copy()
         _t_save = target_result.scale.copy()
-        temp_source.scale = (0.5, 0.5, 0.5)
+        for temp_source in temp_sources:
+            temp_source.scale = (0.5, 0.5, 0.5)
         target_result.scale = (0.5, 0.5, 0.5)
 
     for channel, bake_type in bake_configs:
+        if channel not in passes:
+            continue
         node = channels[channel]
         bake_mat.node_tree.nodes.active = node
         node.select = True
@@ -267,7 +320,8 @@ def bake_textures(
 
     # 6. Cleanup
     bpy.ops.object.select_all(action="DESELECT")
-    bpy.data.objects.remove(temp_source, do_unlink=True)
+    for temp_source in temp_sources:
+        bpy.data.objects.remove(temp_source, do_unlink=True)
     scene.render.engine = prev_engine
 
     image_names = list(images.keys())

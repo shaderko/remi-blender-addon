@@ -1,3 +1,4 @@
 weppy-project-sync/
 __pycache__/
 *.pyc
+.DS_Store

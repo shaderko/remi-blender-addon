@@ -437,11 +437,12 @@ class Remi_OT_AutoRemesher(Operator):
 
 
 class Remi_OT_BakeTextures(Operator):
-    """Bake diffuse/roughness/normal/metallic from original to result."""
+    """Bake diffuse, roughness and normal maps onto the active mesh."""
     bl_idname = "remi.bake_textures"
     bl_label = "Bake Textures"
-    bl_description = "Bake textures from the original active mesh to the selected mesh"
+    bl_description = "Bake all maps FROM selected source mesh(es) ONTO the active target mesh"
     bl_options = {"REGISTER", "UNDO"}
+    bake_passes = ("diffuse", "roughness", "normal")
 
     @classmethod
     def poll(cls, context):
@@ -452,29 +453,60 @@ class Remi_OT_BakeTextures(Operator):
         )
 
     def execute(self, context):
+        # The ACTIVE object receives the bake (= the remeshed/optimized mesh)
+        # The other SELECTED objects provide the detail (= the original meshes)
         target = context.active_object
         sources = [o for o in context.selected_objects if o != target and o.type == "MESH"]
         if not sources:
-            self.report({"ERROR"}, "Select the original as source, then the result as active target")
+            self.report({"ERROR"}, "Select original mesh(es) first, then Shift-select the target "
+                                     "(optimized mesh) last so it becomes active")
             return {"CANCELLED"}
-        source = sources[0]
 
         s = context.scene.remi_settings
         result = baking.bake_textures(
-            source, target,
+            sources, target,
             texture_size=s.bake_texture_size,
             uv_method=s.bake_uv_method,
             uv_island_margin=s.bake_uv_island_margin,
+            auto_unwrap=s.bake_auto_unwrap,
             recalc_normals=s.bake_recalc_normals,
             cage_extrusion=s.bake_cage_extrusion,
             max_ray_distance=s.bake_max_ray_distance,
+            passes=self.bake_passes,
         )
         if result["success"]:
-            self.report({"INFO"}, f"Baked: {', '.join(result['images'])}")
+            self.report({"INFO"}, f"Baked {', '.join(self.bake_passes)} → {target.name}")
         else:
-            self.report({"ERROR"}, "Baking failed")
+            self.report({"ERROR"}, result.get("error", "Baking failed"))
             return {"CANCELLED"}
         return {"FINISHED"}
+
+
+class Remi_OT_BakeDiffuse(Remi_OT_BakeTextures):
+    """Bake only the albedo/diffuse map onto the active mesh."""
+
+    bl_idname = "remi.bake_diffuse"
+    bl_label = "Bake Albedo"
+    bl_description = "Bake only the diffuse/albedo map onto the active target mesh"
+    bake_passes = ("diffuse",)
+
+
+class Remi_OT_BakeRoughness(Remi_OT_BakeTextures):
+    """Bake only the roughness map onto the active mesh."""
+
+    bl_idname = "remi.bake_roughness"
+    bl_label = "Bake Roughness"
+    bl_description = "Bake only the roughness map onto the active target mesh"
+    bake_passes = ("roughness",)
+
+
+class Remi_OT_BakeNormal(Remi_OT_BakeTextures):
+    """Bake only the tangent-space normal map onto the active mesh."""
+
+    bl_idname = "remi.bake_normal"
+    bl_label = "Bake Normal"
+    bl_description = "Bake only the tangent-space normal map onto the active target mesh"
+    bake_passes = ("normal",)
 
 
 class Remi_OT_FullPipeline(Operator):
@@ -647,6 +679,7 @@ class Remi_OT_FullPipeline(Operator):
                 final_name=final_name,
                 uv_method=settings.bake_uv_method,
                 uv_island_margin=settings.bake_uv_island_margin,
+                auto_unwrap=settings.bake_auto_unwrap,
                 recalc_normals=settings.bake_recalc_normals,
                 cage_extrusion=settings.bake_cage_extrusion,
                 max_ray_distance=settings.bake_max_ray_distance,
@@ -884,6 +917,7 @@ class Remi_OT_FullPipeline(Operator):
                 final_name=final_name,
                 uv_method=settings.bake_uv_method,
                 uv_island_margin=settings.bake_uv_island_margin,
+                auto_unwrap=settings.bake_auto_unwrap,
                 recalc_normals=settings.bake_recalc_normals,
                 cage_extrusion=settings.bake_cage_extrusion,
                 max_ray_distance=settings.bake_max_ray_distance,
@@ -920,6 +954,9 @@ classes = [
     Remi_OT_Decimate,
     Remi_OT_AutoRemesher,
     Remi_OT_BakeTextures,
+    Remi_OT_BakeDiffuse,
+    Remi_OT_BakeRoughness,
+    Remi_OT_BakeNormal,
     Remi_OT_FullPipeline,
 ]
 

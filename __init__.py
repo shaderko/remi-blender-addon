@@ -7,7 +7,7 @@ Automated mesh optimization pipeline:
 bl_info = {
     "name": "Remi",
     "author": "Remi",
-    "version": (1, 0, 0),
+    "version": (1, 1, 0),
     "blender": (5, 1, 0),
     "location": "View3D > Sidebar > Remi",
     "description": "SDF voxel remesh → MeshLab decimation → AutoRemesher → texture baking pipeline",
@@ -170,6 +170,11 @@ class RemiSceneSettings(PropertyGroup):
         max=8192,
         subtype="PIXEL",
     )
+    bake_auto_unwrap: BoolProperty(
+        name="Auto Unwrap",
+        description="Generate UVs on the bake target when it has no UV map. Disable to use UVs prepared externally",
+        default=True,
+    )
     bake_uv_method: EnumProperty(
         name="UV Method",
         description="Method for generating UVs on the remeshed mesh",
@@ -240,10 +245,16 @@ def register():
     from . import ui
     ui.register()
 
+    from . import edit_tools
+    edit_tools.register()
+
     print("Remi: Registered")
 
 
 def unregister():
+    from . import edit_tools
+    edit_tools.unregister()
+
     from . import ui
     ui.unregister()
 

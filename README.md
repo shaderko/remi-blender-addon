@@ -13,7 +13,7 @@ Import a GLB or use any mesh, and Remi produces an optimized, textured result �
 | **1. SDF Voxel Remesh** | Converts the mesh to an SDF grid via Geometry Nodes (`MeshToSDFGrid` → `GridToMesh`) and back. Parameters: detail slider (low→high resolution), optional fillet/smoothing. | ✅ Yes |
 | **2. MeshLab Decimation** | Exports to PLY and runs PyMeshLab's `meshing_decimation_quadric_edge_collapse` for N passes at a configurable face reduction percentage. | ✅ Yes |
 | **3. AutoRemesher** (optional) | Exports to OBJ and runs the external [AutoRemesher](https://github.com/huxingyi/autoremesher) CLI for quad-based retopology. Runs last in the pipeline when enabled. | 🔘 Toggle |
-| **4. Bake Textures** | Bakes diffuse (albedo, no lighting), roughness, and normal maps from the original mesh onto the result. Creates a full Principled BSDF material with image textures. | 🔘 Default ON |
+| **4. Bake Textures** | Bakes diffuse (albedo, no lighting), roughness, and normal maps from the original mesh onto the result. Maps can be baked together or independently. | 🔘 Default ON |
 
 ## Requirements
 
@@ -53,7 +53,8 @@ The addon panel appears in the 3D Viewport sidebar under the **Remi** tab (`N` k
 | **SDF Voxel Remesh** | Detail slider, Fillet/Smooth toggles, SDF Remesh and Apply buttons |
 | **AutoRemesher (External)** | Toggle (pipeline inclusion), executable path, target quads, adaptivity, edge scaling, sharp edge, smooth normal |
 | **MeshLab Decimation** | Pass count, target percentage per pass, output name suffix |
-| **Bake Textures** | Toggle (pipeline inclusion), texture size, UV method (Smart Project / Lightmap Pack), island margin |
+| **Bake Textures** | Toggle (pipeline inclusion), texture size, optional automatic UV unwrap, and separate Albedo, Roughness, Normal, or all-map bake actions |
+| **Remi Selection Tools** | Edit Mode bridge detection, smart lobe selection, preview split-part selection, and bridge splitting |
 | **Full Pipeline** | One-click **▶ Run Full Remi** — runs all enabled steps |
 
 ## Notes
@@ -61,6 +62,8 @@ The addon panel appears in the 3D Viewport sidebar under the **Remi** tab (`N` k
 - The **original mesh is never modified** — everything runs on a copy.
 - The final result's vertices are at world-space coordinates with the object at the origin.
 - Baking uses Cycles with 128 samples, flat diffuse (no direct/indirect lighting), roughness, and tangent-space normal.
+- For a manual bake, select one or more source/original meshes, then Shift/Command-select the remeshed target last so it is the active object. Disable **Auto Unwrap** to preserve externally prepared target UVs; baking will then require an existing UV map.
+- The Edit Mode selection tools operate on the selected connected faces. Use **Smart Select Object** from a picked face, edge, or vertex to isolate a lobe before detecting or splitting its bridge.
 - Intermediate format between Blender and PyMeshLab is **PLY binary** (dramatically faster than OBJ for large meshes).
 
 ## Credits

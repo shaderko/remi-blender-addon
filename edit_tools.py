@@ -1,9 +1,11 @@
 """Edit Mode selection and bridge-splitting tools for Remi."""
 
 from collections import deque
+import math
 
 import bmesh
 import bpy
+from mathutils.kdtree import KDTree
 
 
 class Remi_OT_BridgeBase:
@@ -26,8 +28,13 @@ class Remi_OT_BridgeBase:
     )
     min_volume_ratio: bpy.props.FloatProperty(
         name="Min Volume Ratio",
-        description="Minimum smaller/larger bounding-volume proxy accepted as a lobe split",
+        description="Minimum smaller/larger spatial-volume ratio accepted as a lobe split",
         min=0.0, max=1.0, default=0.06, subtype="FACTOR",
+    )
+    volume_balance_weight: bpy.props.FloatProperty(
+        name="Volume Balance",
+        description="How strongly detection favors two similarly sized spatial volumes",
+        min=0.0, max=10.0, default=2.5,
     )
     mark_seam: bpy.props.BoolProperty(
         name="Mark Seams",
@@ -103,6 +110,12 @@ class Remi_OT_BridgeBase:
 
     @staticmethod
     def _volume_proxy(bm, faces):
+        """Estimate spatial volume with a sampled convex hull.
+
+        AI geometry is frequently open or non-manifold, so signed mesh volume
+        is unreliable.  A convex hull gives a stable comparison between two
+        candidate object-like regions; an area/span proxy handles flat shells.
+        """
         if not faces:
             return 0.0
         min_co = max_co = None
@@ -124,7 +137,33 @@ class Remi_OT_BridgeBase:
                     max_co.x = max(max_co.x, vertex.co.x)
                     max_co.y = max(max_co.y, vertex.co.y)
                     max_co.z = max(max_co.z, vertex.co.z)
-        return max(1e-12, area * max(1e-6, (max_co - min_co).length))
+        fallback = area * max(1e-6, (max_co - min_co).length)
+        coords = []
+        used_vertices.clear()
+        for face_index in faces:
+            for vertex in bm.faces[face_index].verts:
+                if vertex.index not in used_vertices:
+                    used_vertices.add(vertex.index)
+                    coords.append(vertex.co.copy())
+        if len(coords) < 4:
+            return max(1e-12, fallback)
+
+        # Hull complexity is capped so bridge detection remains interactive.
+        if len(coords) > 768:
+            step = len(coords) / 768.0
+            coords = [coords[int(index * step)] for index in range(768)]
+        hull = bmesh.new()
+        try:
+            for coordinate in coords:
+                hull.verts.new(coordinate)
+            hull.verts.ensure_lookup_table()
+            bmesh.ops.convex_hull(hull, input=list(hull.verts), use_existing_faces=False)
+            volume = abs(float(hull.calc_volume(signed=False)))
+        except Exception:
+            volume = 0.0
+        finally:
+            hull.free()
+        return max(1e-12, volume if volume > 1e-12 else fallback)
 
     def _partition(self, bm, component, adjacency, edge_by_pair):
         """Find the least disruptive balanced face-graph cut between two lobes."""
@@ -152,8 +191,17 @@ class Remi_OT_BridgeBase:
             ]
             if not bridge_pairs:
                 continue
-            # Favor a small neck, but avoid splitting off insignificant details.
-            score = len(bridge_pairs) / min(len(part_a), len(part_b)) + (1.0 - face_ratio) * 0.9 + (1.0 - volume_ratio) * 1.4
+            cut_length = sum(edge_by_pair[pair].calc_length() for pair in bridge_pairs)
+            volume_scale = max(1e-9, min(volume_a, volume_b) ** (1.0 / 3.0))
+            neck_score = cut_length / volume_scale
+            # Favor every narrow connection between two object-like volumes.
+            # Volume balance dominates face count because AI shells often have
+            # very different tessellation densities on otherwise equal parts.
+            score = (
+                neck_score
+                + (1.0 - volume_ratio) * float(self.volume_balance_weight)
+                + (1.0 - face_ratio) * 0.2
+            )
             candidate = (score, part_a, part_b, bridge_pairs, seed_a, seed_b, face_ratio, volume_ratio)
             if best is None or candidate[0] < best[0]:
                 best = candidate
@@ -224,7 +272,7 @@ class Remi_OT_DetectBridge(Remi_OT_BridgeBase, bpy.types.Operator):
     """Select connector edges between the two main regions of the face selection."""
 
     bl_idname = "remi.detect_bridge"
-    bl_label = "Detect Bridge"
+    bl_label = "Detect Volume Bridges"
     bl_options = {"REGISTER", "UNDO"}
 
     clear_selection: bpy.props.BoolProperty(
@@ -263,7 +311,7 @@ class Remi_OT_SelectSplitPart(Remi_OT_BridgeBase, bpy.types.Operator):
     """Select the face lobe that Split By Bridge would turn into a new object."""
 
     bl_idname = "remi.select_split_part"
-    bl_label = "Select Split Part"
+    bl_label = "Preview Fused Part"
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
@@ -292,7 +340,7 @@ class Remi_OT_SplitByBridge(Remi_OT_BridgeBase, bpy.types.Operator):
     """Separate one lobe of the selected mesh by its detected bridge."""
 
     bl_idname = "remi.split_by_bridge"
-    bl_label = "Split By Bridge"
+    bl_label = "Separate Fused Volumes"
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
@@ -390,21 +438,244 @@ class Remi_OT_SmartSelectObject(Remi_OT_BridgeBase, bpy.types.Operator):
         return {"FINISHED"}
 
 
-classes = (
+class Remi_OT_DoubleShellBase:
+    """Detect nearby opposite-facing layers in double-shell AI geometry."""
+
+    max_thickness_ratio: bpy.props.FloatProperty(
+        name="Max Shell Gap",
+        description="Maximum layer separation as a fraction of the mesh diagonal",
+        min=0.0001, max=0.25, default=0.035, precision=4, subtype="FACTOR",
+    )
+    opposite_angle: bpy.props.FloatProperty(
+        name="Opposite Angle °",
+        description="Minimum normal angle used to recognize opposing surface layers",
+        min=90.0, max=180.0, default=135.0,
+    )
+    propagation_angle: bpy.props.FloatProperty(
+        name="Surface Continuity °",
+        description="Maximum angle across which inner-shell selection may propagate",
+        min=1.0, max=179.0, default=70.0,
+    )
+    include_connectors: bpy.props.BoolProperty(
+        name="Include Connectors",
+        description="Include side-wall faces that directly join detected inner and outer layers",
+        default=True,
+    )
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.type == "MESH" and context.mode == "EDIT_MESH"
+
+    @staticmethod
+    def _clear_selection(bm):
+        for vertex in bm.verts:
+            vertex.select = False
+        for edge in bm.edges:
+            edge.select = False
+        for face in bm.faces:
+            face.select = False
+
+    def _detect_inner_shell(self, bm):
+        bm.normal_update()
+        bm.faces.ensure_lookup_table()
+        bm.faces.index_update()
+        faces = [face for face in bm.faces if not face.hide]
+        if len(faces) < 8:
+            return None
+
+        coordinates = [vertex.co for vertex in bm.verts if not vertex.hide]
+        if not coordinates:
+            return None
+        center = sum(coordinates, coordinates[0] * 0.0) / len(coordinates)
+        min_co = coordinates[0].copy()
+        max_co = coordinates[0].copy()
+        for coordinate in coordinates[1:]:
+            min_co.x = min(min_co.x, coordinate.x)
+            min_co.y = min(min_co.y, coordinate.y)
+            min_co.z = min(min_co.z, coordinate.z)
+            max_co.x = max(max_co.x, coordinate.x)
+            max_co.y = max(max_co.y, coordinate.y)
+            max_co.z = max(max_co.z, coordinate.z)
+        diagonal = max(1e-9, (max_co - min_co).length)
+        max_gap = diagonal * float(self.max_thickness_ratio)
+        opposite_dot = math.cos(math.radians(float(self.opposite_angle)))
+
+        face_centers = {face.index: face.calc_center_median() for face in faces}
+        tree = KDTree(len(faces))
+        for face in faces:
+            tree.insert(face_centers[face.index], face.index)
+        tree.balance()
+
+        inner_seeds = set()
+        outer_seeds = set()
+        matched_pairs = set()
+        for face in faces:
+            center_a = face_centers[face.index]
+            # Nearby same-layer faces commonly precede the opposing face, so
+            # inspect a modest neighborhood rather than only the nearest hit.
+            for _, other_index, distance in tree.find_n(center_a, min(48, len(faces))):
+                if other_index == face.index or distance > max_gap:
+                    continue
+                pair_key = tuple(sorted((face.index, other_index)))
+                if pair_key in matched_pairs:
+                    continue
+                other = bm.faces[other_index]
+                if face.normal.dot(other.normal) > opposite_dot:
+                    continue
+
+                center_b = face_centers[other_index]
+                radius_a = (center_a - center).length
+                radius_b = (center_b - center).length
+                tolerance = diagonal * 1e-6
+                if abs(radius_a - radius_b) > tolerance:
+                    inner, outer = (
+                        (face.index, other_index)
+                        if radius_a < radius_b
+                        else (other_index, face.index)
+                    )
+                else:
+                    radial_a = center_a - center
+                    radial_b = center_b - center
+                    score_a = face.normal.dot(radial_a.normalized()) if radial_a.length else 0.0
+                    score_b = other.normal.dot(radial_b.normalized()) if radial_b.length else 0.0
+                    inner, outer = (
+                        (face.index, other_index)
+                        if score_a < score_b
+                        else (other_index, face.index)
+                    )
+                inner_seeds.add(inner)
+                outer_seeds.add(outer)
+                matched_pairs.add(pair_key)
+                break
+
+        minimum_pairs = max(4, min(32, len(faces) // 100))
+        if len(matched_pairs) < minimum_pairs or not inner_seeds:
+            return None
+
+        continuity_dot = math.cos(math.radians(float(self.propagation_angle)))
+        inner_faces = set(inner_seeds)
+        queue = deque(inner_seeds)
+        while queue:
+            face_index = queue.popleft()
+            face = bm.faces[face_index]
+            for edge in face.edges:
+                for neighbor in edge.link_faces:
+                    neighbor_index = neighbor.index
+                    if (
+                        neighbor_index in inner_faces
+                        or neighbor_index in outer_seeds
+                        or neighbor.hide
+                    ):
+                        continue
+                    if face.normal.dot(neighbor.normal) < continuity_dot:
+                        continue
+                    inner_faces.add(neighbor_index)
+                    queue.append(neighbor_index)
+
+        connector_faces = set()
+        if self.include_connectors:
+            for face in faces:
+                if face.index in inner_faces or face.index in outer_seeds:
+                    continue
+                neighbors = {
+                    linked.index
+                    for edge in face.edges
+                    for linked in edge.link_faces
+                    if linked != face
+                }
+                if neighbors & inner_faces and neighbors & outer_seeds:
+                    connector_faces.add(face.index)
+
+        selected = inner_faces | connector_faces
+        if not selected or len(selected) >= int(len(faces) * 0.85):
+            return None
+        return selected, len(matched_pairs), len(connector_faces), max_gap
+
+
+class Remi_OT_SelectInnerShell(Remi_OT_DoubleShellBase, bpy.types.Operator):
+    """Preview the inner layer of double-sided AI-generated geometry."""
+
+    bl_idname = "remi.select_inner_shell"
+    bl_label = "Select Inner Shell"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        obj = context.active_object
+        bm = bmesh.from_edit_mesh(obj.data)
+        result = self._detect_inner_shell(bm)
+        if result is None:
+            self.report({"WARNING"}, "No confident double shell found; adjust Max Shell Gap in the redo panel")
+            return {"CANCELLED"}
+        selected, pair_count, connector_count, _ = result
+        self._clear_selection(bm)
+        for face_index in selected:
+            bm.faces[face_index].select = True
+        bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+        bpy.ops.mesh.select_mode(type="FACE")
+        self.report(
+            {"INFO"},
+            f"Inner shell selected: {len(selected)} faces, {pair_count} opposing pairs, {connector_count} connectors",
+        )
+        return {"FINISHED"}
+
+
+class Remi_OT_RemoveInnerShell(Remi_OT_DoubleShellBase, bpy.types.Operator):
+    """Remove the detected inner layer while retaining the outer surface."""
+
+    bl_idname = "remi.remove_inner_shell"
+    bl_label = "Remove Inner Shell"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        obj = context.active_object
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.faces.ensure_lookup_table()
+        selected = {face.index for face in bm.faces if face.select}
+        pair_count = connector_count = 0
+        used_preview = 4 <= len(selected) < int(len(bm.faces) * 0.85)
+        if not used_preview:
+            result = self._detect_inner_shell(bm)
+            if result is None:
+                self.report({"WARNING"}, "No confident double shell found; use Select Inner Shell to tune detection first")
+                return {"CANCELLED"}
+            selected, pair_count, connector_count, _ = result
+        faces_to_delete = [bm.faces[index] for index in selected if index < len(bm.faces)]
+        bmesh.ops.delete(bm, geom=faces_to_delete, context="FACES")
+        bmesh.update_edit_mesh(obj.data, loop_triangles=True, destructive=True)
+        detail = "using the preview selection" if used_preview else f"from {pair_count} opposing pairs ({connector_count} connectors)"
+        self.report({"INFO"}, f"Removed inner shell: {len(faces_to_delete)} faces {detail}")
+        return {"FINISHED"}
+
+
+bridge_classes = (
     Remi_OT_DetectBridge,
     Remi_OT_SelectSplitPart,
     Remi_OT_SplitByBridge,
     Remi_OT_SmartSelectObject,
 )
 
+double_shell_classes = (
+    Remi_OT_SelectInnerShell,
+    Remi_OT_RemoveInnerShell,
+)
+
 # Blender reads RNA properties from the concrete registered class.  Copy the
 # shared analysis controls into each operator while keeping the implementation
 # itself as a plain Python mixin.
-for _operator_class in classes:
+for _operator_class in bridge_classes:
     _operator_class.__annotations__ = {
         **Remi_OT_BridgeBase.__annotations__,
         **getattr(_operator_class, "__annotations__", {}),
     }
+
+for _operator_class in double_shell_classes:
+    _operator_class.__annotations__ = {
+        **Remi_OT_DoubleShellBase.__annotations__,
+        **getattr(_operator_class, "__annotations__", {}),
+    }
+
+classes = bridge_classes + double_shell_classes
 
 
 def register():

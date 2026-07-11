@@ -1,6 +1,6 @@
 """
 Texture baking for Remi.
-Bakes diffuse, roughness, and normal maps from the original
+Bakes albedo, roughness, normal, and ambient-occlusion maps from the original
 high-poly mesh onto the remeshed/decimated result.
 """
 
@@ -75,11 +75,12 @@ def _make_world_space_copy(obj: bpy.types.Object, name: str) -> bpy.types.Object
 def _create_bake_images(name_prefix: str, size: int, channels: tuple[str, ...]) -> dict:
     """Create or reuse blank image textures for the requested bake channels."""
     images = {}
-    # Color space per channel: diffuse=sRGB for display, rough/normal=Non-Color
+    # Albedo is color-managed for display; data maps are Non-Color.
     for key, suffix, color, cs in [
         ("diffuse", "_diffuse", (0.5, 0.5, 0.5, 1.0), "sRGB"),
         ("roughness", "_roughness", (0.5, 0.5, 0.5, 1.0), "Non-Color"),
         ("normal", "_normal", (0.5, 0.5, 1.0, 1.0), "Non-Color"),
+        ("ao", "_ao", (1.0, 1.0, 1.0, 1.0), "Non-Color"),
     ]:
         if key not in channels:
             continue
@@ -155,33 +156,54 @@ def _build_bake_material(obj: bpy.types.Object, images: dict) -> dict:
         links.new(tex_n.outputs["Color"], nmap.inputs["Color"])
         links.new(nmap.outputs["Normal"], bsdf.inputs["Normal"])
         channels["normal"] = tex_n
+    if "ao" in images:
+        # AO is a separate data map, intentionally not wired into the shader.
+        channels["ao"] = existing_or_new("bake_ao", images["ao"], -200, -350)
 
-    # Assign material
-    if mat.name not in [slot.name for slot in obj.data.materials if slot]:
+    # Every target face must use a material with the active bake image.  This
+    # is especially important for remeshes that retain multiple material slots.
+    if obj.data.materials:
+        for index in range(len(obj.data.materials)):
+            obj.data.materials[index] = mat
+    else:
         obj.data.materials.append(mat)
 
     return channels
 
 
-def _force_metallic_zero(obj: bpy.types.Object):
-    """Walk the object's material nodes and set Principled BSDF metallic to 0.
+def _prepare_albedo_emission(obj: bpy.types.Object):
+    """Turn private source materials into base-color emission materials.
 
-    DIFFUSE bake returns black on metallic materials because the
-    Principled BSDF sets the diffuse contribution to zero when
-    metallic = 1.  This temporarily disables metallic on the
-    baking-source copy so we get the full diffuse colour.
+    A DIFFUSE closure bake is affected by Metallic and other BSDF behavior.
+    For a true albedo map, Remi bakes the Principled Base Color through
+    emission on disposable source copies. Texture-node links are preserved.
     """
     for slot in obj.data.materials:
         if not slot or not slot.node_tree:
             continue
-        for node in slot.node_tree.nodes:
-            if node.type != "BSDF_PRINCIPLED":
-                continue
-            # Try to set the Metallic input value
-            for inp in node.inputs:
-                if inp.identifier == "Metallic":
-                    inp.default_value = 0.0
-                    return
+        nodes = slot.node_tree.nodes
+        links = slot.node_tree.links
+        bsdf = next((node for node in nodes if node.type == "BSDF_PRINCIPLED"), None)
+        output = next((node for node in nodes if node.type == "OUTPUT_MATERIAL"), None)
+        if bsdf is None or output is None:
+            continue
+        base_color = bsdf.inputs.get("Base Color")
+        if base_color is None:
+            continue
+        emission = nodes.get("_remi_albedo_emission")
+        if emission is None or emission.type != "EMISSION":
+            emission = nodes.new("ShaderNodeEmission")
+            emission.name = "_remi_albedo_emission"
+            emission.label = "Remi Albedo Bake"
+            emission.location = (bsdf.location.x + 250, bsdf.location.y)
+        emission.inputs["Strength"].default_value = 1.0
+        if base_color.is_linked:
+            links.new(base_color.links[0].from_socket, emission.inputs["Color"])
+        else:
+            emission.inputs["Color"].default_value = base_color.default_value
+        for link in list(output.inputs["Surface"].links):
+            links.remove(link)
+        links.new(emission.outputs["Emission"], output.inputs["Surface"])
 
 
 def bake_textures(
@@ -195,9 +217,9 @@ def bake_textures(
     recalc_normals: bool = True,
     cage_extrusion: float = 0.1,
     max_ray_distance: float = 0.0,
-    passes: tuple[str, ...] = ("diffuse", "roughness", "normal"),
+    passes: tuple[str, ...] = ("diffuse", "roughness", "normal", "ao"),
 ) -> dict:
-    """Bake diffuse, roughness, and normal maps from source to target.
+    """Bake albedo, roughness, normal, and AO maps from source to target.
 
     Source and target meshes must overlap in world space. This function
     accepts one source or a list of source meshes, creates world-space copies
@@ -211,7 +233,7 @@ def bake_textures(
     # Use final_name for image naming if provided
     img_base = final_name or target_result.name
 
-    valid_passes = ("diffuse", "roughness", "normal")
+    valid_passes = ("diffuse", "roughness", "normal", "ao")
     passes = tuple(channel for channel in passes if channel in valid_passes)
     if not passes:
         return {"success": False, "images": [], "error": "No valid bake passes selected"}
@@ -243,9 +265,6 @@ def bake_textures(
     temp_sources = []
     for index, source in enumerate(source_objects):
         temp_source = _make_world_space_copy(source, f"_bake_source_tmp_{index}")
-        # DIFFUSE bake returns black on metallic materials because the
-        # Principled BSDF suppresses diffuse contribution when metallic = 1.
-        _force_metallic_zero(temp_source)
         temp_sources.append(temp_source)
 
     # 3. Create blank images (use final_name for clean naming)
@@ -289,9 +308,12 @@ def bake_textures(
     # COMBINED, AO, SHADOW, POSITION, NORMAL, UV, ROUGHNESS, EMIT,
     # ENVIRONMENT, DIFFUSE, GLOSSY, TRANSMISSION
     bake_configs = [
-        ("diffuse", "DIFFUSE"),
         ("roughness", "ROUGHNESS"),
         ("normal", "NORMAL"),
+        ("ao", "AO"),
+        # Albedo is last because this pass temporarily replaces the source
+        # surface shader with emission to bypass Metallic.
+        ("diffuse", "EMIT"),
     ]
 
     # ── Half-scale ──────────────────────────────────────────────
@@ -305,24 +327,32 @@ def bake_textures(
             temp_source.scale = (0.5, 0.5, 0.5)
         target_result.scale = (0.5, 0.5, 0.5)
 
-    for channel, bake_type in bake_configs:
-        if channel not in passes:
-            continue
-        node = channels[channel]
-        bake_mat.node_tree.nodes.active = node
-        node.select = True
+    bake_error = None
+    try:
+        for channel, bake_type in bake_configs:
+            if channel not in passes:
+                continue
+            if channel == "diffuse":
+                for temp_source in temp_sources:
+                    _prepare_albedo_emission(temp_source)
+            node = channels[channel]
+            bake_mat.node_tree.nodes.active = node
+            node.select = True
+            bpy.ops.object.bake(type=bake_type)
+    except RuntimeError as error:
+        bake_error = str(error)
+    finally:
+        # Always leave the scene usable after a failed bake.
+        if _half:
+            target_result.scale = _t_save
+        bpy.ops.object.select_all(action="DESELECT")
+        for temp_source in temp_sources:
+            if bpy.data.objects.get(temp_source.name) is not None:
+                bpy.data.objects.remove(temp_source, do_unlink=True)
+        scene.render.engine = prev_engine
 
-        bpy.ops.object.bake(type=bake_type)
-
-    # ── Restore target scale after half-scale bake ─────────────
-    if _half:
-        target_result.scale = _t_save
-
-    # 6. Cleanup
-    bpy.ops.object.select_all(action="DESELECT")
-    for temp_source in temp_sources:
-        bpy.data.objects.remove(temp_source, do_unlink=True)
-    scene.render.engine = prev_engine
+    if bake_error:
+        return {"success": False, "images": [], "error": f"Bake failed: {bake_error}"}
 
     image_names = list(images.keys())
     print(f"Baking: Done — created {image_names}")

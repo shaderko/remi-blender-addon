@@ -1,4 +1,4 @@
-weppy-project-sync/
 __pycache__/
 *.pyc
 .DS_Store
+alpha_wrap_helper/build/

@@ -19,6 +19,7 @@ input_path = sys.argv[1]
 output_path = sys.argv[2]
 target_perc = float(sys.argv[3])
 passes = int(sys.argv[4])
+preserve_detail = len(sys.argv) > 5 and sys.argv[5].lower() in {"1", "true", "yes"}
 
 ms = pymeshlab.MeshSet()
 ms.load_new_mesh(input_path)
@@ -26,7 +27,10 @@ orig_faces = ms.current_mesh().face_number()
 
 for i in range(passes):
     ms.apply_filter("meshing_decimation_quadric_edge_collapse",
-                    targetperc=target_perc, autoclean=True)
+                    targetperc=target_perc,
+                    preservenormal=preserve_detail,
+                    planarquadric=preserve_detail,
+                    autoclean=True)
     current = ms.current_mesh().face_number()
     # Write progress to stdout as JSON lines
     print(json.dumps({"pass": i + 1, "passes": passes,

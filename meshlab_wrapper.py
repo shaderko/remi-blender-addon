@@ -85,6 +85,7 @@ def run_quadric_decimation(
     target_percentage: float = 0.5,
     preserve_boundary: bool = False,
     preserve_normal: bool = False,
+    preserve_detail: bool = False,
     optimal_placement: bool = True,
     autoclean: bool = True,
     output_format: str = "ply",
@@ -129,7 +130,8 @@ def run_quadric_decimation(
             "meshing_decimation_quadric_edge_collapse",
             targetperc=target_percentage,
             preserveboundary=preserve_boundary,
-            preservenormal=preserve_normal,
+            preservenormal=preserve_normal or preserve_detail,
+            planarquadric=preserve_detail,
             optimalplacement=optimal_placement,
             autoclean=autoclean,
         )
@@ -156,6 +158,7 @@ def run_multi_pass_decimation(
     target_percentage: float = 0.5,
     preserve_boundary: bool = False,
     preserve_normal: bool = False,
+    preserve_detail: bool = False,
     optimal_placement: bool = True,
     autoclean: bool = True,
 ) -> list:
@@ -198,6 +201,7 @@ def run_multi_pass_decimation(
             target_percentage=target_percentage,
             preserve_boundary=preserve_boundary,
             preserve_normal=preserve_normal,
+            preserve_detail=preserve_detail,
             optimal_placement=optimal_placement,
             autoclean=autoclean,
             output_format="ply",

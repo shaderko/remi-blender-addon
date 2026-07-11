@@ -10,6 +10,14 @@ A Blender addon that automates a complete mesh optimization pipeline:
 
 Import a GLB or use any mesh, and Remi produces an optimized, textured result — all on a copy, leaving your original untouched.
 
+<p align="center">
+  <a href="https://youtu.be/eR4afAdbMeU">
+    <img src="https://img.youtube.com/vi/eR4afAdbMeU/0.jpg" alt="Remi Demo Video" width="560"/>
+  </a>
+  <br>
+  <em>Watch the Remi demo → <a href="https://youtu.be/eR4afAdbMeU">youtu.be/eR4afAdbMeU</a></em>
+</p>
+
 ## Pipeline
 
 | Step | Description | Always runs |

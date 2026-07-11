@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="remi_logo.png" alt="Remi Logo" width="180"/>
+</p>
+
 # Remi
 
 A Blender addon that automates a complete mesh optimization pipeline:

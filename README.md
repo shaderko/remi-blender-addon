@@ -6,7 +6,7 @@
 
 A Blender addon that automates a complete mesh optimization pipeline:
 
-**Voxel Remesh or Fitted Closing Volume → MeshLab Decimation → AutoRemesher (optional) → Texture Baking**
+**Voxel Remesh or Fitted Closing Volume → MeshLab Decimation → Interactive Instant Meshes or AutoRemesher → Texture Baking**
 
 Import a GLB or use any mesh, and Remi produces an optimized, textured result — all on a copy, leaving your original untouched.
 
@@ -24,12 +24,19 @@ Import a GLB or use any mesh, and Remi produces an optimized, textured result �
 |------|-------------|-------------|
 | **1. Repair / Remesh** | Choose the fast original Voxel Remesh or the slower hole-closing volume reconstruction with surface and sharp-crease fitting. | ✅ Yes |
 | **2. MeshLab Decimation** | Exports to PLY and runs PyMeshLab's `meshing_decimation_quadric_edge_collapse` for N passes at a configurable face reduction percentage. Progress is reported live in the UI. | ✅ Yes |
-| **3. AutoRemesher** (optional) | Exports to OBJ and runs the external [AutoRemesher](https://github.com/huxingyi/autoremesher) CLI for quad-based retopology. Runs last in the pipeline when enabled. | 🔘 Toggle |
-| **4. Bake Textures** | Bakes albedo, roughness, normal, and ambient-occlusion maps from the original mesh onto the result. Each channel can be baked together or independently. | 🔘 Default ON |
+| **3. Interactive Instant Meshes** | Builds native orientation and position fields, accepts drawn surface guides, and extracts a quad result entirely inside Blender. This is an interactive workspace rather than an automatic full-pipeline step. | 🔘 Manual |
+| **4. AutoRemesher** (optional) | Exports to OBJ and runs the external [AutoRemesher](https://github.com/huxingyi/autoremesher) CLI for automatic quad-based retopology. | 🔘 Toggle |
+| **5. Bake Textures** | Bakes albedo, roughness, normal, and ambient-occlusion maps from the original mesh onto the result. Each channel can be baked together or independently. | 🔘 Default ON |
+
+Remi also includes a native **Interactive Instant Meshes** workspace. It solves
+the original orientation and position fields inside Blender, visualizes the
+fields and singularities in the 3D viewport, and lets you draw Orientation Comb
+and Output Edge guides directly on the source surface before extracting quads.
 
 ## Requirements
 
 - **Blender 5.1+**
+- **Interactive Instant Meshes on macOS Apple Silicon** — the native CPython 3.13/arm64 module is bundled; users do not need the standalone Instant Meshes app, Homebrew, CMake, or a compiler.
 - **PyMeshLab** — installed automatically on first use via Blender's Python (`pip install pymeshlab`). Requires an internet connection.
 - **CGAL + CMake** (for Alpha-Guided Hole Patches) — macOS: `brew install cgal cmake`; Ubuntu/Debian: `sudo apt install libcgal-dev cmake`. Remi builds its small native helper automatically, or you can click **Build Helper**.
 - **AutoRemesher** (optional) — download from [github.com/huxingyi/autoremesher/releases](https://github.com/huxingyi/autoremesher/releases). Set the executable path in the addon panel or via the `AUTOREMESHER_PATH` environment variable.
@@ -123,6 +130,25 @@ The panel is organized into collapsible sections. Each pipeline step has a toggl
 | **Sharp °** | Sharp angle threshold. |
 | **Smooth °** | Smooth normal angle. |
 | **Run AutoRemesher** | Run standalone on the active mesh. |
+
+### Interactive Instant Meshes
+
+| Control | Description |
+|---------|-------------|
+| **Start Interactive Retopology** | Builds a persistent native Instant Meshes hierarchy, solves orientation and position in sequence, validates topology, and creates the first preview automatically. |
+| **Orientation Comb** | Draw on the visible surface to steer nearby quad directions. |
+| **Output Edge** | Adds both orientation and position constraints so the extracted topology follows the drawn path with an edge. |
+| **Dim Original** | Darkens the visible source surface while preserving its depth, keeping back-side retopo edges occluded. |
+| **Retopo Offset** | Lifts the cage along its extracted normals as a fraction of the target quad size to prevent z-fighting. |
+| **Face Fill** | Adds a translucent fill below the bright retopology edges for easier shape reading. |
+| **X-Ray Retopo** | Deliberately shows the whole cage through the source; disabled by default for a clean front-surface view. |
+| **Orientation / Position** | Toggle native field visualization in the Blender viewport. |
+| **Singularities** | Shows orientation and position field singularities. |
+| **Rebuild Both Fields / Re-solve Position** | Re-run the fields while retaining guides. Orientation rebuilds always continue through position so extraction cannot use stale field data. |
+| **Auto-update After Guides** | Rebuilds both fields and the preview whenever a guide is added, removed, or cleared. |
+| **Update Quad Preview** | Re-extracts the validated quad result as an offset viewport cage. |
+| **Accept Retopology** | Creates a new Blender mesh and leaves the source unchanged. |
+| **Cancel Session** | Releases the native hierarchy and removes all interactive overlays. |
 
 ### Bake Textures
 | Control | Description |
@@ -218,4 +244,7 @@ One-click **▶ Run Full Remi** — runs all enabled steps in sequence, with a p
 
 ## License
 
-GPL-3.0-or-later
+[GPL-3.0-or-later](LICENSE). The native Interactive Instant Meshes module also
+contains compatible third-party components; see
+[Third-party notices](THIRD_PARTY_NOTICES.md) for exact revisions, licenses,
+and retained-source details.

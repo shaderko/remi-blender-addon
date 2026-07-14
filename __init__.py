@@ -1,16 +1,16 @@
 """
 Remi - Blender Addon
 Automated mesh optimization pipeline:
-  SDF Remesh (Geometry Nodes) → MeshLab Decimation → AutoRemesher → Bake Textures
+  SDF Remesh → MeshLab Decimation → Interactive Instant Meshes / AutoRemesher → Bake Textures
 """
 
 bl_info = {
     "name": "Remi",
     "author": "Remi",
-    "version": (1, 10, 0),
+    "version": (1, 11, 0),
     "blender": (5, 1, 0),
     "location": "View3D > Sidebar > Remi",
-    "description": "SDF voxel remesh → MeshLab decimation → AutoRemesher → texture baking pipeline",
+    "description": "Repair, optimize, interactively retopologize, and bake meshes inside Blender",
     "category": "Object",
 }
 
@@ -444,6 +444,9 @@ def register():
         bpy.utils.register_class(cls)
     bpy.types.Scene.remi_settings = PointerProperty(type=RemiSceneSettings)
 
+    from . import instant_meshes
+    instant_meshes.register()
+
     from . import operators
     operators.register()
 
@@ -465,6 +468,9 @@ def unregister():
 
     from . import operators
     operators.unregister()
+
+    from . import instant_meshes
+    instant_meshes.unregister()
 
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

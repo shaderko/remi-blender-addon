@@ -1,0 +1,15 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "pybind11>=2.13"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "remi-instant-meshes"
+version = "0.1.0"
+description = "Headless interactive Instant Meshes core for the Remi Blender add-on"
+requires-python = ">=3.11"
+
+[tool.scikit-build]
+cmake.version = ">=3.15"
+cmake.build-type = "Release"
+cmake.args = ["-DCMAKE_POLICY_VERSION_MINIMUM=3.5"]
+wheel.packages = []

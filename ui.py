@@ -5,6 +5,8 @@ UI Panel for Remi addon.
 import bpy
 from bpy.types import Panel
 
+from . import instant_meshes
+
 
 class Remi_PT_MainPanel(Panel):
     bl_label = "Remi"
@@ -134,6 +136,9 @@ class Remi_PT_MainPanel(Panel):
             box.prop(s, "output_name_suffix", text="Suffix")
             box.separator(factor=0.3)
             box.operator("remi.decimate", text="Decimate")
+
+        # ── Interactive Instant Meshes ─────────────────────────
+        instant_meshes.draw_panel(layout, context)
 
         # ── AutoRemesher ────────────────────────────────────────
         box = layout.box()

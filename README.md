@@ -22,10 +22,10 @@ surface-drawing tools.
 
 <p align="center">
   <a href="https://youtu.be/eR4afAdbMeU">
-    <img src="https://img.youtube.com/vi/eR4afAdbMeU/0.jpg" alt="Remi demo video" width="560" height="315"/>
+    <img src="https://img.youtube.com/vi/eR4afAdbMeU/0.jpg" alt="Remi Demo" width="560" height="315">
   </a>
   <br>
-  <em><a href="https://youtu.be/eR4afAdbMeU">Watch the Remi demo</a></em>
+  <a href="https://youtu.be/eR4afAdbMeU">Watch the Remi demo →</a>
 </p>
 
 ## What Remi does

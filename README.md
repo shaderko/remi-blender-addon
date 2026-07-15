@@ -4,247 +4,298 @@
 
 # Remi
 
-A Blender addon that automates a complete mesh optimization pipeline:
+**Repair, simplify, retopologize, and rebake difficult meshes without leaving Blender.**
 
-**Voxel Remesh or Fitted Closing Volume → MeshLab Decimation → Interactive Instant Meshes or AutoRemesher → Texture Baking**
+Remi is a Blender 5.1+ add-on for turning dense, damaged, or fragmented source
+geometry into a cleaner working mesh. It can close holes and cracks, rebuild a
+surface, reduce triangle count, create guided quad topology with Instant Meshes,
+and bake the source appearance onto the result.
 
-Import a GLB or use any mesh, and Remi produces an optimized, textured result — all on a copy, leaving your original untouched.
+Repair, remesh, decimation, and retopology create separate results. The source
+mesh stays untouched; standalone baking writes only to the target you select.
+
+The Interactive Instant Meshes workspace uses the **actual native Instant Meshes
+field solver and quad extraction code** inside Blender. It is not a slow Python
+rewrite and it does not launch the old standalone application. The native C++
+core does the heavy processing; Blender provides the UI, viewport preview, and
+surface-drawing tools.
 
 <p align="center">
   <a href="https://youtu.be/eR4afAdbMeU">
-    <img src="https://img.youtube.com/vi/eR4afAdbMeU/0.jpg" alt="Remi Demo Video" width="560"/>
+    <img src="https://img.youtube.com/vi/eR4afAdbMeU/0.jpg" alt="Remi demo video" width="560"/>
   </a>
   <br>
-  <em>Watch the Remi demo → <a href="https://youtu.be/eR4afAdbMeU">youtu.be/eR4afAdbMeU</a></em>
+  <em><a href="https://youtu.be/eR4afAdbMeU">Watch the Remi demo</a></em>
 </p>
 
-## Pipeline
+## What Remi does
 
-| Step | Description | Always runs |
-|------|-------------|-------------|
-| **1. Repair / Remesh** | Choose the fast original Voxel Remesh or the slower hole-closing volume reconstruction with surface and sharp-crease fitting. | ✅ Yes |
-| **2. MeshLab Decimation** | Exports to PLY and runs PyMeshLab's `meshing_decimation_quadric_edge_collapse` for N passes at a configurable face reduction percentage. Progress is reported live in the UI. | ✅ Yes |
-| **3. Interactive Instant Meshes** | Builds native orientation and position fields, accepts drawn surface guides, and extracts a quad result entirely inside Blender. This is an interactive workspace rather than an automatic full-pipeline step. | 🔘 Manual |
-| **4. AutoRemesher** (optional) | Exports to OBJ and runs the external [AutoRemesher](https://github.com/huxingyi/autoremesher) CLI for automatic quad-based retopology. | 🔘 Toggle |
-| **5. Bake Textures** | Bakes albedo, roughness, normal, and ambient-occlusion maps from the original mesh onto the result. Each channel can be baked together or independently. | 🔘 Default ON |
+| Goal | Remi tool |
+|------|-----------|
+| Repair holes, cracks, and fragmented geometry | Voxel Remesh, Closing Volume, or targeted hole patches |
+| Make a dense mesh lighter | Multi-pass PyMeshLab decimation |
+| Create and guide a quad layout | Interactive Instant Meshes inside the Blender viewport |
+| Run automatic external quad remeshing | Optional AutoRemesher integration |
+| Transfer the original appearance | Albedo, roughness, normal, and AO baking |
+| Work with fused parts or doubled shells | Edit Mode selection and separation tools |
 
-Remi also includes a native **Interactive Instant Meshes** workspace. It solves
-the original orientation and position fields inside Blender, visualizes the
-fields and singularities in the 3D viewport, and lets you draw Orientation Comb
-and Output Edge guides directly on the source surface before extracting quads.
+## Two ways to work
 
-## Requirements
+### Automated optimization
 
-- **Blender 5.1+**
-- **Interactive Instant Meshes on macOS Apple Silicon** — the native CPython 3.13/arm64 module is bundled; users do not need the standalone Instant Meshes app, Homebrew, CMake, or a compiler.
-- **PyMeshLab** — installed automatically on first use via Blender's Python (`pip install pymeshlab`). Requires an internet connection.
-- **CGAL + CMake** (for Alpha-Guided Hole Patches) — macOS: `brew install cgal cmake`; Ubuntu/Debian: `sudo apt install libcgal-dev cmake`. Remi builds its small native helper automatically, or you can click **Build Helper**.
-- **AutoRemesher** (optional) — download from [github.com/huxingyi/autoremesher/releases](https://github.com/huxingyi/autoremesher/releases). Set the executable path in the addon panel or via the `AUTOREMESHER_PATH` environment variable.
+Use **Run Full Remi** to chain the enabled non-interactive stages:
 
-## Download
+```text
+Source mesh -> Repair / Remesh -> Decimate -> [AutoRemesher] -> [Bake textures]
+```
+
+Each stage can also run on its own. AutoRemesher and texture baking are optional.
+
+### Guided quad retopology
+
+Use the Interactive Instant Meshes workspace when you want to see and influence
+the quad flow:
+
+```text
+Source mesh -> Solve fields -> Draw surface guides -> Preview quads -> Accept
+```
+
+This is a hands-on workspace, not a stage in **Run Full Remi**. Draw an
+**Orientation Comb** to steer nearby quad directions, or an **Output Edge** guide
+when the extracted topology should follow a particular path with an edge.
+
+## Download and install
 
 [**Download the latest release**](https://github.com/shaderko/remi-blender-addon/releases/latest)
 
-## Installation
+1. In Blender, open **Edit -> Preferences -> Add-ons**.
+2. Click **Install from Disk** and select the downloaded zip.
+3. Enable **Remi** in the add-on list.
+4. In the 3D Viewport, press `N` and open the **Remi** tab.
 
-### Option 1: Blender Install from Disk (recommended)
-
-1. Download the zip from the [releases page](https://github.com/shaderko/remi-blender-addon/releases/latest)
-2. In Blender: **Edit → Preferences → Add-ons → Install from Disk**
-3. Select the downloaded zip
-4. Enable **Remi** in the addon list
-
-### Option 2: Manual install
+For development or a manual installation from this repository:
 
 ```bash
-# From the remi directory:
 python3 install_blender_addon.py --blender-version 5.1
 ```
 
-Then restart Blender and enable it in **Edit → Preferences → Add-ons → Remi**.
+Restart Blender after a manual installation.
 
-The addon panel appears in the 3D Viewport sidebar under the **Remi** tab (`N` key).
+## Quick start
 
-## UI
+### Create guided quad topology with Instant Meshes
 
-The panel is organized into collapsible sections. Each pipeline step has a toggle that shows/hides its options and enables/disables it in the full pipeline run.
+1. Select a mesh in **Object Mode**.
+2. Open **N-panel -> Remi -> Instant Meshes (Interactive)**.
+3. Choose the approximate **Target** face count and click **Start Interactive Retopology**.
+4. Wait for the native solve and initial quad preview to finish.
+5. Use **Orientation Comb** or **Output Edge**, then drag with the left mouse button on the visible mesh surface. Release to re-solve the fields; with auto-update enabled, Remi also rebuilds the quad preview.
+6. Use **Dim Original**, **Retopo Offset**, and **Face Fill** to make the cage easier to read. Enable **X-Ray Retopo** only when you deliberately want to see the back side.
+7. Click **Accept Retopology** to create a new Blender mesh.
 
-### Remesh
-| Control | Description |
-|---------|-------------|
-| **Method: Voxel Remesh** | Original fast Remi flow. Supports optional local pre-repair and leaves a Geometry Nodes modifier for preview before applying. |
-| **Method: Closing Volume** | Expensive alternative that reconstructs a finer closing volume, projects it back to source faces, and fits vertices around detected sharp edges—including concave inside corners. It returns concrete geometry and can replace the voxel stage. |
+The target count is approximate. Instant Meshes generates a field-aligned layout;
+the guides influence that layout rather than acting as manually drawn topology.
+
+### Run the automated pipeline
+
+1. Select a mesh in **Object Mode**.
+2. Open the **Remi** tab in the 3D Viewport sidebar.
+3. Enable the stages you need and expand them to adjust their settings.
+4. Start with **Voxel Remesh** for speed. Use **Closing Volume** when filling gaps is more important than runtime and memory use.
+5. Click **Run Full Remi** and follow the progress shown in Blender.
+
+### Patch one visible hole
+
+1. Select **Voxel Remesh** and frame the hole in the viewport.
+2. Click **Draw Around Hole** under **Targeted Hole Patching**.
+3. Draw on the intact visible surface around the rim, not through the empty hole.
+4. Release to create a separate `_targeted_patch` preparation mesh.
+5. Run **Remesh Copy** on that prepared copy.
+
+## Choosing a repair method
+
+| Method | Best for | Trade-off |
+|--------|----------|-----------|
+| **Voxel Remesh** | Fast general cleanup and surface consolidation | Rebuilds the whole surface and can soften fine detail |
+| **Closing Volume** | Fragmented meshes, cracks, and holes that must be closed automatically | Slow and memory intensive; fits the result back to source surfaces and sharp creases |
+| **Targeted Hole Patching** | One visible, ambiguous hole | Requires drawing around each hole, but changes only the local preparation mesh |
+| **Alpha-Guided Patches** | Heavily fragmented or AI-generated geometry | Requires the optional CGAL helper; uses the wrap only to find donor patches |
+| **Boundary Only** | Clear, bounded topology holes | Does not bridge spatial cracks or disconnected fragments |
+| **Hybrid** | A mix of boundary holes and narrow cracks | More aggressive than boundary filling alone |
+| **Volume-Guided Patches** | Filling gaps while retaining most source triangles before remeshing | Uses a finer temporary volume and therefore costs more memory |
+
+## Requirements and optional dependencies
+
+### Core
+
+- **Blender 5.1+**.
+- The current release bundles the native CPython 3.13/arm64 Interactive Instant
+  Meshes module for **macOS on Apple Silicon**. No standalone Instant Meshes app,
+  Homebrew, CMake, or compiler is needed for this bundled module.
+- **PyMeshLab** is installed automatically into Blender's Python environment on
+  first use. The first installation requires an internet connection.
+
+### Optional features
+
+- **Alpha-Guided Patches** requires CGAL and CMake. On macOS, run
+  `brew install cgal cmake`; on Ubuntu/Debian, run
+  `sudo apt install libcgal-dev cmake`. Remi can build its small helper
+  automatically, or you can click **Build Helper**.
+- **AutoRemesher** requires a separate executable from the
+  [AutoRemesher releases page](https://github.com/huxingyi/autoremesher/releases).
+  Set its path in the Remi panel or with the `AUTOREMESHER_PATH` environment
+  variable.
+
+## Pipeline behavior
+
+| Stage | What happens | Full pipeline default |
+|-------|--------------|-----------------------|
+| **Repair / Remesh** | Creates a rebuilt copy with Voxel Remesh or Closing Volume | On |
+| **MeshLab Decimation** | Reduces faces through one or more quadric-collapse passes | On |
+| **Interactive Instant Meshes** | Opens the guided viewport workspace and extracts a quad result | Separate manual workflow |
+| **AutoRemesher** | Sends a mesh to the optional external automatic quad remesher | Off |
+| **Bake Textures** | Bakes albedo, roughness, tangent-space normal, and AO maps to the result | On |
+
+## UI reference
+
+The short descriptions below are a reference for less common settings. Blender
+also shows a tooltip when you hover over a control.
+
+<details>
+<summary><strong>Repair and remesh controls</strong></summary>
+
+| Control | Meaning |
+|---------|---------|
+| **Voxel Size** | SDF sampling resolution. Lower values preserve more detail but use more memory. |
 | **Volume Resolution** | Closing-volume voxel size relative to Voxel Size. `0.5` is twice as fine and substantially more expensive. |
-| **Preserve Sharp Creases** | Enables explicit feature-edge fitting after surface projection. |
-| **Feature °** | Minimum source dihedral angle treated as a crease. `35°` is a useful starting point for 90° corners. |
-| **Reach** | Width of crease fitting measured in final voxels. Increase if an inside corner remains rounded; decrease if nearby surfaces pinch. |
-| **Targeted Hole Patching** | Fast local repair with no volume reconstruction. Rays are cast only along the drawn stroke to form an ordered 3D ring on the visible surrounding surface. Remi triangulates and fairs a membrane inside that ring. |
-| **Ray px** | Pixel spacing between stroke rays. Lower values follow irregular drawings more densely. |
-| **Depth** | Allowed front-surface depth variation relative to the object diagonal. Lower values reject rays that pass through the hole and hit a back surface. |
-| **Patch Resolution / Relax** | Controls adaptive membrane tessellation and interior fairing. The ray-hit boundary remains locked on the source. |
-| **Draw Around Hole** | Starts the viewport stroke. Draw on the intact surface around one hole—not through empty space—and release. The result preserves the original mesh and adds only that local overlapping membrane. |
-| **Pre-Repair Holes** | Enables a local hole-preparation method before the normal SDF stage. |
-| **Method: Alpha-Guided Hole Patches** | Recommended for fragmented AI geometry. CGAL creates a temporary watertight guide, but Remi discards almost all of it. Only faces spanning regions far from the original surface are copied onto an untouched duplicate of the source. The prepared source and patches then enter the normal voxel flow. |
-| **Detail Scale** | Controls which openings the hidden guide bridges. Raise it when the guide follows through a hole instead of covering it; lower values retain smaller cavities. |
-| **Auto Find Hole Scale** | Repeats the hidden guide at progressively larger scales until generated patches touch the requested fraction of open boundaries. |
-| **Maximum Scale** | Safety limit for automatic escalation. Extremely fragmented shells may need `0.3` or more. |
-| **Boundary Coverage** | Required fraction of sampled open edges that should meet a donor patch. Remi reports the measured result and stops instead of silently continuing when coverage remains very poor. |
-| **Surface Offset** | How tightly the hidden guide follows the source near hole borders. It does not offset the original triangles. |
-| **Hole Detection** | Minimum guide-to-source distance treated as a missing-surface patch. Lower values fill smaller gaps but can capture intentional recesses. |
-| **Border Overlap** | Number of guide-face rings added around a patch. Near-source border vertices are projected onto the original surface so the following voxel stage fuses the patch reliably. |
-| **Patch Resolution** | Target patch edge length measured in SDF voxels. Lower values adaptively subdivide donor patches more densely without changing the hole-closing scale. |
-| **Patch Relax** | Smooths only donor-patch interiors after subdivision. Patch borders stay locked to the original surface. |
-| **Helper / Auto Build / Build Helper** | Use a custom helper binary, compile it on first run, or build it explicitly. The source is included in `alpha_wrap_helper/`. |
-| **Method: Hybrid** | Caps bounded topology holes, then bridges fragmented cracks with an SDF expand/contract closing pass. |
-| **Method: Boundary Only** | Triangulates explicit boundary loops without changing nearby disconnected surfaces. |
-| **Method: Volume-Guided Patches** | Creates a finer temporary SDF closing volume, projects its near-source region onto the original, retains only faces spanning empty space, and discards the rough full shell before the normal remesh. |
-| **Guide Resolution** | Temporary volume voxel size relative to the final voxel size. `0.5` makes the guide twice as fine; lower values hug the source more closely but use more memory. |
-| **Surface Fit Reach** | Distance around retained volume patches that is projected exactly onto the original surface. This affects the donor patch only; original triangles are never replaced. |
-| **Max Loop Edges** | Largest boundary loop that the topology stage may cap. |
+| **Crack Size** | Largest volumetric gap to close relative to the object bounds. Start low and increase only until the intended gaps close. |
+| **Surface Fit Reach** | Distance around retained volume patches that is projected back onto the source. |
+| **Preserve Sharp Creases** | Fits nearby reconstructed vertices toward detected source feature edges. |
+| **Feature / Reach** | Minimum crease angle and the width of crease fitting measured in final voxels. |
+| **Fillet / Smooth** | Optional post-remesh SDF refinement. |
+| **Remesh Copy** | Creates a remeshed object while keeping the source. |
+| **Apply Modifier** | Applies the Voxel Remesh Geometry Nodes modifier permanently to the copy. |
+| **Ray px** | Pixel spacing between samples for a targeted hole stroke. Lower values follow the stroke more densely. |
+| **Depth** | Rejects ray hits whose visible-surface depth changes too much, helping avoid the back surface through a hole. |
+| **Patch Resolution / Relax** | Controls targeted or guide-derived patch tessellation and interior smoothing. Patch borders remain locked. |
+| **Pre-Repair Holes** | Runs a selected hole-preparation method before normal Voxel Remesh. |
+| **Start / Maximum Hole Scale** | Initial and maximum opening scale used by Alpha-Guided Patches. |
+| **Auto Find Hole Scale** | Increases the hidden guide scale until enough open boundaries are covered. |
+| **Boundary Coverage** | Required fraction of sampled open edges that must meet generated patches. |
+| **Surface Offset** | How tightly the hidden Alpha Wrap guide follows the source near hole borders. |
+| **Hole Detection** | Minimum guide-to-source distance treated as missing surface. Lower values fill smaller gaps. |
+| **Border Overlap** | Extra guide-face rings retained around each patch so the following voxel stage can fuse it. |
+| **Max Loop Edges** | Largest explicit boundary loop that Boundary Only or Hybrid may cap. |
 | **Weld Distance** | Merges nearly coincident vertices before boundary analysis. Zero disables welding. |
-| **Crack Size** | Maximum volumetric closing distance relative to the mesh bounds. Start low and increase only until the intended gaps close. |
-| **Recover Detail** | Softly projects reconstructed vertices back toward nearby original surfaces without moving the centers of newly filled gaps. |
-| **Detail Reach** | Maximum scale-aware projection distance. Remi also guarantees a minimum reach of two voxels. |
-| **Repair Copy** | Runs the configured repair as a standalone operation while preserving the source. |
-| **Voxel Size** | SDF sampling resolution (lower = finer). Remi also uses it as the Grid to Mesh threshold, preserving the original one-voxel consolidation behavior. |
-| **Fillet** / **Smooth** | Optional post-remesh surface refinement. |
-| **Remesh Copy** | Creates a remeshed copy of the active mesh. |
-| **Apply Modifier** | Applies the Geometry Nodes modifier permanently. |
+| **Recover Detail / Detail Reach** | Projects reconstructed vertices toward nearby source surfaces without moving the centers of newly filled gaps. |
+| **Helper / Auto Build / Build Helper** | Select, automatically compile, or explicitly compile the CGAL Alpha Wrap helper. |
 
-### MeshLab Decimation
-| Control | Description |
-|---------|-------------|
-| **Passes** | Number of sequential decimation passes. |
-| **Keep** | Target face count percentage per pass (e.g. 50% = half the faces each pass). |
-| **Preserve Detail** | Enables MeshLab normal preservation and planar quadrics so decimation retains recovered surface structure. |
-| **Suffix** | Name suffix for the output mesh. |
-| **Decimate** | Run decimation standalone on the active mesh. |
+</details>
 
-### AutoRemesher (External)
-| Control | Description |
-|---------|-------------|
-| **Executable** | Path to the AutoRemesher CLI binary. |
-| **Target** | Target quad/face count. |
-| **Adaptive** | Adaptivity parameter. |
-| **Edge Scale** | Edge scaling factor. |
-| **Sharp °** | Sharp angle threshold. |
-| **Smooth °** | Smooth normal angle. |
-| **Run AutoRemesher** | Run standalone on the active mesh. |
+<details>
+<summary><strong>Interactive Instant Meshes controls</strong></summary>
 
-### Interactive Instant Meshes
-
-| Control | Description |
-|---------|-------------|
-| **Start Interactive Retopology** | Builds a persistent native Instant Meshes hierarchy, solves orientation and position in sequence, validates topology, and creates the first preview automatically. |
-| **Orientation Comb** | Draw on the visible surface to steer nearby quad directions. |
-| **Output Edge** | Adds both orientation and position constraints so the extracted topology follows the drawn path with an edge. |
-| **Dim Original** | Darkens the visible source surface while preserving its depth, keeping back-side retopo edges occluded. |
-| **Retopo Offset** | Lifts the cage along its extracted normals as a fraction of the target quad size to prevent z-fighting. |
-| **Face Fill** | Adds a translucent fill below the bright retopology edges for easier shape reading. |
-| **X-Ray Retopo** | Deliberately shows the whole cage through the source; disabled by default for a clean front-surface view. |
-| **Orientation / Position** | Toggle native field visualization in the Blender viewport. |
+| Control | Meaning |
+|---------|---------|
+| **Target** | Approximate output face count. Pure-quad subdivision is accounted for automatically. |
+| **Pure Quads** | Regularly subdivides the extracted field mesh into quads only. |
+| **Creases / Angle** | Aligns the field to source edges sharper than the selected angle. |
+| **Align Open Boundaries** | Constrains the field and output grid to open mesh boundaries. |
+| **Extrinsic** | Optimizes directions in 3D instead of relying only on intrinsic surface transport. |
+| **Deterministic** | Prefers reproducible hierarchy operations at a small performance cost. |
+| **Projection Steps** | Number of output smoothing and source-surface reprojection passes. |
+| **Start Interactive Retopology** | Creates a persistent native session and starts the orientation and position solves. Auto-update then builds the first preview. |
+| **Orientation Comb** | Draws a surface guide that steers nearby quad directions. |
+| **Output Edge** | Guides direction and asks extraction to place an output edge along the stroke. |
+| **Dim Original** | Darkens the source while preserving normal depth occlusion. |
+| **Retopo Offset** | Lifts the cage along its normals to prevent z-fighting with the source. |
+| **Face Fill** | Adds translucent faces beneath the bright preview edges. |
+| **X-Ray Retopo** | Shows the entire cage through the source, including its back side. |
+| **Orientation / Position** | Shows the native fields in the viewport. |
 | **Singularities** | Shows orientation and position field singularities. |
-| **Rebuild Both Fields / Re-solve Position** | Re-run the fields while retaining guides. Orientation rebuilds always continue through position so extraction cannot use stale field data. |
-| **Auto-update After Guides** | Rebuilds both fields and the preview whenever a guide is added, removed, or cleared. |
-| **Update Quad Preview** | Re-extracts the validated quad result as an offset viewport cage. |
-| **Accept Retopology** | Creates a new Blender mesh and leaves the source unchanged. |
-| **Cancel Session** | Releases the native hierarchy and removes all interactive overlays. |
+| **Auto-update After Guides** | Automatically re-extracts the preview after guide-driven field solves. |
+| **Rebuild Both Fields** | Rebuilds orientation and position while retaining guides. Auto-update also rebuilds the preview. |
+| **Re-solve Position** | Rebuilds the position field without discarding the orientation result. |
+| **Update Quad Preview** | Re-extracts the quad result from the current fields. |
+| **Accept Retopology** | Creates a new Blender object from the current preview. |
+| **Cancel Session** | Releases the native session and removes its overlays. |
 
-### Bake Textures
-| Control | Description |
-|---------|-------------|
-| **Texture Size** | Output resolution for baked maps. |
-| **Auto Unwrap** | When ON, generates UVs automatically (Smart Project or Lightmap Pack) if the target has no UV map. **Disable this** if you have already unwrapped the target mesh externally. |
-| **UV Method** | Smart Project or Lightmap Pack (only shown when Auto Unwrap is ON). |
-| **Margin** | UV island margin (only shown when Auto Unwrap is ON). |
-| **Recalc Normals** | Recalculate normals on the target before baking. |
-| **Half Scale** | Temporarily scale objects to 0.5× during baking for improved ray-hit reliability, then restore. |
-| **Cage** | Cage extrusion distance. |
-| **Max Ray** | Maximum ray distance for baking cast. |
+</details>
 
-**Baking buttons** (standalone — select source → target, then click):
+<details>
+<summary><strong>Decimation, AutoRemesher, and baking controls</strong></summary>
 
-| Button | Bakes |
-|--------|-------|
-| **Bake All Maps** | Albedo + Roughness + Normal + AO |
-| **Albedo** | Diffuse/albedo only |
-| **Roughness** | Roughness only |
-| **Normal** | Tangent-space normal only |
-| **AO** | Ambient occlusion only |
+| Control | Meaning |
+|---------|---------|
+| **Decimation Passes** | Number of sequential PyMeshLab decimation passes. |
+| **Keep** | Fraction of faces retained per pass. For example, six `50%` passes retain roughly `1.56%` before topology limits. |
+| **Preserve Detail** | Enables normal preservation and planar quadrics during decimation. |
+| **AutoRemesher Target / Adaptive** | Requested quad count and curvature-adaptive density. |
+| **Edge Scale / Sharp / Smooth** | External AutoRemesher edge scaling, sharp-angle threshold, and normal smoothing angle. |
+| **Texture Size** | Square output resolution for every baked map. |
+| **Auto Unwrap** | Generates target UVs when none exist. Disable it to use UVs prepared elsewhere. |
+| **UV Method / Margin** | Automatic unwrap method and spacing between UV islands. |
+| **Recalc Normals** | Recalculates target normals before baking. |
+| **Half Scale** | Temporarily scales both meshes to `0.5x` during baking, then restores them. |
+| **Cage / Max Ray** | Cage extrusion and maximum source-ray distance. |
 
-### Edit Mode Selection Tools
-| Tool | Description |
-|------|-------------|
-| **Smart Select Object** | From a picked face, edge, or vertex, selects the entire connected mesh island. |
-| **Detect Volume Bridges** | Finds every narrow connector between two meaningful spatial volumes, favoring similarly sized parts over similar face counts. |
+For standalone baking, select the source mesh or meshes first and the target last,
+so the target is active. Use **Bake All Maps** or bake albedo, roughness, normal,
+and AO independently.
+
+</details>
+
+<details>
+<summary><strong>Edit Mode tools</strong></summary>
+
+| Tool | Meaning |
+|------|---------|
+| **Smart Select Object** | Selects the complete connected island from a picked face, edge, or vertex. |
+| **Detect Volume Bridges** | Finds narrow connectors between meaningful spatial volumes. |
 | **Preview Fused Part** | Selects one side of the proposed volume-aware separation. |
 | **Separate Fused Volumes** | Separates fused parts across all detected connector edges. |
-| **Select Inner Shell** | Scans nearby opposite-facing surfaces and previews the likely inner duplicate layer. |
-| **Remove Inner Shell** | Removes the detected inner layer and optional direct connector faces. Use the preview action first. |
+| **Select Inner Shell** | Previews the likely inner duplicate layer from nearby opposite-facing surfaces. |
+| **Remove Inner Shell** | Deletes the detected inner layer and optional direct connector faces. Preview first. |
 
-### Full Pipeline
-One-click **▶ Run Full Remi** — runs all enabled steps in sequence, with a progress bar and real-time status updates.
+</details>
 
-## Usage
+## Baking notes
 
-### Automated pipeline
-1. Select or import a mesh
-2. Open the **Remi** tab in the sidebar (`N` key)
-3. Choose **Voxel Remesh** for speed, or **Closing Volume** when automatic hole closure is worth the additional time and memory. For Closing Volume, start with Crack Size `0.015`, Volume Resolution `0.5`, Surface Fit Reach `0.03`, Feature `35°`, and Reach `2.5`
-4. Toggle each remaining step on/off as needed and adjust parameters
-5. Click **▶ Run Full Remi**
+- Baking uses Cycles with 128 samples.
+- Albedo is baked from Principled **Base Color** through emission so metallic
+  source materials do not wash it out.
+- Normal maps are tangent-space; AO is stored as non-color data.
+- Source materials are deep-copied before temporary bake changes.
+- Images are reused by name, so rebaking updates existing maps.
 
-### Target one ambiguous hole
-1. Choose **Voxel Remesh** and frame the visible hole in the viewport
-2. Under **Targeted Hole Patching**, click **Draw Around Hole**
-3. Hold the left mouse button and draw on the intact surface around the visible rim; release to build
-4. Inspect the generated `_targeted_patch` copy
-5. Keep Pre-Repair Holes disabled and run **Remesh Copy** on that prepared copy
+## Project structure
 
-### Standalone baking (manual)
-1. **Select the original mesh(es)** with materials (source)
-2. **Shift-select the optimized/remeshed mesh** so it becomes active (target)
-3. Toggle **Auto Unwrap** OFF if you have prepared UVs on the target yourself
-4. Click **Bake All Maps** (or Albedo / Roughness / Normal / AO individually)
-
-### Edit Mode selection tools
-1. Enter **Edit Mode** on a mesh
-2. The **Remi Selection Tools** panel appears
-3. Pick a face, edge, or vertex and click **Smart Select Object** to isolate a connected lobe
-4. For accidentally fused parts, use **Detect Volume Bridges**, preview the result, then **Separate Fused Volumes**
-5. For a fully doubled mesh, use **Select Inner Shell** first; if the preview is correct, run **Remove Inner Shell**
-
-## How Baking Works
-
-- Uses **Cycles** with 128 samples for high-quality results
-- Albedo is baked from the source Principled **Base Color** through emission, so metallic source materials cannot wash it out.
-- Normal maps are **tangent-space**
-- AO is baked as a separate non-color data map.
-- **Half-scale** mode (default ON) sets both objects to 0.5× scale during baking for reliable ray hits, then restores — no transform is applied
-- Source materials are **deep-copied** so the original shaders are never touched
-- Images are **reused by name** — re-baking updates existing maps rather than creating duplicates
-
-## Notes
-
-- The **original mesh is never modified** — everything runs on a copy.
-- Alpha Wrap is used only as a cloth-like analysis surface. The delivered preparation mesh is the evaluated original geometry plus local donor patches; the full wrap is deleted before SDF remeshing. Use **Prepare Hole Patches** to inspect this intermediate mesh directly.
-- Hybrid hole repair remains available and combines bounded boundary triangulation with an optional scale-aware SDF morphological closing pass.
-- The final result's vertices are at world-space coordinates with the object at the origin.
-- Intermediate format between Blender and PyMeshLab is **PLY binary** (dramatically faster than OBJ for large meshes).
-- Each pipeline step can be run standalone via its own button — independent of the full pipeline.
+- Blender UI and orchestration are written in Python.
+- [`instant_meshes/`](instant_meshes/) contains the isolated Blender-facing
+  Interactive Instant Meshes implementation.
+- [`instant_meshes/native/`](instant_meshes/native/) contains the headless C++
+  field solver, pybind11 bridge, build files, and retained upstream source.
+- The standalone Instant Meshes GUI, NanoGUI, GLFW, OpenGL renderer, and CLI are
+  intentionally not included because Blender supplies those responsibilities.
+- PyMeshLab, CGAL, and AutoRemesher integrations remain separate from the
+  Instant Meshes module.
 
 ## Credits
 
-- **Remi** addon by [shaderko](https://github.com/shaderko)
-- **AutoRemesher integration** adapted from [autoremesher-blender-bridge](https://github.com/adriflex/autoremesher-blender-bridge) by [Adriflex](https://adriflex.github.io/)
-- **AutoRemesher** CLI tool by [huxingyi](https://github.com/huxingyi/autoremesher)
-- **PyMeshLab** by Alessandro Muntoni and Paolo Cignoni / CNR-ISTI
-- **MeshLab** by the Visual Computing Lab of ISTI-CNR
-- **CGAL 3D Alpha Wrapping** by the CGAL project, based on Portaneri et al., *Alpha Wrapping with an Offset* (SIGGRAPH 2022)
+- **Remi** by [shaderko](https://github.com/shaderko).
+- **Instant Meshes** by Wenzel Jakob and contributors —
+  [wjakob/instant-meshes](https://github.com/wjakob/instant-meshes).
+- **AutoRemesher integration** adapted from
+  [autoremesher-blender-bridge](https://github.com/adriflex/autoremesher-blender-bridge)
+  by [Adriflex](https://adriflex.github.io/).
+- **AutoRemesher** by [huxingyi](https://github.com/huxingyi/autoremesher).
+- **PyMeshLab** and **MeshLab** by CNR-ISTI's Visual Computing Lab.
+- **CGAL 3D Alpha Wrapping**, based on Portaneri et al., *Alpha Wrapping with an
+  Offset* (SIGGRAPH 2022).
 
 ## License
 
-[GPL-3.0-or-later](LICENSE). The native Interactive Instant Meshes module also
-contains compatible third-party components; see
+[GPL-3.0-or-later](LICENSE). The native Interactive Instant Meshes module
+contains compatible third-party components. See
 [Third-party notices](THIRD_PARTY_NOTICES.md) for exact revisions, licenses,
 and retained-source details.

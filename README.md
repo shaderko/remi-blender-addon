@@ -230,6 +230,7 @@ also shows a tooltip when you hover over a control.
 | **Decimation Passes** | Number of sequential PyMeshLab decimation passes. |
 | **Keep** | Fraction of faces retained per pass. For example, six `50%` passes retain roughly `1.56%` before topology limits. |
 | **Preserve Detail** | Enables normal preservation and planar quadrics during decimation. |
+| **Keep Texture (standalone only)** | Uses MeshLab's texture-aware decimation to preserve the object's UVs and image texture. The full pipeline ignores it because textures are baked at its final stage. |
 | **AutoRemesher Target / Adaptive** | Requested quad count and curvature-adaptive density. |
 | **Edge Scale / Sharp / Smooth** | External AutoRemesher edge scaling, sharp-angle threshold, and normal smoothing angle. |
 | **Texture Size** | Square output resolution for every baked map. |

@@ -86,6 +86,7 @@ def run_quadric_decimation(
     preserve_boundary: bool = False,
     preserve_normal: bool = False,
     preserve_detail: bool = False,
+    preserve_texture: bool = False,
     optimal_placement: bool = True,
     autoclean: bool = True,
     output_format: str = "ply",
@@ -103,6 +104,9 @@ def run_quadric_decimation(
         preserve_normal: Whether to avoid face flipping.
         optimal_placement: Whether to place vertices at optimal positions.
         autoclean: Whether to clean up after simplification.
+        preserve_texture: Use MeshLab's texture-aware decimation filter. The
+                          input and output must be OBJ files so UVs and texture
+                          references can be retained.
         output_format: Output format ("ply" or "obj"). Default "ply" is
                        significantly faster.
 
@@ -117,6 +121,12 @@ def run_quadric_decimation(
 
     result = {"success": True, "error": None}
 
+    if preserve_texture and output_format.lower() != "obj":
+        return {
+            "success": False,
+            "error": "Texture-preserving decimation requires OBJ input/output",
+        }
+
     try:
         ms = pymeshlab.MeshSet()
         ms.load_new_mesh(input_path)
@@ -125,24 +135,34 @@ def run_quadric_decimation(
         input_faces = ms.current_mesh().face_number()
         result["input_faces"] = input_faces
 
-        # Apply decimation
-        ms.apply_filter(
-            "meshing_decimation_quadric_edge_collapse",
-            targetperc=target_percentage,
-            preserveboundary=preserve_boundary,
-            preservenormal=preserve_normal or preserve_detail,
-            planarquadric=preserve_detail,
-            optimalplacement=optimal_placement,
-            autoclean=autoclean,
+        # The texture-aware filter preserves UV parametrization. Unlike the
+        # regular filter, it does not accept the ``autoclean`` parameter.
+        filter_name = (
+            "meshing_decimation_quadric_edge_collapse_with_texture"
+            if preserve_texture
+            else "meshing_decimation_quadric_edge_collapse"
         )
+        filter_args = {
+            "targetperc": target_percentage,
+            "preserveboundary": preserve_boundary,
+            "preservenormal": preserve_normal or preserve_detail,
+            "planarquadric": preserve_detail,
+            "optimalplacement": optimal_placement,
+        }
+        if not preserve_texture:
+            filter_args["autoclean"] = autoclean
+        ms.apply_filter(filter_name, **filter_args)
 
         # Record output face count
         output_faces = ms.current_mesh().face_number()
         result["output_faces"] = output_faces
 
-        # Save — use binary=True for PLY (dramatically faster than OBJ)
-        use_binary = output_format.lower() == "ply"
-        ms.save_current_mesh(output_path, binary=use_binary)
+        # ``binary`` is a PLY-only save parameter. Passing it while writing an
+        # OBJ makes PyMeshLab reject the export.
+        if output_format.lower() == "ply":
+            ms.save_current_mesh(output_path, binary=True)
+        else:
+            ms.save_current_mesh(output_path)
 
     except Exception as e:
         result["success"] = False
@@ -159,6 +179,7 @@ def run_multi_pass_decimation(
     preserve_boundary: bool = False,
     preserve_normal: bool = False,
     preserve_detail: bool = False,
+    preserve_texture: bool = False,
     optimal_placement: bool = True,
     autoclean: bool = True,
 ) -> list:
@@ -179,9 +200,17 @@ def run_multi_pass_decimation(
     Returns:
         list of dict results, one per pass.
     """
-    # Determine intermediate format from output_path extension
+    # Textured meshes need OBJ/MTL throughout: PLY cannot store the UV/image
+    # references required by MeshLab's texture-aware decimator.
     output_ext = os.path.splitext(output_path)[1].lower()
-    final_format = "ply" if output_ext == ".ply" else "ply"  # default PLY
+    final_format = "obj" if output_ext == ".obj" else "ply"
+    if preserve_texture and final_format != "obj":
+        return [{
+            "success": False,
+            "error": "Texture-preserving decimation requires an OBJ output path",
+            "pass": 1,
+        }]
+    intermediate_format = "obj" if preserve_texture else "ply"
 
     results = []
     current_input = input_path
@@ -191,9 +220,9 @@ def run_multi_pass_decimation(
             # Last pass → final output
             current_output = output_path
         else:
-            # Intermediate pass → temp PLY file
+            # Intermediate passes must retain texture data when requested.
             base, _ = os.path.splitext(output_path)
-            current_output = f"{base}_pass{i+1:02d}.ply"
+            current_output = f"{base}_pass{i+1:02d}.{intermediate_format}"
 
         pass_result = run_quadric_decimation(
             input_path=current_input,
@@ -202,9 +231,10 @@ def run_multi_pass_decimation(
             preserve_boundary=preserve_boundary,
             preserve_normal=preserve_normal,
             preserve_detail=preserve_detail,
+            preserve_texture=preserve_texture,
             optimal_placement=optimal_placement,
             autoclean=autoclean,
-            output_format="ply",
+            output_format=final_format if i == passes - 1 else intermediate_format,
         )
         pass_result["pass"] = i + 1
         results.append(pass_result)
@@ -212,6 +242,20 @@ def run_multi_pass_decimation(
         # If pass failed, stop
         if not pass_result["success"]:
             break
+
+        # The next pass has loaded this generated file already, so earlier
+        # intermediates are no longer needed. OBJ's sidecar MTL is safe to
+        # remove too; texture images are referenced, not copied here.
+        if i > 0:
+            try:
+                os.remove(current_input)
+            except OSError:
+                pass
+            if current_input.lower().endswith(".obj"):
+                try:
+                    os.remove(os.path.splitext(current_input)[0] + ".mtl")
+                except OSError:
+                    pass
 
         # Next input = this pass's output
         current_input = current_output

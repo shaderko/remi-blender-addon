@@ -298,6 +298,14 @@ class RemiSceneSettings(PropertyGroup):
         description="Use normal preservation and planar quadrics during MeshLab decimation",
         default=True,
     )
+    decimation_with_texture: BoolProperty(
+        name="Keep Texture",
+        description=(
+            "For standalone decimation only: preserve the active mesh's UVs and "
+            "image texture. The full pipeline ignores this because it bakes textures last."
+        ),
+        default=False,
+    )
     output_name_suffix: StringProperty(
         name="Output Suffix",
         description="Suffix appended to output object name",

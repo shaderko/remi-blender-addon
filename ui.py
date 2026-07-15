@@ -133,6 +133,7 @@ class Remi_PT_MainPanel(Panel):
             row.prop(s, "decimation_passes", text="Passes")
             row.prop(s, "target_percentage", text="Keep")
             box.prop(s, "decimation_preserve_detail", text="Preserve Detail")
+            box.prop(s, "decimation_with_texture", text="Keep Texture (standalone only)")
             box.prop(s, "output_name_suffix", text="Suffix")
             box.separator(factor=0.3)
             box.operator("remi.decimate", text="Decimate")

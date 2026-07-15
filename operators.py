@@ -82,8 +82,12 @@ def _export_ply(obj: bpy.types.Object, filepath: str) -> bool:
     return success
 
 
-def _export_obj_for_tool(obj: bpy.types.Object, filepath: str) -> bool:
-    """Export as OBJ for external tool consumption (AutoRemesher)."""
+def _export_obj_for_tool(
+    obj: bpy.types.Object,
+    filepath: str,
+    export_materials: bool = False,
+) -> bool:
+    """Export an OBJ for an external tool, optionally retaining materials."""
     prev_active = bpy.context.view_layer.objects.active
     prev_selected = bpy.context.selected_objects.copy()
     bpy.ops.object.select_all(action="DESELECT")
@@ -96,7 +100,8 @@ def _export_obj_for_tool(obj: bpy.types.Object, filepath: str) -> bool:
             apply_modifiers=True,
             forward_axis="NEGATIVE_Z",
             up_axis="Y",
-            export_materials=False,
+            export_materials=export_materials,
+            path_mode="ABSOLUTE" if export_materials else "AUTO",
         )
         success = True
     except Exception:
@@ -109,6 +114,171 @@ def _export_obj_for_tool(obj: bpy.types.Object, filepath: str) -> bool:
         if o != prev_active:
             o.select_set(True)
     return success
+
+
+def _has_image_texture(obj: bpy.types.Object) -> bool:
+    """Return whether ``obj`` has UVs and an image texture for OBJ export."""
+    if not obj.data.uv_layers:
+        return False
+    for slot in obj.material_slots:
+        material = slot.material
+        if not material or not material.use_nodes or not material.node_tree:
+            continue
+        if any(
+            node.type == "TEX_IMAGE" and node.image
+            for node in material.node_tree.nodes
+        ):
+            return True
+    return False
+
+
+def _prepare_texture_export_images(
+    obj: bpy.types.Object,
+    temp_dir: str,
+    base_name: str,
+) -> tuple[list[tuple], list[str]] | None:
+    """Give generated images temporary PNG paths so OBJ can reference them.
+
+    Blender's generated bake images have pixels but no filepath. OBJ/MTL can
+    only reference files, so save temporary copies for the external MeshLab
+    pass. The original image state is returned and must be restored after OBJ
+    export; the temporary files remain until MeshLab has finished reading them.
+    """
+    states = []
+    temp_files = []
+    seen_images = set()
+    image_number = 0
+
+    for slot in obj.material_slots:
+        material = slot.material
+        if not material or not material.use_nodes or not material.node_tree:
+            continue
+        for node in material.node_tree.nodes:
+            image = node.image if node.type == "TEX_IMAGE" else None
+            if not image or image.as_pointer() in seen_images:
+                continue
+            seen_images.add(image.as_pointer())
+            image_path = bpy.path.abspath(image.filepath) if image.filepath else ""
+            if image_path and os.path.isfile(image_path):
+                continue
+
+            image_number += 1
+            texture_name = bpy.path.clean_name(image.name) or "texture"
+            temp_path = os.path.join(
+                temp_dir,
+                f"{base_name}_texture_{image_number:02d}_{texture_name}.png",
+            )
+            states.append((image, image.filepath_raw, image.file_format))
+            try:
+                image.filepath_raw = temp_path
+                image.file_format = "PNG"
+                image.save()
+            except Exception as exc:
+                print(f"Remi: could not save texture '{image.name}': {exc}")
+                _restore_texture_export_images(states)
+                for path in temp_files:
+                    try:
+                        os.remove(path)
+                    except OSError:
+                        pass
+                return None
+            temp_files.append(temp_path)
+
+    return states, temp_files
+
+
+def _restore_texture_export_images(states: list[tuple]) -> None:
+    """Restore image file paths changed for a temporary OBJ export."""
+    for image, filepath_raw, file_format in states:
+        image.filepath_raw = filepath_raw
+        image.file_format = file_format
+
+
+def _obj_mtl_has_texture(filepath: str) -> bool:
+    """Return whether the OBJ's MTL references at least one image map."""
+    mtl_path = os.path.splitext(filepath)[0] + ".mtl"
+    try:
+        with open(mtl_path, encoding="utf-8", errors="replace") as mtl_file:
+            return any(line.lstrip().startswith("map_") for line in mtl_file)
+    except OSError:
+        return False
+
+
+def _restore_source_materials(
+    source: bpy.types.Object,
+    result: bpy.types.Object,
+) -> None:
+    """Replace imported OBJ materials with the source Blender materials."""
+    source_materials = {
+        material.name: material
+        for material in source.data.materials
+        if material
+    }
+    for index, material in enumerate(result.data.materials):
+        source_material = source_materials.get(material.name) if material else None
+        if source_material is None and index < len(source.data.materials):
+            source_material = source.data.materials[index]
+        if source_material:
+            result.data.materials[index] = source_material
+
+
+def _run_textured_decimation_worker(
+    input_path: str,
+    output_path: str,
+    settings,
+) -> list[dict]:
+    """Run the textured MeshLab filter outside Blender's process.
+
+    The macOS PyMeshLab OBJ loader can segfault when called from Blender's
+    process. Isolating it in Blender's bundled Python keeps that native fault
+    from terminating the interactive Blender session.
+    """
+    worker = os.path.join(os.path.dirname(__file__), "_decimate_worker.py")
+    process = subprocess.run(
+        [
+            sys.executable,
+            worker,
+            input_path,
+            output_path,
+            str(settings.target_percentage),
+            str(settings.decimation_passes),
+            str(settings.decimation_preserve_detail),
+            "true",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    results = []
+    for line in process.stdout.splitlines():
+        try:
+            status = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if "pass" in status:
+            results.append({
+                "success": True,
+                "pass": status["pass"],
+                "input_faces": status.get("in_faces"),
+                "output_faces": status.get("out_faces"),
+            })
+
+    if process.returncode != 0 or not os.path.isfile(output_path):
+        error = process.stderr.strip() or process.stdout.strip() or "Textured MeshLab decimation failed"
+        return [{"success": False, "pass": len(results) + 1, "error": error}]
+    return results
+
+
+def _remove_obj_artifacts(filepath: str) -> None:
+    """Remove an OBJ and its sidecar MTL without touching source textures."""
+    for path in (
+        filepath,
+        os.path.splitext(filepath)[0] + ".mtl",
+        filepath + ".mtl",
+    ):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
 
 
 def _import_obj_result(filepath: str) -> bpy.types.Object:
@@ -1568,10 +1738,10 @@ class Remi_OT_ApplyRemesh(Operator):
 
 
 class Remi_OT_Decimate(Operator):
-    """Export to OBJ and run PyMeshLab quadric edge collapse decimation."""
+    """Run standalone PyMeshLab decimation on the active mesh."""
     bl_idname = "remi.decimate"
     bl_label = "Decimate (MeshLab)"
-    bl_description = "Export active object to OBJ and run MeshLab quadric edge collapse"
+    bl_description = "Run MeshLab quadric edge collapse on the active object"
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
@@ -1591,50 +1761,107 @@ class Remi_OT_Decimate(Operator):
         # Setup temp paths
         temp_dir = _get_temp_dir()
         base_name = bpy.path.clean_name(obj.name)
-        input_ply = os.path.join(temp_dir, f"{base_name}_input.ply")
-        output_ply = os.path.join(temp_dir, f"{base_name}_decimated.ply")
+        keep_texture = settings.decimation_with_texture
+        if keep_texture and not _has_image_texture(obj):
+            self.report({"ERROR"}, "Keep Texture needs a mesh with UVs and an image texture")
+            return {"CANCELLED"}
 
-        # Export to PLY (no axis conversion — PyMeshLab compatible)
-        self.report({"INFO"}, "Exporting to PLY...")
-        if not _export_ply(obj, input_ply):
-            self.report({"ERROR"}, "PLY export failed")
+        file_ext = "obj" if keep_texture else "ply"
+        input_path = os.path.join(temp_dir, f"{base_name}_input.{file_ext}")
+        output_path = os.path.join(temp_dir, f"{base_name}_decimated.{file_ext}")
+        texture_image_states = []
+        texture_temp_files = []
+
+        # PLY is fastest for ordinary decimation. Textured decimation must use
+        # OBJ/MTL so MeshLab can read and preserve UV/image references.
+        if keep_texture:
+            texture_export = _prepare_texture_export_images(obj, temp_dir, base_name)
+            if texture_export is None:
+                self.report({"ERROR"}, "Could not prepare the texture image for MeshLab")
+                return {"CANCELLED"}
+            texture_image_states, texture_temp_files = texture_export
+        self.report({"INFO"}, "Exporting textured OBJ..." if keep_texture else "Exporting to PLY...")
+        try:
+            export_ok = (
+                _export_obj_for_tool(obj, input_path, export_materials=True)
+                if keep_texture else _export_ply(obj, input_path)
+            )
+        finally:
+            _restore_texture_export_images(texture_image_states)
+        if not export_ok:
+            self.report({"ERROR"}, "Textured OBJ export failed" if keep_texture else "PLY export failed")
+            return {"CANCELLED"}
+        if keep_texture and not _obj_mtl_has_texture(input_path):
+            self.report({"ERROR"}, "OBJ export did not include an image texture")
+            _remove_obj_artifacts(input_path)
+            for path in texture_temp_files:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
             return {"CANCELLED"}
 
         # Run decimation
         self.report({"INFO"}, f"Running {settings.decimation_passes} decimation pass(es)...")
-        results = mlw.run_multi_pass_decimation(
-            input_path=input_ply,
-            output_path=output_ply,
-            passes=settings.decimation_passes,
-            target_percentage=settings.target_percentage,
-            preserve_detail=settings.decimation_preserve_detail,
+        results = (
+            _run_textured_decimation_worker(input_path, output_path, settings)
+            if keep_texture else mlw.run_multi_pass_decimation(
+                input_path=input_path,
+                output_path=output_path,
+                passes=settings.decimation_passes,
+                target_percentage=settings.target_percentage,
+                preserve_detail=settings.decimation_preserve_detail,
+            )
         )
 
         # Check results
         for r in results:
             if not r["success"]:
                 self.report({"ERROR"}, f"Decimation pass {r['pass']} failed: {r.get('error')}")
+                if keep_texture:
+                    _remove_obj_artifacts(input_path)
+                    _remove_obj_artifacts(output_path)
+                    for path in texture_temp_files:
+                        try:
+                            os.remove(path)
+                        except OSError:
+                            pass
                 return {"CANCELLED"}
             print(f"Remi: Pass {r['pass']}: {r.get('input_faces', '?')} → {r.get('output_faces', '?')} faces")
 
-        # Import result back (PLY import)
+        # Import the same format that carried the result data.
         self.report({"INFO"}, "Importing decimated result...")
-        new_obj = _import_ply(output_ply)
+        new_obj = _import_obj_result(output_path) if keep_texture else _import_ply(output_path)
         if new_obj:
+            if keep_texture:
+                _restore_source_materials(obj, new_obj)
             new_obj.name = obj.name + settings.output_name_suffix
             # Vertices are already at world-space coords (baked during export),
             # so the object sits at origin with correct geometry.
             self.report({"INFO"}, f"Decimated model imported as '{new_obj.name}'")
         else:
-            self.report({"ERROR"}, "Failed to import decimated PLY")
+            self.report({"ERROR"}, "Failed to import decimated textured OBJ" if keep_texture else "Failed to import decimated PLY")
             return {"CANCELLED"}
 
-        # Cleanup temp files
-        try:
-            os.remove(input_ply)
-            os.remove(output_ply)
-        except OSError:
-            pass
+        # Cleanup temp meshes and OBJ material sidecars. Source texture images
+        # are only referenced by the MTL, so they are never removed.
+        if keep_texture:
+            _remove_obj_artifacts(input_path)
+            _remove_obj_artifacts(output_path)
+            output_base, _ = os.path.splitext(output_path)
+            for pass_number in range(1, settings.decimation_passes):
+                _remove_obj_artifacts(f"{output_base}_pass{pass_number:02d}.obj")
+            for path in texture_temp_files:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+        else:
+            for path in (input_path, output_path):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
 
         return {"FINISHED"}
 

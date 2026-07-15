@@ -161,6 +161,22 @@ class Remi_PT_MainPanel(Panel):
             box.separator(factor=0.3)
             box.operator("remi.autoremesher", text="Run AutoRemesher")
 
+        # ── Remi UV ─────────────────────────────────────────────
+        box = layout.box()
+        row = box.row()
+        row.label(text="Remi UV", icon="UV")
+        box.prop(s, "bake_uv_profile", text="Profile")
+        row = box.row(align=True)
+        row.prop(s, "bake_texture_size", text="Texture Size")
+        row.prop(s, "bake_uv_margin_px", text="Padding px")
+        box.prop(s, "bake_uv_preserve_seams", text="Preserve Marked Seams")
+        box.operator("remi.generate_uv", text="Generate UV Map", icon="UV")
+        if obj and "remi_uv_chart_count" in obj:
+            row = box.row(align=True)
+            row.label(text=f"{obj['remi_uv_chart_count']} charts")
+            row.label(text=f"p95 {obj['remi_uv_stretch_p95']:.2f}")
+            row.label(text=f"{obj['remi_uv_occupancy']:.0%} packed")
+
         # ── Baking ──────────────────────────────────────────────
         box = layout.box()
         row = box.row()
@@ -173,7 +189,11 @@ class Remi_PT_MainPanel(Panel):
             if s.bake_auto_unwrap:
                 row = box.row(align=True)
                 row.prop(s, "bake_uv_method", text="UV Method")
-                row.prop(s, "bake_uv_island_margin", text="Margin")
+                if s.bake_uv_method == "REMI":
+                    row.prop(s, "bake_uv_profile", text="Profile")
+                    box.prop(s, "bake_uv_margin_px", text="UV Padding px")
+                else:
+                    row.prop(s, "bake_uv_island_margin", text="Margin")
             row = box.row(align=True)
             row.prop(s, "bake_recalc_normals", text="Recalc Normals")
             row.prop(s, "bake_half_scale", text="Half Scale")

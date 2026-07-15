@@ -71,7 +71,16 @@ def main():
         s = os.path.join(src_dir, item)
         d = os.path.join(target_dir, item)
         if os.path.isdir(s):
-            shutil.copytree(s, d)
+            shutil.copytree(
+                s,
+                d,
+                ignore=shutil.ignore_patterns(
+                    "__pycache__",
+                    "build",
+                    "*.pyc",
+                    "*.egg-info",
+                ),
+            )
         else:
             shutil.copy2(s, d)
 

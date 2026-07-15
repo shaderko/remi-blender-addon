@@ -4,20 +4,41 @@ Bakes albedo, roughness, normal, and ambient-occlusion maps from the original
 high-poly mesh onto the remeshed/decimated result.
 """
 
+import math
+
 import bpy
+
+from .uv_mapping import ensure_remi_uv
 
 
 def _ensure_uv(
     obj: bpy.types.Object,
-    method: str = "SMART",
+    method: str = "REMI",
     island_margin: float = 0.02,
     auto_unwrap: bool = True,
+    profile: str = "NORMAL_BAKE",
+    texture_size: int = 2048,
+    margin_px: int = 4,
+    preserve_existing_seams: bool = True,
 ):
     """Ensure the target has UVs, optionally generating them automatically."""
-    if obj.data.uv_layers:
+    if obj.data.uv_layers and (method != "REMI" or not auto_unwrap):
         return True
     if not auto_unwrap:
         return False
+
+    if method == "REMI":
+        result = ensure_remi_uv(
+            obj,
+            profile_id=profile,
+            texture_size=texture_size,
+            margin_px=margin_px,
+            preserve_existing_seams=preserve_existing_seams,
+        )
+        if not result.success:
+            print(f"Baking: Remi UV failed on '{obj.name}': {result.error}")
+        return result.success
+
     bpy.context.view_layer.objects.active = obj
     obj.select_set(True)
     bpy.ops.object.mode_set(mode="EDIT")
@@ -26,7 +47,11 @@ def _ensure_uv(
     if method == "LIGHTMAP":
         bpy.ops.uv.lightmap_pack(PREF_BOX_DIV=12, PREF_MARGIN_DIV=island_margin)
     else:
-        bpy.ops.uv.smart_project(angle_limit=66, island_margin=island_margin)
+        bpy.ops.uv.smart_project(
+            angle_limit=math.radians(66.0),
+            margin_method="FRACTION",
+            island_margin=island_margin,
+        )
 
     bpy.ops.object.mode_set(mode="OBJECT")
     print(f"Baking: Created UV map on '{obj.name}' ({method})")
@@ -211,8 +236,11 @@ def bake_textures(
     target_result: bpy.types.Object,
     texture_size: int = 2048,
     final_name: str = "",
-    uv_method: str = "SMART",
+    uv_method: str = "REMI",
     uv_island_margin: float = 0.02,
+    uv_profile: str = "NORMAL_BAKE",
+    uv_margin_px: int = 4,
+    uv_preserve_seams: bool = True,
     auto_unwrap: bool = True,
     recalc_normals: bool = True,
     cage_extrusion: float = 0.1,
@@ -244,6 +272,10 @@ def bake_textures(
         method=uv_method,
         island_margin=uv_island_margin,
         auto_unwrap=auto_unwrap,
+        profile=uv_profile,
+        texture_size=texture_size,
+        margin_px=uv_margin_px,
+        preserve_existing_seams=uv_preserve_seams,
     ):
         return {
             "success": False,

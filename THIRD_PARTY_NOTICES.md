@@ -1,12 +1,23 @@
 # Third-party notices
 
-Remi is distributed under GPL-3.0-or-later. The native Interactive Instant
-Meshes module also incorporates the components below under their respective
-licenses. Those upstream files retain their original copyright and license
-terms; this notice does not relicense them.
+Remi is distributed under GPL-3.0-or-later. Its native modules incorporate the
+components below under their respective licenses. Those upstream files retain
+their original copyright and license terms; this notice does not relicense
+them.
 
 The release includes the corresponding retained source code and license texts,
 including the source used to build the bundled macOS Apple Silicon binary.
+
+## xatlas
+
+- Project: [jpcy/xatlas](https://github.com/jpcy/xatlas)
+- Revision: `f700c7790aaa030e794b52ba7791a05c085faf0c`
+- License: MIT
+- License text: `uv_mapping/native/vendor/xatlas/LICENSE`
+
+Remi vendors the upstream `xatlas.cpp` and `xatlas.h` files documented for
+direct integration. The Blender-loop conversion, candidate scoring, and
+pybind11 bridge are Remi code outside the vendored directory.
 
 ## Instant Meshes core
 

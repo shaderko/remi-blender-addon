@@ -3,5 +3,6 @@ __pycache__/
 .DS_Store
 alpha_wrap_helper/build/
 instant_meshes/native/build/
+uv_mapping/native/build/
 instant_meshes/native/dist/
 instant_meshes/native/*.egg-info/

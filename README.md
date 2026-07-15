@@ -36,6 +36,7 @@ surface-drawing tools.
 | Make a dense mesh lighter | Multi-pass PyMeshLab decimation |
 | Create and guide a quad layout | Interactive Instant Meshes inside the Blender viewport |
 | Run automatic external quad remeshing | Optional AutoRemesher integration |
+| Generate validated production UVs | Remi UV charting, repair, and xatlas packing |
 | Transfer the original appearance | Albedo, roughness, normal, and AO baking |
 | Work with fused parts or doubled shells | Edit Mode selection and separation tools |
 
@@ -104,6 +105,25 @@ the guides influence that layout rather than acting as manually drawn topology.
 4. Start with **Voxel Remesh** for speed. Use **Closing Volume** when filling gaps is more important than runtime and memory use.
 5. Click **Run Full Remi** and follow the progress shown in Blender.
 
+When baking is enabled, Remi validates the target UV map first. A missing,
+blank, folded, or overlapping map is regenerated with the selected Remi UV
+profile before any texture pass starts.
+
+### Generate a UV map
+
+1. Select the target mesh in **Object Mode** or **Edit Mode**.
+2. Open **N-panel -> Remi -> Remi UV**.
+3. Choose a profile and the texture resolution used to calculate padding.
+4. Keep **Padding** at `4 px` for dense general-purpose packing, or raise it for
+   more conservative mip and bake isolation.
+5. Enable **Preserve Marked Seams** when artist seams must remain locked.
+6. Click **Generate UV Map**. The result summary reports chart count,
+   95th-percentile stretch, and true occupied area in the UV tile.
+
+Remi UV can run directly on an accepted Instant Meshes result. Small local
+foldovers produced by a Blender unwrap solver are isolated and repaired without
+discarding the rest of the valid chart layout.
+
 ### Patch one visible hole
 
 1. Select **Voxel Remesh** and frame the hole in the viewport.
@@ -129,9 +149,10 @@ the guides influence that layout rather than acting as manually drawn topology.
 ### Core
 
 - **Blender 5.1+**.
-- The current release bundles the native CPython 3.13/arm64 Interactive Instant
-  Meshes module for **macOS on Apple Silicon**. No standalone Instant Meshes app,
-  Homebrew, CMake, or compiler is needed for this bundled module.
+- The current release bundles native CPython 3.13/arm64 modules for Interactive
+  Instant Meshes and xatlas-backed UV charting/packing on **macOS on Apple
+  Silicon**. No standalone Instant Meshes app, xatlas installation, Homebrew,
+  CMake, or compiler is needed for these bundled modules.
 - **PyMeshLab** is installed automatically into Blender's Python environment on
   first use. The first installation requires an internet connection.
 
@@ -234,8 +255,12 @@ also shows a tooltip when you hover over a control.
 | **AutoRemesher Target / Adaptive** | Requested quad count and curvature-adaptive density. |
 | **Edge Scale / Sharp / Smooth** | External AutoRemesher edge scaling, sharp-angle threshold, and normal smoothing angle. |
 | **Texture Size** | Square output resolution for every baked map. |
-| **Auto Unwrap** | Generates target UVs when none exist. Disable it to use UVs prepared elsewhere. |
-| **UV Method / Margin** | Automatic unwrap method and spacing between UV islands. |
+| **Generate UV Map** | Runs the standalone Remi UV analyzer, chart generator, unwrap, repair, pack, and validation pipeline on the active mesh. |
+| **UV Profile** | Selects coordinated decisions for balanced assets, texture painting, normal baking, lightmaps, hard surfaces, organic meshes, or scans/AI meshes. |
+| **UV Padding** | Sets exact xatlas island padding in texture pixels (4 px by default). |
+| **Preserve Marked Seams** | Keeps artist-authored seam edges as hard chart boundaries during regeneration. |
+| **Auto Unwrap** | Generates target UVs when none exist or the existing map fails collapse/flip/overlap validation. Valid UV maps are retained. |
+| **UV Method** | Uses Remi UV by default; Blender Smart Project and Lightmap Pack remain explicit compatibility fallbacks. |
 | **Recalc Normals** | Recalculates target normals before baking. |
 | **Half Scale** | Temporarily scales both meshes to `0.5x` during baking, then restores them. |
 | **Cage / Max Ray** | Cage extrusion and maximum source-ray distance. |
@@ -260,6 +285,72 @@ and AO independently.
 
 </details>
 
+## Remi UV
+
+Remi UV is a first-class UV stage rather than a single projection call. The
+current automatic pipeline:
+
+1. analyzes connected components, manifold boundaries, materials, sharp edges,
+   local angles, face topology, and principal object axes;
+2. classifies the input as planar, hard-surface, organic, cylindrical, or
+   irregular;
+3. preserves marked seams and creates angle-, material-, cylinder-, or
+   PCA-directional chart boundaries as appropriate;
+4. parameterizes with Blender 5.1 Minimum Stretch, with Angle Based and
+   Conformal solver retries;
+5. measures per-triangle conformal distortion and adds local chart boundaries
+   around high-stretch regions;
+6. equalizes island scale and sends the existing charts through multiple
+   xatlas packing searches with exact texture-pixel padding, principal-axis
+   pre-rotation, free-orientation bases, and exhaustive placement on small
+   atlases up to 512 px;
+7. benchmarks Remi charts against both Blender Smart Project and xatlas' native
+   3D chart generator, scoring occupied area, fragmentation, distortion, and
+   validity instead of accepting the first successful unwrap;
+8. rejects non-finite, collapsed, locally flipped, or overlapping UV triangles,
+   retains the least-damaged Blender solver attempt, and repairs small mirrored
+   regions as face-local charts; if every Blender parameterizer remains invalid,
+   xatlas chart generation provides an independent recovery path;
+9. repairs any remaining vertex-fan foldovers by re-projecting only a minimal
+   set of conflicting faces as independent micro-charts, then repacks and
+   validates the complete atlas again.
+
+Packing occupancy is measured from triangle area in the final UV tile. xatlas'
+padded texel utilization is also logged separately, making padding cost visible
+instead of hiding it in a fractional Blender margin. Artist-authored seams are
+treated as locked constraints; full re-charting candidates are skipped when
+those constraints are present.
+
+The standalone **Generate UV Map** button regenerates the active UV map. The
+baking pipeline first validates an existing map and keeps it when valid; a blank
+or invalid map is regenerated when Auto Unwrap is enabled. Generated seams
+remain visible and editable in Blender for artist cleanup.
+
+On the 7,381-triangle launcher reference mesh at 2048 px with 4 px padding, the
+new pipeline reduced fragmentation from 1,018 to 413 charts while increasing
+true tile occupancy from 10.7% to 61.5%. The selected result measured 1.17 p95
+conformal stretch and zero overlapping or flipped triangles. These numbers are
+a regression reference for that asset, not a guaranteed density for every mesh.
+
+The headless regression suite covers planar, hard-surface, cylindrical,
+organic, toroidal, irregular triangulated, disconnected, and non-manifold
+fixtures, as well as deterministic output and Edit Mode state restoration:
+
+```bash
+/Applications/Blender.app/Contents/MacOS/Blender \
+  --background --factory-startup \
+  --python uv_mapping/tests/blender_uv_regression.py
+```
+
+The Instant Meshes integration smoke test also accepts a generated quad mesh
+and immediately validates it through Remi UV:
+
+```bash
+/Applications/Blender.app/Contents/MacOS/Blender \
+  --background --factory-startup \
+  --python instant_meshes/tests/blender_smoke.py
+```
+
 ## Baking notes
 
 - Baking uses Cycles with 128 samples.
@@ -272,6 +363,11 @@ and AO independently.
 ## Project structure
 
 - Blender UI and orchestration are written in Python.
+- [`uv_mapping/`](uv_mapping/) contains Remi UV profiles, mesh analysis,
+  chart/seam generation, Blender solver orchestration, xatlas candidate search,
+  and UV validation.
+- [`uv_mapping/native/`](uv_mapping/native/) contains the small pybind11 bridge
+  and vendored two-file xatlas source used for chart generation and packing.
 - [`instant_meshes/`](instant_meshes/) contains the isolated Blender-facing
   Interactive Instant Meshes implementation.
 - [`instant_meshes/native/`](instant_meshes/native/) contains the headless C++

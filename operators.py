@@ -22,6 +22,7 @@ from . import meshlab_wrapper as mlw
 from . import autoremesher as arm
 from . import baking
 from . import alpha_wrap as aw
+from .uv_mapping import ensure_remi_uv
 
 
 # ============================================================
@@ -1950,6 +1951,51 @@ class Remi_OT_AutoRemesher(Operator):
         return {"FINISHED"}
 
 
+class Remi_OT_GenerateUV(Operator):
+    """Generate a validated Remi UV map for the active mesh."""
+
+    bl_idname = "remi.generate_uv"
+    bl_label = "Generate Remi UV"
+    bl_description = "Analyze the active mesh, generate geometry-aware charts, unwrap, validate, and pack its UVs"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return bool(
+            context.mode in {"OBJECT", "EDIT_MESH"}
+            and context.active_object
+            and context.active_object.type == "MESH"
+        )
+
+    def execute(self, context):
+        obj = context.active_object
+        settings = context.scene.remi_settings
+        result = ensure_remi_uv(
+            obj,
+            profile_id=settings.bake_uv_profile,
+            texture_size=settings.bake_texture_size,
+            margin_px=settings.bake_uv_margin_px,
+            preserve_existing_seams=settings.bake_uv_preserve_seams,
+            replace_existing=True,
+        )
+        if not result.success:
+            self.report({"ERROR"}, result.error or "Remi UV generation failed")
+            return {"CANCELLED"}
+        stats = result.stats
+        if stats:
+            self.report(
+                {"INFO"},
+                f"Remi UV: {result.chart_count} charts, "
+                f"p95 stretch {stats.conformal_p95:.2f}, "
+                f"{stats.packing_occupancy:.0%} occupancy",
+            )
+        else:
+            self.report({"INFO"}, "Remi UV map is ready")
+        if result.warnings:
+            print("Remi UV warnings: " + "; ".join(result.warnings))
+        return {"FINISHED"}
+
+
 class Remi_BakeOperatorMixin:
     """Bake albedo, roughness, normal, and AO maps onto the active mesh."""
     bake_passes = ("diffuse", "roughness", "normal", "ao")
@@ -1980,6 +2026,9 @@ class Remi_BakeOperatorMixin:
             texture_size=s.bake_texture_size,
             uv_method=s.bake_uv_method,
             uv_island_margin=s.bake_uv_island_margin,
+            uv_profile=s.bake_uv_profile,
+            uv_margin_px=s.bake_uv_margin_px,
+            uv_preserve_seams=s.bake_uv_preserve_seams,
             auto_unwrap=s.bake_auto_unwrap,
             recalc_normals=s.bake_recalc_normals,
             cage_extrusion=s.bake_cage_extrusion,
@@ -2248,6 +2297,9 @@ class Remi_OT_FullPipeline(Operator):
                 final_name=final_name,
                 uv_method=settings.bake_uv_method,
                 uv_island_margin=settings.bake_uv_island_margin,
+                uv_profile=settings.bake_uv_profile,
+                uv_margin_px=settings.bake_uv_margin_px,
+                uv_preserve_seams=settings.bake_uv_preserve_seams,
                 auto_unwrap=settings.bake_auto_unwrap,
                 recalc_normals=settings.bake_recalc_normals,
                 cage_extrusion=settings.bake_cage_extrusion,
@@ -2552,6 +2604,9 @@ class Remi_OT_FullPipeline(Operator):
                 final_name=final_name,
                 uv_method=settings.bake_uv_method,
                 uv_island_margin=settings.bake_uv_island_margin,
+                uv_profile=settings.bake_uv_profile,
+                uv_margin_px=settings.bake_uv_margin_px,
+                uv_preserve_seams=settings.bake_uv_preserve_seams,
                 auto_unwrap=settings.bake_auto_unwrap,
                 recalc_normals=settings.bake_recalc_normals,
                 cage_extrusion=settings.bake_cage_extrusion,
@@ -2593,6 +2648,7 @@ classes = [
     Remi_OT_ApplyRemesh,
     Remi_OT_Decimate,
     Remi_OT_AutoRemesher,
+    Remi_OT_GenerateUV,
     Remi_OT_BakeAllMaps,
     Remi_OT_BakeDiffuse,
     Remi_OT_BakeRoughness,

@@ -87,5 +87,23 @@ assert output is not source
 assert len(output.data.polygons) > 0
 assert max(len(face.vertices) for face in output.data.polygons) == 4
 assert bpy.data.objects.get("InteractiveSource") is source
+from remi.uv_mapping import ensure_remi_uv
+
+uv_result = ensure_remi_uv(
+    output,
+    profile_id="BALANCED",
+    texture_size=512,
+    margin_px=4,
+    preserve_existing_seams=False,
+    replace_existing=True,
+)
+assert uv_result.success, uv_result.error
+assert uv_result.stats is not None and uv_result.stats.valid
 print("REMI_INSTANT_MESHES_SMOKE_OK", len(output.data.vertices), len(output.data.polygons))
+print(
+    "REMI_INSTANT_MESHES_UV_OK",
+    uv_result.solver,
+    uv_result.stats.chart_count,
+    uv_result.stats.flipped_triangles,
+)
 remi.unregister()

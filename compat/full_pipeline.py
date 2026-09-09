@@ -16,7 +16,7 @@ from bpy.types import Operator
 
 from ..integrations import autoremesher as arm
 from .. import baking
-from .. import gn_setup
+from ..features.remesh import geometry_nodes
 from ..integrations import meshlab as mlw
 from ..features.repair.service import (
     _closing_volume_remesh,
@@ -188,7 +188,7 @@ class Remi_OT_FullPipeline(Operator):
                     context.view_layer.objects.active = dup
                     dup.select_set(True)
                     _prepare_hole_repair(dup, settings)
-                gn_setup.apply_remi_modifier(
+                geometry_nodes.apply_remi_modifier(
                     obj=dup,
                     voxel_size=settings.voxel_size,
                     hole_close_distance=_hole_close_distance(dup, settings),
@@ -464,7 +464,7 @@ class Remi_OT_FullPipeline(Operator):
                     context.view_layer.objects.active = dup
                     dup.select_set(True)
                     _prepare_hole_repair(dup, settings)
-                gn_setup.apply_remi_modifier(
+                geometry_nodes.apply_remi_modifier(
                     obj=dup,
                     voxel_size=settings.voxel_size,
                     hole_close_distance=_hole_close_distance(dup, settings),

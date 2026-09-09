@@ -5,7 +5,6 @@ import math
 import bpy
 from mathutils.kdtree import KDTree
 
-from ... import gn_setup
 from ...blender.mesh_objects import (
     apply_modifiers,
     duplicate_object,
@@ -13,6 +12,7 @@ from ...blender.mesh_objects import (
     remove_mesh_object,
     world_bounds_diagonal,
 )
+from ..remesh import geometry_nodes
 from .guided import (
     _compose_source_with_guide_patches as compose_source_with_guide_patches,
     _dilate_guide_faces as dilate_guide_faces,
@@ -48,7 +48,7 @@ def volume_hole_patches(source, settings, suffix="_prepared", prepared=None) -> 
         0.0001,
     )
     close_distance = local_bounds_diagonal(guide) * float(settings.hole_close_ratio)
-    gn_setup.apply_remi_modifier(
+    geometry_nodes.apply_remi_modifier(
         obj=guide,
         voxel_size=guide_voxel_size,
         hole_close_distance=close_distance,
@@ -235,7 +235,7 @@ def closing_volume_remesh(source, settings, suffix="_volume_remesh", result=None
         0.0001,
     )
     close_distance = local_bounds_diagonal(result) * float(settings.hole_close_ratio)
-    gn_setup.apply_remi_modifier(
+    geometry_nodes.apply_remi_modifier(
         obj=result,
         voxel_size=volume_voxel,
         hole_close_distance=close_distance,

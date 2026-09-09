@@ -2,13 +2,13 @@
 
 import bpy
 
-from ... import gn_setup
 from ...blender.mesh_objects import (
     apply_modifiers,
     duplicate_object,
     local_bounds_diagonal,
     remove_mesh_object,
 )
+from ..remesh import geometry_nodes
 from .boundary import (
     _detail_recovery_distance,
     _hole_close_distance,
@@ -54,7 +54,7 @@ def create_candidate(source, settings, suffix="_prepared", candidate=None, disk=
                     local_bounds_diagonal(prepared) * float(settings.hole_detail_ratio),
                     float(settings.voxel_size) * 2.0,
                 )
-            gn_setup.apply_remi_modifier(
+            geometry_nodes.apply_remi_modifier(
                 obj=prepared,
                 voxel_size=settings.voxel_size,
                 hole_close_distance=close_distance,

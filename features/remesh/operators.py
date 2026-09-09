@@ -3,9 +3,9 @@
 import bpy
 from bpy.types import Operator
 
-from ... import gn_setup
 from ...blender.mesh_objects import apply_modifiers as _apply_modifiers
 from .decimation import create_candidate as _create_decimate_candidate
+from . import geometry_nodes
 from .service import create_candidate as _create_sdf_candidate
 
 
@@ -63,7 +63,7 @@ class Remi_OT_ApplyRemesh(Operator):
             return {"CANCELLED"}
 
         # Find and apply AR modifier
-        group = gn_setup.ensure_remi_node_group()
+        group = geometry_nodes.ensure_remi_node_group()
         found = False
         for mod in obj.modifiers:
             is_remi_group = (

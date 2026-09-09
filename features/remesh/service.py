@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import bpy
 
-from ... import gn_setup
 from ...blender.mesh_objects import (
     apply_modifiers,
     duplicate_object,
     remove_mesh_object,
 )
+from . import geometry_nodes
 from ..repair.service import (
     _closing_volume_remesh,
     _detail_recovery_distance,
@@ -57,7 +57,7 @@ def create_candidate(
         result.select_set(True)
         bpy.context.view_layer.objects.active = result
         _prepare_hole_repair(result, settings)
-        gn_setup.apply_remi_modifier(
+        geometry_nodes.apply_remi_modifier(
             obj=result,
             voxel_size=settings.voxel_size,
             hole_close_distance=_hole_close_distance(result, settings),

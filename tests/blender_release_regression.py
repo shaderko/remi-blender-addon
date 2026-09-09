@@ -18,7 +18,7 @@ if str(ADDON_PARENT) not in sys.path:
     sys.path.insert(0, str(ADDON_PARENT))
 
 import remi
-from remi import gn_setup
+from remi.features.remesh import geometry_nodes
 from remi.integrations import meshlab
 from remi import operators
 
@@ -66,7 +66,7 @@ def test_modifier_input_compatibility():
         pass
 
     legacy = LegacyModifier()
-    assert gn_setup._set_modifier_input(legacy, "Socket_7", 0.125)
+    assert geometry_nodes._set_modifier_input(legacy, "Socket_7", 0.125)
     assert legacy["Socket_7"] == 0.125
 
     modern_value = SimpleNamespace(value=None)
@@ -75,12 +75,12 @@ def test_modifier_input_compatibility():
             inputs=SimpleNamespace(Socket_7=modern_value),
         )
     )
-    assert gn_setup._set_modifier_input(modern, "Socket_7", 0.25)
+    assert geometry_nodes._set_modifier_input(modern, "Socket_7", 0.25)
     assert modern_value.value == 0.25
 
     _clean_scene()
     obj = _cube("ModifierCompatibility")
-    modifier = gn_setup.apply_remi_modifier(obj, voxel_size=0.125)
+    modifier = geometry_nodes.apply_remi_modifier(obj, voxel_size=0.125)
     node_group = modifier.node_group
     voxel_identifier = next(
         item.identifier

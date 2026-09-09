@@ -83,10 +83,10 @@ class RemeshFeature(FeatureDefaults):
                 )
             )
         if action.id == "DECIMATE":
-            from ...operators import _create_decimate_candidate
+            from .decimation import create_candidate
 
             return stage_result(
-                _create_decimate_candidate(
+                create_candidate(
                     context.working_copy,
                     settings,
                     disk=context.disk,

@@ -6,7 +6,7 @@ from . import selection_tools
 from . import settings
 from . import ui
 from .compat import registration as compatibility_registration
-from .workflow import session_runtime as session
+from .workflow import session
 from .application import (
     clear_application,
     configure_application,

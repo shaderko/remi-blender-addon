@@ -1,7 +1,7 @@
 """Compatibility facade for the session runtime moved under workflow."""
 
 from .storage.disk import CHECKPOINT_MATERIALS_KEY, SESSION_ID_KEY
-from .workflow.session_runtime import (
+from .workflow.session import (
     RemiSessionRuntime,
     RemiSessionState,
     register,

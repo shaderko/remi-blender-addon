@@ -71,7 +71,7 @@ the geometry service itself still executes inside a normal session transaction.
 - `features/repair/boundary.py`, `alpha_wrap.py`, `volume.py`, `guided.py`, and
   `manual.py`: focused strategies and shared patch composition behind the
   repair use case.
-- `workflow/session_runtime.py`: active object, working copies, commit, failure
+- `workflow/session.py`: active object, working copies, commit, failure
   rollback, Back, Redo, Reset, Finish, and Cancel.
 - `workflow/state.py`: Blender properties exposed to UI and operators.
 - `workflow/history.py`: bounded checkpoint transitions and Back/Redo metadata.

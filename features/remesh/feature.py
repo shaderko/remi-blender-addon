@@ -71,10 +71,10 @@ class RemeshFeature(FeatureDefaults):
     ) -> StageResult:
         settings = context.blender_context.scene.remi_settings
         if action.id == "REMESH":
-            from ...operators import _create_sdf_candidate
+            from .service import create_candidate
 
             return stage_result(
-                _create_sdf_candidate(
+                create_candidate(
                     context.source,
                     settings,
                     apply_result=True,

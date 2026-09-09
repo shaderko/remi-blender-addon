@@ -37,7 +37,8 @@ module_name = "bl_ext.user_default.remi"
 result = bpy.ops.preferences.addon_enable(module=module_name)
 assert result == {"FINISHED"}, result
 addon = importlib.import_module(module_name)
-expected_version = tuple(int(part) for part in os.environ["REMI_EXPECTED_VERSION"].split("."))
+version_core = os.environ["REMI_EXPECTED_VERSION"].split("-", 1)[0].split("+", 1)[0]
+expected_version = tuple(int(part) for part in version_core.split("."))
 assert addon.bl_info["version"] == expected_version, addon.bl_info["version"]
 assert addon.__package__ == module_name, addon.__package__
 bpy.ops.preferences.addon_disable(module=module_name)

@@ -8,7 +8,7 @@ import uuid
 import bpy
 
 from ..blender.session_objects import SessionObjectStore
-from ..storage.disk import SESSION_ID_KEY, SessionDiskService
+from .disk import SESSION_ID_KEY, SessionDiskService
 from .contracts import FeatureExecutionContext
 from .history import SessionHistory
 from .registry import FeatureRegistry, RegisteredAction

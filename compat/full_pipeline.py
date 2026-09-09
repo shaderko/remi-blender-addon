@@ -36,7 +36,7 @@ from ..blender.mesh_objects import (
     duplicate_object as _duplicate_object,
     remove_mesh_object as _remove_mesh_object,
 )
-from ..storage.disk import SessionDiskService
+from ..workflow.disk import SessionDiskService
 
 
 class Remi_OT_FullPipeline(Operator):

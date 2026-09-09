@@ -29,8 +29,7 @@ from remi.features.uv.feature import UVFeature
 from remi.infrastructure.blender import mesh_exchange as legacy_mesh_exchange
 from remi.integrations import alpha_wrap, autoremesher, meshlab
 from remi.features.settings import compose_scene_settings
-from remi.storage.disk import SessionDiskService
-from remi.workflow.disk_service import SessionDiskService as LegacySessionDiskService
+from remi.workflow.disk import SessionDiskService
 from remi.workflow.session import runtime as session_runtime
 from remi.workflow.session_runtime import runtime as legacy_session_runtime
 from remi.workflow.contracts import (
@@ -150,7 +149,7 @@ for service_path in service_paths:
 
 canonical_paths = (
     "blender/session_objects.py",
-    "storage/disk.py",
+    "workflow/disk.py",
     "workflow/session.py",
     "workflow/history.py",
     "workflow/state.py",
@@ -235,7 +234,6 @@ assert legacy_baking.bake_textures is bake_engine.bake_textures
 assert legacy_geometry_nodes.apply_remi_modifier is geometry_nodes.apply_remi_modifier
 assert legacy_meshlab.ensure_pymeshlab is meshlab.ensure_pymeshlab
 assert legacy_mesh_exchange.export_ply is mesh_exchange.export_ply
-assert LegacySessionDiskService is SessionDiskService
 assert legacy_session_runtime is session_runtime
 
 _assert_rejected(

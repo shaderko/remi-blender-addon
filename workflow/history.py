@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ..storage.disk import SESSION_ID_KEY
+from .disk import SESSION_ID_KEY
 
 
 @dataclass

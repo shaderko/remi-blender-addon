@@ -10,7 +10,7 @@ import bpy
 
 from ...integrations import autoremesher
 from ...blender import mesh_exchange
-from ...storage.disk import SessionDiskService
+from ...workflow.disk import SessionDiskService
 
 
 def create_candidate(obj, settings, disk=None):

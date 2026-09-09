@@ -6,7 +6,7 @@ import json
 
 import bpy
 
-from ..storage.disk import CHECKPOINT_MATERIALS_KEY, SESSION_ID_KEY
+from ..workflow.disk import CHECKPOINT_MATERIALS_KEY, SESSION_ID_KEY
 
 
 class SessionObjectStore:

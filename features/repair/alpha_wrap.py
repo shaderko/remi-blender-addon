@@ -15,7 +15,7 @@ from ...blender.mesh_objects import (
     world_bounds_diagonal,
 )
 from ...integrations import alpha_wrap
-from ...storage.disk import SessionDiskService
+from ...workflow.disk import SessionDiskService
 from .guided import (
     _compose_source_with_guide_patches as compose_source_with_guide_patches,
     _evaluated_world_surface as evaluated_world_surface,

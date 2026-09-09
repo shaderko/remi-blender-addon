@@ -69,6 +69,7 @@ the geometry service itself still executes inside a normal session transaction.
 - `workflow/session_operators.py`: Blender commands and timer adaptation only.
 - `storage/disk.py`: all session checkpoint and scratch-workspace disk
   lifecycle, including crash-leftover cleanup on add-on start.
+- `ui/main_panel.py`: generic session shell and feature-registry rendering.
 - `blender`: reusable object lifecycle and OBJ/PLY/GLB adapters.
 - `integrations`: CGAL Alpha Wrap, AutoRemesher, and optional PyMeshLab clients.
 - `selection_tools`: edit-mode bridge and double-shell tools outside the main

@@ -3,10 +3,10 @@
 import bpy
 from bpy.types import Panel
 
-from .application import get_application
-from .features.base import session_command as _command
-from .selection_tools.panel import Remi_PT_EditToolsPanel
-from .workflow.contracts import FeatureUIContext
+from ..application import get_application
+from ..features.base import session_command as _command
+from ..selection_tools.panel import Remi_PT_EditToolsPanel
+from ..workflow.contracts import FeatureUIContext
 
 
 def _stage(layout, state, stage, text):

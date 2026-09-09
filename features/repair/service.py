@@ -16,11 +16,11 @@ from .boundary import (
     repair_boundary_holes,
 )
 from .guided import (
-    _closing_volume_remesh,
     _evaluated_world_surface,
     _guided_hole_patches,
 )
 from .manual import _create_surface_ring_patch, _resample_screen_lasso
+from .volume import _closing_volume_remesh
 
 
 def create_candidate(source, settings, suffix="_prepared", candidate=None, disk=None):

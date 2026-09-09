@@ -1,25 +1,5 @@
-"""Register Blender types contributed by the composed workflow features."""
+"""Compatibility imports for feature-owned Blender type registration."""
 
-import bpy
+from .features.registration import register, unregister
 
-from .application import get_application
-
-
-_registered_classes = []
-
-
-def register():
-    try:
-        for feature in get_application().features:
-            for blender_class in feature.blender_classes():
-                bpy.utils.register_class(blender_class)
-                _registered_classes.append(blender_class)
-    except Exception:
-        unregister()
-        raise
-
-
-def unregister():
-    for blender_class in reversed(_registered_classes):
-        bpy.utils.unregister_class(blender_class)
-    _registered_classes.clear()
+__all__ = ("register", "unregister")

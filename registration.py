@@ -1,10 +1,10 @@
 """Explicit add-on registration order and lifecycle."""
 
-from . import feature_registration
 from . import instant_meshes
 from . import selection_tools
-from . import settings
 from . import ui
+from .features import registration as feature_registration
+from .features import settings
 from .compat import registration as compatibility_registration
 from .workflow import session
 from .application import (

@@ -18,7 +18,7 @@ from remi.application import (
 )
 from remi.features import create_default_registry
 from remi.features.uv.feature import UVFeature
-from remi.settings import compose_scene_settings
+from remi.features.settings import compose_scene_settings
 from remi.workflow.contracts import (
     FeatureAction,
     FeatureDescriptor,

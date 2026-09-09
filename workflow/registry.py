@@ -21,6 +21,10 @@ class RegisteredAction:
     def feature_id(self) -> str:
         return self.feature.descriptor.id
 
+    @property
+    def next_feature(self) -> str | None:
+        return self.action.next_feature or self.feature.descriptor.next_feature
+
 
 class FeatureRegistry:
     """Ordered, immutable feature composition used by UI and workflow."""
@@ -59,6 +63,12 @@ class FeatureRegistry:
                     f"Remi feature {feature.descriptor.id} points to unknown feature "
                     f"{next_feature}"
                 )
+            for action in feature.descriptor.actions:
+                if action.next_feature is not None and action.next_feature not in self._by_id:
+                    raise ValueError(
+                        f"Remi action {action.id} points to unknown feature "
+                        f"{action.next_feature}"
+                    )
 
     def __iter__(self) -> Iterator[WorkflowFeature]:
         return iter(self._features)

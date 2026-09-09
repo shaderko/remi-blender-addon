@@ -19,6 +19,7 @@ class FeatureAction:
     description: str = ""
     mode: ExecutionMode = ExecutionMode.ATOMIC
     requires_source_checkpoint: bool = False
+    next_feature: str | None = None
 
 
 @dataclass(frozen=True)

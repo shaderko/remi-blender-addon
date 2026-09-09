@@ -7,6 +7,7 @@ BLENDER_BIN="${1:-/Applications/Blender.app/Contents/MacOS/Blender}"
 OUTPUT_DIR="${2:-$REPO_DIR/dist}"
 
 TESTS=(
+  "tests/blender_architecture_regression.py"
   "tests/blender_release_regression.py"
   "tests/blender_session_regression.py"
   "tests/blender_edit_tools_regression.py"

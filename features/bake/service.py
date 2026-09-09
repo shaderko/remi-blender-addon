@@ -6,7 +6,7 @@ from ...blender.mesh_objects import duplicate_object, remove_mesh_object
 from . import engine
 
 
-def create_candidate(
+def _build_candidate(
     source_checkpoint,
     current,
     settings,
@@ -45,3 +45,48 @@ def create_candidate(
         remove_mesh_object(candidate)
         return None, result.get("error", "Baking failed"), result
     return candidate, "", result
+
+
+class BakeService:
+    """Bake source-checkpoint appearance onto a session candidate."""
+
+    def bake(
+        self,
+        source_checkpoint,
+        current,
+        settings,
+        *,
+        passes,
+        name_prefix,
+        candidate=None,
+    ):
+        return _build_candidate(
+            source_checkpoint,
+            current,
+            settings,
+            passes=passes,
+            name_prefix=name_prefix,
+            candidate=candidate,
+        )
+
+
+def create_candidate(
+    source_checkpoint,
+    current,
+    settings,
+    *,
+    passes=("diffuse", "roughness", "normal", "ao"),
+    name_prefix="",
+    suffix="_baked",
+    candidate=None,
+):
+    """Compatibility function for standalone callers."""
+    return _build_candidate(
+        source_checkpoint,
+        current,
+        settings,
+        passes=passes,
+        name_prefix=name_prefix,
+        suffix=suffix,
+        candidate=candidate,
+    )

@@ -20,6 +20,9 @@ class UVFeature(FeatureDefaults):
         actions=(FeatureAction("UV", "UV", "Generate and inspect UVs"),),
     )
 
+    def __init__(self, service):
+        self._service = service
+
     def scene_settings(self):
         from .settings import SCENE_SETTINGS
 
@@ -59,10 +62,8 @@ class UVFeature(FeatureDefaults):
         context: FeatureExecutionContext,
     ) -> StageResult:
         if action.id == "UV":
-            from .service import create_candidate
-
             return stage_result(
-                create_candidate(
+                self._service.generate(
                     context.source,
                     context.blender_context.scene.remi_settings,
                     candidate=context.working_copy,

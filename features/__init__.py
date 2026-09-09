@@ -1,11 +1,13 @@
 """Explicit composition of Remi's built-in workflow features."""
 
 from .bake.feature import BakeFeature
+from .bake.service import BakeService
 from .remesh.feature import RemeshFeature
 from .repair.feature import RepairFeature
 from .repair.service import RepairService
 from .retopology.feature import RetopologyFeature
 from .uv.feature import UVFeature
+from .uv.service import UVService
 from ..workflow.registry import FeatureRegistry
 
 
@@ -16,8 +18,8 @@ def create_default_registry() -> FeatureRegistry:
             RepairFeature(RepairService()),
             RemeshFeature(),
             RetopologyFeature(),
-            UVFeature(),
-            BakeFeature(),
+            UVFeature(UVService()),
+            BakeFeature(BakeService()),
         )
     )
 

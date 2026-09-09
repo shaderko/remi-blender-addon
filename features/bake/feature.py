@@ -55,6 +55,9 @@ class BakeFeature(FeatureDefaults):
         "BAKE_AO": ("ao",),
     }
 
+    def __init__(self, service):
+        self._service = service
+
     def scene_settings(self):
         from .settings import SCENE_SETTINGS
 
@@ -127,10 +130,8 @@ class BakeFeature(FeatureDefaults):
         passes = self._PASSES.get(action.id)
         if passes is None:
             return super().execute(action, context)
-        from .service import create_candidate
-
         return stage_result(
-            create_candidate(
+            self._service.bake(
                 context.source_checkpoint,
                 context.source,
                 context.blender_context.scene.remi_settings,

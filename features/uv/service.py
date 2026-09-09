@@ -6,7 +6,7 @@ from ...blender.mesh_objects import duplicate_object, remove_mesh_object
 from ...uv_mapping import ensure_remi_uv
 
 
-def create_candidate(source, settings, suffix="_uv", candidate=None):
+def _build_candidate(source, settings, suffix="_uv", candidate=None):
     """Generate validated UVs on a separate candidate object."""
     if candidate is None:
         candidate = duplicate_object(source, suffix)
@@ -31,3 +31,15 @@ def create_candidate(source, settings, suffix="_uv", candidate=None):
         "stats": result.stats,
         "warnings": list(result.warnings),
     }
+
+
+class UVService:
+    """Generate and validate UVs on a session-provided candidate."""
+
+    def generate(self, source, settings, *, candidate=None):
+        return _build_candidate(source, settings, candidate=candidate)
+
+
+def create_candidate(source, settings, suffix="_uv", candidate=None):
+    """Compatibility function for standalone callers."""
+    return _build_candidate(source, settings, suffix, candidate)

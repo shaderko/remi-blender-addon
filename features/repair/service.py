@@ -10,7 +10,7 @@ import bpy
 from mathutils.bvhtree import BVHTree
 from mathutils.kdtree import KDTree
 
-from ... import alpha_wrap as aw
+from ...integrations import alpha_wrap as aw
 from ... import gn_setup
 from ...blender.mesh_exchange import (
     export_ply as _export_ply,

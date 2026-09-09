@@ -14,10 +14,10 @@ import sys
 import bpy
 from bpy.types import Operator
 
-from .. import autoremesher as arm
+from ..integrations import autoremesher as arm
 from .. import baking
 from .. import gn_setup
-from .. import meshlab_wrapper as mlw
+from ..integrations import meshlab as mlw
 from ..features.repair.service import (
     _closing_volume_remesh,
     _detail_recovery_distance,

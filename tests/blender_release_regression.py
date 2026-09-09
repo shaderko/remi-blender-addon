@@ -19,7 +19,7 @@ if str(ADDON_PARENT) not in sys.path:
 
 import remi
 from remi import gn_setup
-from remi import meshlab_wrapper
+from remi.integrations import meshlab
 from remi import operators
 
 
@@ -200,9 +200,9 @@ def test_full_pipeline_dependency_preflight():
     settings.use_decimation = True
     settings.use_autoremesher = False
     settings.use_baking = False
-    original_check = meshlab_wrapper.ensure_pymeshlab
+    original_check = meshlab.ensure_pymeshlab
     try:
-        meshlab_wrapper.ensure_pymeshlab = lambda: False
+        meshlab.ensure_pymeshlab = lambda: False
         try:
             outcome = bpy.ops.remi.full_pipeline()
         except RuntimeError as exc:
@@ -210,14 +210,14 @@ def test_full_pipeline_dependency_preflight():
         else:
             assert outcome == {"CANCELLED"}
     finally:
-        meshlab_wrapper.ensure_pymeshlab = original_check
+        meshlab.ensure_pymeshlab = original_check
     assert _source_state(source) == before
     assert tuple(obj.as_pointer() for obj in bpy.context.scene.objects) == before_objects
     print("PASS dependency preflight runs before mesh changes")
 
 
 def test_standalone_decimation_preserves_source():
-    if not meshlab_wrapper.ensure_pymeshlab():
+    if not meshlab.ensure_pymeshlab():
         print("SKIP standalone decimation: PyMeshLab is not installed")
         return
 
@@ -241,8 +241,8 @@ def test_standalone_decimation_preserves_source():
 
 
 def test_dependency_message_is_explicit():
-    command = meshlab_wrapper.pymeshlab_install_command()
-    message = meshlab_wrapper.pymeshlab_unavailable_message()
+    command = meshlab.pymeshlab_install_command()
+    message = meshlab.pymeshlab_unavailable_message()
     assert sys.executable in command
     assert "pip install" in command
     assert command in message

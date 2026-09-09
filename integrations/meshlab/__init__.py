@@ -1,6 +1,6 @@
-"""Compatibility imports for the former PyMeshLab integration module."""
+"""Optional PyMeshLab dependency and decimation client."""
 
-from .integrations.meshlab import (
+from .client import (
     ensure_pymeshlab,
     pymeshlab_install_command,
     pymeshlab_unavailable_message,

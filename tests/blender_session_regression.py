@@ -19,7 +19,7 @@ if str(ADDON_PARENT) not in sys.path:
 
 import remi
 from remi import baking
-from remi import meshlab_wrapper
+from remi.integrations import meshlab
 from remi import operators
 from remi import session
 from remi.features.retopology import autoremesher_service
@@ -673,7 +673,7 @@ def test_transactional_bake_uses_source_checkpoint():
 
 
 def test_transactional_decimation_when_available():
-    if not meshlab_wrapper.ensure_pymeshlab():
+    if not meshlab.ensure_pymeshlab():
         print("SKIP transactional Decimate: PyMeshLab is not installed")
         return
     _clean_scene()

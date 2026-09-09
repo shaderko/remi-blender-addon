@@ -51,8 +51,8 @@ registration / main UI / Blender command adapters
 ```
 
 Feature services may depend on lower-level mechanisms such as
-`blender`, `uv_mapping`, `instant_meshes`, `baking`, or external
-tool wrappers. They must not import the root `operators.py` compatibility
+`blender`, `uv_mapping`, `instant_meshes`, `baking`, or clients under
+`integrations`. They must not import root-level compatibility
 facade, the main panel, or the session runtime. Manual Repair is the one adapter
 that calls back into the session after its viewport gesture has collected input;
 the geometry service itself still executes inside a normal session transaction.
@@ -70,6 +70,7 @@ the geometry service itself still executes inside a normal session transaction.
 - `storage/disk.py`: all session checkpoint and scratch-workspace disk
   lifecycle, including crash-leftover cleanup on add-on start.
 - `blender`: reusable object lifecycle and OBJ/PLY/GLB adapters.
+- `integrations`: CGAL Alpha Wrap, AutoRemesher, and optional PyMeshLab clients.
 - `selection_tools`: edit-mode bridge and double-shell tools outside the main
   mesh-processing workflow.
 - `compat`: operator IDs retained for older scripts and Blender files. The old

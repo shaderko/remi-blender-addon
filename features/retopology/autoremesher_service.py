@@ -8,7 +8,7 @@ import subprocess
 
 import bpy
 
-from ... import autoremesher
+from ...integrations import autoremesher
 from ...blender import mesh_exchange
 from ...storage.disk import SessionDiskService
 

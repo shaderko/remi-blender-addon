@@ -117,7 +117,7 @@ session_source.name = "SessionRetopoSource"
 source_faces = len(session_source.data.polygons)
 
 from remi import session
-from remi.application import get_application
+from remi.app.application import get_application
 
 session.runtime.begin(bpy.context, session_source)
 session.runtime.start_interactive_action(

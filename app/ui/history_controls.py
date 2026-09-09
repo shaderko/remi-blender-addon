@@ -1,6 +1,6 @@
 """Session-owned Back, Redo, Reset, Finish, and Cancel controls."""
 
-from ..features.base import session_command
+from ...features.base import session_command
 
 
 def draw_history_controls(layout, state):

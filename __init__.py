@@ -12,12 +12,12 @@ bl_info = {
 
 
 def register():
-    from .registration import register as register_addon
+    from .app.registration import register as register_addon
 
     register_addon()
 
 
 def unregister():
-    from .registration import unregister as unregister_addon
+    from .app.registration import unregister as unregister_addon
 
     unregister_addon()

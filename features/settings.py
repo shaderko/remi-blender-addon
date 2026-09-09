@@ -4,7 +4,7 @@ import bpy
 from bpy.props import PointerProperty
 from bpy.types import PropertyGroup
 
-from ..application import get_application
+from ..app.application import get_application
 
 
 class RemiSceneSettings(PropertyGroup):

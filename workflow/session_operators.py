@@ -4,7 +4,7 @@ import bpy
 from bpy.props import EnumProperty
 from bpy.types import Operator
 
-from ..application import get_application
+from ..app.application import get_application
 from .session import runtime
 from .contracts import ExecutionMode
 

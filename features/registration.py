@@ -2,7 +2,7 @@
 
 import bpy
 
-from ..application import get_application
+from ..app.application import get_application
 
 
 _registered_classes = []

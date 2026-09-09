@@ -4,8 +4,8 @@ import bpy
 from bpy.types import Panel
 
 from ..application import get_application
-from ..selection_tools.panel import Remi_PT_EditToolsPanel
-from ..workflow.contracts import FeatureUIContext
+from ...selection_tools.panel import Remi_PT_EditToolsPanel
+from ...workflow.contracts import FeatureUIContext
 from .history_controls import draw_history_controls
 from .session_header import draw_session_header
 from .source_view import draw_source

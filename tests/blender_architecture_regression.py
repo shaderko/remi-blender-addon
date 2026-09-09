@@ -10,7 +10,7 @@ ADDON_PARENT = Path(__file__).resolve().parents[2]
 if str(ADDON_PARENT) not in sys.path:
     sys.path.insert(0, str(ADDON_PARENT))
 
-from remi.application import (
+from remi.app.application import (
     RemiApplication,
     clear_application,
     configure_application,

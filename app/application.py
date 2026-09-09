@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from .workflow.registry import FeatureRegistry
+from ..workflow.registry import FeatureRegistry
 
 
 @dataclass(frozen=True)
@@ -37,8 +37,8 @@ def clear_application():
 
 def create_default_application() -> RemiApplication:
     """Compose built-in dependencies at the add-on boundary."""
-    from .features import create_default_registry
-    from .workflow.session import runtime
+    from ..features import create_default_registry
+    from ..workflow.session import runtime
 
     features = create_default_registry()
     runtime.configure_features(features)

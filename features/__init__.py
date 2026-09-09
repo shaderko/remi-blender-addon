@@ -17,7 +17,7 @@ from ..workflow.registry import FeatureRegistry
 
 def create_default_registry() -> FeatureRegistry:
     """Build the ordered workflow without filesystem or import-time discovery."""
-    from ..instant_meshes.runtime import runtime as instant_meshes_runtime
+    from .retopology.instant_meshes.runtime import runtime as instant_meshes_runtime
 
     return FeatureRegistry(
         (

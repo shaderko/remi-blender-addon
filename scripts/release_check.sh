@@ -11,8 +11,8 @@ TESTS=(
   "tests/blender_release_regression.py"
   "tests/blender_session_regression.py"
   "tests/blender_edit_tools_regression.py"
-  "instant_meshes/tests/blender_smoke.py"
-  "instant_meshes/tests/blender_topology_regression.py"
+  "tests/blender_instant_meshes_smoke.py"
+  "tests/blender_instant_meshes_topology_regression.py"
   "tests/blender_uv_regression.py"
 )
 

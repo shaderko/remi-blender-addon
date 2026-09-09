@@ -6,7 +6,7 @@ from pathlib import Path
 
 import bpy
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import remi
 
 
@@ -32,7 +32,7 @@ settings.pure_quad = True
 settings.preserve_creases = False
 assert bpy.ops.remi.instant_meshes_start() == {"FINISHED"}
 
-from remi.instant_meshes.runtime import runtime
+from remi.features.retopology.instant_meshes.runtime import runtime
 
 wait_for_pipeline(runtime)
 assert runtime.orientation is not None
@@ -116,7 +116,7 @@ session_source = bpy.context.active_object
 session_source.name = "SessionRetopoSource"
 source_faces = len(session_source.data.polygons)
 
-from remi import session
+from remi.workflow import session
 from remi.app.application import get_application
 
 session.runtime.begin(bpy.context, session_source)

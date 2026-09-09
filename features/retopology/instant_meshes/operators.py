@@ -283,7 +283,7 @@ class REMI_OT_instant_meshes_session_accept(Operator):
         try:
             _source, result = _create_preview_object(context)
             runtime.shutdown()
-            from ..workflow.session import runtime as session_runtime
+            from ....workflow.session import runtime as session_runtime
 
             session_runtime.commit_interactive_step(
                 context,
@@ -339,7 +339,7 @@ class REMI_OT_instant_meshes_session_cancel(Operator):
 
     def execute(self, context):
         runtime.shutdown()
-        from ..workflow.session import runtime as session_runtime
+        from ....workflow.session import runtime as session_runtime
 
         session_runtime.abandon_interactive_step(
             context,

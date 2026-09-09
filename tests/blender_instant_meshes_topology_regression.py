@@ -7,7 +7,7 @@ from pathlib import Path
 import bpy
 
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import remi
 
 
@@ -72,7 +72,7 @@ def create_open_suzanne():
 
 
 remi.register()
-from remi.instant_meshes.runtime import runtime
+from remi.features.retopology.instant_meshes.runtime import runtime
 
 
 run_case(runtime, "BeveledCube", create_beveled_cube, 1000, True, True)

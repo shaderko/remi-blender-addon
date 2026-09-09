@@ -53,7 +53,7 @@ class RetopologyFeature(FeatureDefaults):
         layout.label(text="Retopology", icon="MOD_REMESH")
         instant_settings = blender_context.scene.remi_instant_meshes
         if state.interactive:
-            from ... import instant_meshes
+            from . import instant_meshes
 
             instant_meshes.draw_panel(layout, blender_context, embedded=True)
             return

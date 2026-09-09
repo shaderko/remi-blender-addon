@@ -16,7 +16,7 @@ MACOSX_DEPLOYMENT_TARGET=11.0 \
 
 The resulting `cp313`/`arm64` module is ABI-compatible with Blender 5.1's
 CPython 3.13 runtime. The release module is copied into
-`instant_meshes/_native/` so end users do not need a compiler, CMake, Homebrew,
+`features/retopology/instant_meshes/_native/` so end users do not need a compiler, CMake, Homebrew,
 or internet access.
 
 ## Scope

@@ -14,7 +14,7 @@ runtime, or a central action switch.
 - an ordered `FeatureRegistry` containing Repair, Remesh, Retopology, UV, and
   Bake.
 
-`features/create_default_registry()` is deliberately explicit. Remi does not
+`features.create_default_registry()` is deliberately explicit. Remi does not
 scan the filesystem or monkey-patch the session at runtime, so feature order and
 dependencies remain reviewable and deterministic.
 
@@ -57,9 +57,9 @@ registration / main UI / Blender command adapters
 ```
 
 Feature services may depend on lower-level mechanisms such as
-`blender`, `uv_mapping`, `instant_meshes`, `baking`, or clients under
-`integrations`. They must not import root-level compatibility
-facade, the main panel, or the session runtime. Manual Repair is the one adapter
+`blender`, `uv_mapping`, `instant_meshes`, feature-owned engines, or clients
+under `integrations`. They must not import root-level compatibility facades,
+the main panel, or the session runtime. Manual Repair is the one adapter
 that calls back into the session after its viewport gesture has collected input;
 the geometry service itself still executes inside a normal session transaction.
 
@@ -96,8 +96,10 @@ the geometry service itself still executes inside a normal session transaction.
   mesh-processing workflow.
 - `compat`: operator IDs retained for older scripts and Blender files. The old
   multi-object full pipeline lives here and is not part of the primary UI.
-- root `operators.py`, `session.py`, `session_operators.py`, and `edit_tools.py`:
-  import-compatible facades, not active architecture owners.
+- root `operators.py`, `session.py`, `session_operators.py`, `settings.py`,
+  `feature_registration.py`, `edit_tools.py`, `baking.py`, `gn_setup.py`, and
+  external-tool wrapper modules: import-compatible facades, not active
+  architecture owners.
 
 ## Atomic actions
 

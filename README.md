@@ -387,7 +387,24 @@ and immediately validates it through Remi UV:
 
 ## Project structure
 
-- Blender UI and orchestration are written in Python.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) maps common changes to their owning
+  modules. [`docs/session_architecture.md`](docs/session_architecture.md)
+  describes the transaction and dependency rules in detail.
+- [`features/`](features/) contains the five injected workflow features. Each
+  feature owns its descriptor, UI, settings, Blender adapters, and use-case
+  service. Repair strategies, Remesh Geometry Nodes, and the Bake engine live
+  beside their owning feature.
+- [`workflow/`](workflow/) contains the stable single-mesh session coordinator,
+  bounded history transitions, observable state, feature contracts, and the
+  feature registry. It does not know how Repair, UV, or Bake algorithms work.
+- [`storage/`](storage/) exclusively owns checkpoints, scratch workspaces, and
+  abandoned-session cleanup.
+- [`blender/`](blender/) owns Blender object/data-block mechanics and mesh file
+  exchange used by the workflow.
+- [`integrations/`](integrations/) contains Alpha Wrap, AutoRemesher, and
+  PyMeshLab clients, including the external decimation worker.
+- [`ui/`](ui/) is the generic session shell. Feature-specific controls remain
+  in `features/<name>/feature.py`.
 - [`uv_mapping/`](uv_mapping/) contains Remi UV profiles, mesh analysis,
   chart/seam generation, Blender solver orchestration, xatlas candidate search,
   and UV validation.
@@ -399,8 +416,9 @@ and immediately validates it through Remi UV:
   field solver, pybind11 bridge, build files, and retained upstream source.
 - The standalone Instant Meshes GUI, NanoGUI, GLFW, OpenGL renderer, and CLI are
   intentionally not included because Blender supplies those responsibilities.
-- PyMeshLab, CGAL, and AutoRemesher integrations remain separate from the
-  Instant Meshes module.
+- [`compat/`](compat/) and the small forwarding modules at repository root keep
+  older imports and operator IDs working; new implementation code belongs in a
+  canonical package above.
 
 ## Credits
 

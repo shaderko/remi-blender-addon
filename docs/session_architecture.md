@@ -84,7 +84,8 @@ the geometry service itself still executes inside a normal session transaction.
 - `ui/source_view.py`, `session_header.py`, and `history_controls.py`: focused
   pieces of the session chrome, separate from feature-owned controls.
 - `blender`: reusable object lifecycle and OBJ/PLY/GLB adapters.
-- `integrations`: CGAL Alpha Wrap, AutoRemesher, and optional PyMeshLab clients.
+- `integrations`: CGAL Alpha Wrap, AutoRemesher, and optional PyMeshLab clients;
+  the MeshLab subprocess worker lives with its client rather than at add-on root.
 - `selection_tools`: edit-mode bridge and double-shell tools outside the main
   mesh-processing workflow.
 - `compat`: operator IDs retained for older scripts and Blender files. The old

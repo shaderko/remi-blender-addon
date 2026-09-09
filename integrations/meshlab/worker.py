@@ -1,13 +1,11 @@
-"""
-Standalone worker: runs PyMeshLab decimation as a subprocess.
-Called by the modal operator so Blender doesn't block.
-"""
-import sys
-import os
+"""Run texture-preserving PyMeshLab decimation outside Blender's process."""
+
 import json
+import sys
 
 # Add user site-packages for pymeshlab
 import site
+
 sp = site.getusersitepackages()
 if sp and sp not in sys.path:
     sys.path.insert(0, sp)
@@ -27,7 +25,7 @@ ms = pymeshlab.MeshSet()
 ms.load_new_mesh(input_path)
 orig_faces = ms.current_mesh().face_number()
 
-for i in range(passes):
+for pass_index in range(passes):
     filter_name = (
         "meshing_decimation_quadric_edge_collapse_with_texture"
         if preserve_texture
@@ -43,9 +41,16 @@ for i in range(passes):
     ms.apply_filter(filter_name, **filter_args)
     current = ms.current_mesh().face_number()
     # Write progress to stdout as JSON lines
-    print(json.dumps({"pass": i + 1, "passes": passes,
-                       "in_faces": orig_faces,
-                       "out_faces": current}))
+    print(
+        json.dumps(
+            {
+                "pass": pass_index + 1,
+                "passes": passes,
+                "in_faces": orig_faces,
+                "out_faces": current,
+            }
+        )
+    )
     sys.stdout.flush()
 
 if preserve_texture:

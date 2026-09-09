@@ -105,7 +105,7 @@ def _restore_source_materials(source: bpy.types.Object, result: bpy.types.Object
 
 
 def _run_textured_worker(input_path: str, output_path: str, settings) -> list[dict]:
-    worker = Path(__file__).resolve().parents[2] / "_decimate_worker.py"
+    worker = Path(__file__).resolve().parents[2] / "integrations" / "meshlab" / "worker.py"
     process = subprocess.run(
         [
             sys.executable,

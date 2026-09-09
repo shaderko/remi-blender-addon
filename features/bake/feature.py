@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ..base import FeatureDefaults, session_command, stage_result
+from ..contracts import BakeUseCases
 from ...workflow.contracts import (
     FeatureAction,
     FeatureDescriptor,
@@ -55,7 +56,7 @@ class BakeFeature(FeatureDefaults):
         "BAKE_AO": ("ao",),
     }
 
-    def __init__(self, service):
+    def __init__(self, service: BakeUseCases):
         self._service = service
 
     def scene_settings(self):

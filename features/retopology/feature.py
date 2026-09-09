@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ..base import FeatureDefaults, session_command, stage_result
+from ..contracts import RetopologyUseCases
 from ...workflow.contracts import (
     ExecutionMode,
     FeatureAction,
@@ -33,7 +34,7 @@ class RetopologyFeature(FeatureDefaults):
         ),
     )
 
-    def __init__(self, service):
+    def __init__(self, service: RetopologyUseCases):
         self._service = service
 
     def scene_settings(self):

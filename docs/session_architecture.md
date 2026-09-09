@@ -26,6 +26,10 @@ Each feature implements the contract in `workflow/contracts.py` and owns:
 - its Blender operator classes;
 - its scene setting declarations.
 
+Feature-specific service interfaces live in `features/contracts.py`. The
+composition root injects concrete use-case objects, so tests and downstream
+developers can substitute one concern without monkey-patching module globals.
+
 Feature services contain mesh-processing behavior. They receive a working copy
 from the session and return a `StageResult`; they never create recovery history
 or replace the locked object themselves.

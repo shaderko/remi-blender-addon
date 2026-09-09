@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ..base import FeatureDefaults, session_command, stage_result
+from ..contracts import UVUseCases
 from ...workflow.contracts import (
     FeatureAction,
     FeatureDescriptor,
@@ -20,7 +21,7 @@ class UVFeature(FeatureDefaults):
         actions=(FeatureAction("UV", "UV", "Generate and inspect UVs"),),
     )
 
-    def __init__(self, service):
+    def __init__(self, service: UVUseCases):
         self._service = service
 
     def scene_settings(self):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ..base import FeatureDefaults, session_command, stage_result
+from ..contracts import RepairUseCases
 from ...workflow.contracts import (
     FeatureAction,
     FeatureDescriptor,
@@ -32,7 +33,7 @@ class RepairFeature(FeatureDefaults):
         ),
     )
 
-    def __init__(self, service):
+    def __init__(self, service: RepairUseCases):
         self._service = service
 
     def scene_settings(self):

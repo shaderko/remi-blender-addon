@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ..base import FeatureDefaults, session_command, stage_result
+from ..contracts import RemeshUseCases
 from ...workflow.contracts import (
     FeatureAction,
     FeatureDescriptor,
@@ -23,7 +24,7 @@ class RemeshFeature(FeatureDefaults):
         ),
     )
 
-    def __init__(self, service):
+    def __init__(self, service: RemeshUseCases):
         self._service = service
 
     def scene_settings(self):

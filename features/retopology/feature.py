@@ -90,10 +90,10 @@ class RetopologyFeature(FeatureDefaults):
         context: FeatureExecutionContext,
     ) -> StageResult:
         if action.id == "AUTO_RETOPO":
-            from ...operators import _create_autoremesher_candidate
+            from .autoremesher_service import create_candidate
 
             return stage_result(
-                _create_autoremesher_candidate(
+                create_candidate(
                     context.working_copy,
                     context.blender_context.scene.remi_settings,
                     disk=context.disk,

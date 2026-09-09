@@ -22,9 +22,9 @@ from .features.repair.operators import (
     Remi_OT_BuildAlphaWrap,
     Remi_OT_DrawHolePatch,
     Remi_OT_RepairHoles,
+    _commit_surface_ring_patch,
 )
 from .features.repair.service import (
-    _commit_surface_ring_patch,
     _create_repair_candidate,
     _create_surface_ring_patch,
 )

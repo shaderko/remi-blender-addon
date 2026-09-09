@@ -836,40 +836,6 @@ def _create_surface_ring_patch(
         "refinement_steps": refinement_steps,
     }
 
-def _commit_surface_ring_patch(
-    context,
-    source,
-    settings,
-    ring_world,
-    ring_normals=None,
-):
-    """Create a targeted patch and commit it through Remi Mode when active."""
-    state = getattr(context.window_manager, "remi_session", None)
-    if state is None or not state.active:
-        return _create_surface_ring_patch(
-            source,
-            settings,
-            ring_world,
-            ring_normals=ring_normals,
-        )
-
-    # Import lazily to avoid the operators/session registration cycle.
-    from ...workflow.session_runtime import runtime as session_runtime
-
-    current = session_runtime.object(context)
-    if current is None or current != source:
-        return None, "The locked Remi mesh changed before the repair was applied", {}
-
-    try:
-        result, report = session_runtime.execute_manual_repair(
-            context,
-            ring_world,
-            ring_normals,
-        )
-        return result, "", report
-    except Exception as exc:
-        return None, str(exc), {}
-
 def _guided_hole_patches(
     source,
     settings,

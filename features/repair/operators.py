@@ -8,11 +8,44 @@ from ...infrastructure.blender.mesh_objects import (
     world_bounds_diagonal as _world_bounds_diagonal,
 )
 from .service import (
-    _commit_surface_ring_patch,
     _create_repair_candidate,
+    _create_surface_ring_patch,
     _evaluated_world_surface,
     _resample_screen_lasso,
 )
+
+
+def _commit_surface_ring_patch(
+    context,
+    source,
+    settings,
+    ring_world,
+    ring_normals=None,
+):
+    """Commit a viewport repair through the session when one is active."""
+    state = getattr(context.window_manager, "remi_session", None)
+    if state is None or not state.active:
+        return _create_surface_ring_patch(
+            source,
+            settings,
+            ring_world,
+            ring_normals=ring_normals,
+        )
+
+    from ...workflow.session_runtime import runtime as session_runtime
+
+    current = session_runtime.object(context)
+    if current is None or current != source:
+        return None, "The locked Remi mesh changed before the repair was applied", {}
+    try:
+        result, report = session_runtime.execute_manual_repair(
+            context,
+            ring_world,
+            ring_normals,
+        )
+        return result, "", report
+    except Exception as exc:
+        return None, str(exc), {}
 
 
 class Remi_OT_DrawHolePatch(Operator):

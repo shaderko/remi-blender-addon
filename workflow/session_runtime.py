@@ -7,7 +7,7 @@ import time
 import uuid
 
 import bpy
-from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty, StringProperty
+from bpy.props import BoolProperty, FloatProperty, IntProperty, StringProperty
 from bpy.types import PropertyGroup
 
 from .disk_service import (
@@ -34,17 +34,9 @@ class RemiSessionState(PropertyGroup):
     current_faces: IntProperty(default=0, options={"HIDDEN", "SKIP_SAVE"})
     current_vertices: IntProperty(default=0, options={"HIDDEN", "SKIP_SAVE"})
     checkpoint_megabytes: FloatProperty(default=0.0, options={"HIDDEN", "SKIP_SAVE"})
-    stage: EnumProperty(
-        name="Stage",
-        items=[
-            ("REPAIR", "Repair", "Repair holes and fragmented surfaces"),
-            ("REMESH", "Remesh", "Create a clean watertight surface"),
-            ("RETOPOLOGY", "Retopology", "Create production topology"),
-            ("UV", "UV", "Generate and inspect UVs"),
-            ("BAKE", "Bake", "Transfer the source appearance"),
-        ],
+    stage: StringProperty(
         default="REPAIR",
-        options={"SKIP_SAVE"},
+        options={"HIDDEN", "SKIP_SAVE"},
     )
 
 

@@ -1,6 +1,7 @@
 """Contract regressions for Remi's injected feature architecture."""
 
 from pathlib import Path
+import ast
 import sys
 
 
@@ -104,6 +105,20 @@ assert "voxel_size" in scene_settings
 assert "ar_target_quads" in scene_settings
 assert "bake_uv_profile" in scene_settings
 assert "bake_texture_size" in scene_settings
+
+service_paths = tuple((ADDON_PARENT / "remi" / "features").glob("*/service.py")) + (
+    ADDON_PARENT / "remi" / "features" / "remesh" / "decimation.py",
+    ADDON_PARENT / "remi" / "features" / "retopology" / "autoremesher_service.py",
+)
+for service_path in service_paths:
+    tree = ast.parse(service_path.read_text(encoding="utf-8"), filename=str(service_path))
+    forbidden = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        and node.module in {"operators", "session", "session_runtime", "ui"}
+    ]
+    assert not forbidden, (service_path, forbidden)
 
 _assert_rejected(
     (_Feature("REPAIR", ("ONE",)), _Feature("REPAIR", ("TWO",))),

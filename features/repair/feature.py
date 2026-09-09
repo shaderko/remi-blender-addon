@@ -104,7 +104,7 @@ class RepairFeature(FeatureDefaults):
     ) -> StageResult:
         settings = context.blender_context.scene.remi_settings
         if action.id == "REPAIR":
-            from ...operators import _create_repair_candidate
+            from .service import _create_repair_candidate
 
             return stage_result(
                 _create_repair_candidate(
@@ -115,7 +115,7 @@ class RepairFeature(FeatureDefaults):
                 )
             )
         if action.id == "MANUAL_REPAIR":
-            from ...operators import _create_surface_ring_patch
+            from .service import _create_surface_ring_patch
 
             return stage_result(
                 _create_surface_ring_patch(

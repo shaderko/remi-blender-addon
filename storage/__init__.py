@@ -1,15 +1,13 @@
-"""Compatibility imports for the disk service's former workflow location."""
+"""Session-owned persistence and temporary workspace services."""
 
-from ..storage.disk import (
+from .disk import (
     CHECKPOINT_MATERIALS_KEY,
-    CHECKPOINT_TARGET_KEY,
     SESSION_ID_KEY,
     SessionDiskService,
 )
 
 __all__ = (
     "CHECKPOINT_MATERIALS_KEY",
-    "CHECKPOINT_TARGET_KEY",
     "SESSION_ID_KEY",
     "SessionDiskService",
 )

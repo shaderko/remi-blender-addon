@@ -33,7 +33,7 @@ from remi.workflow.contracts import (
     FeatureUIContext,
     StageResult,
 )
-from remi.workflow.disk_service import SessionDiskService
+from remi.storage.disk import SessionDiskService
 from remi.workflow.registry import RegisteredAction
 
 

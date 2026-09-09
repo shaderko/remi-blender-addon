@@ -23,7 +23,7 @@ from ...infrastructure.blender.mesh_objects import (
     remove_mesh_object as _remove_mesh_object,
     world_bounds_diagonal as _world_bounds_diagonal,
 )
-from ...workflow.disk_service import SessionDiskService
+from ...storage.disk import SessionDiskService
 
 
 def _repair_boundary_holes(

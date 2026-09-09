@@ -67,7 +67,7 @@ the geometry service itself still executes inside a normal session transaction.
 - `workflow/session_runtime.py`: active object, working copies, commit, failure
   rollback, Back, Redo, Reset, Finish, and Cancel.
 - `workflow/session_operators.py`: Blender commands and timer adaptation only.
-- `workflow/disk_service.py`: all session checkpoint and scratch-workspace disk
+- `storage/disk.py`: all session checkpoint and scratch-workspace disk
   lifecycle, including crash-leftover cleanup on add-on start.
 - `infrastructure/blender`: reusable object lifecycle and OBJ/PLY/GLB adapters.
 - `selection_tools`: edit-mode bridge and double-shell tools outside the main
@@ -112,7 +112,7 @@ Repair, so applying one patch does not unexpectedly advance the user to Remesh.
 
 ## Disk ownership and crash recovery
 
-`SessionDiskService` is the only owner of checkpoint files and temporary
+`storage.SessionDiskService` is the only owner of checkpoint files and temporary
 operation directories. It writes checkpoints atomically with manifests that
 identify the exact mesh, parent, materials, and session. Finish, Cancel, failed
 startup, and unregister close the service and remove its directory.

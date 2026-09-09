@@ -10,7 +10,7 @@ import bpy
 from bpy.props import BoolProperty, FloatProperty, IntProperty, StringProperty
 from bpy.types import PropertyGroup
 
-from .disk_service import (
+from ..storage.disk import (
     CHECKPOINT_MATERIALS_KEY,
     SESSION_ID_KEY,
     SessionDiskService,

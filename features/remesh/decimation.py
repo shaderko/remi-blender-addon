@@ -12,7 +12,7 @@ import bpy
 
 from ... import meshlab_wrapper as meshlab
 from ...infrastructure.blender import mesh_exchange
-from ...workflow.disk_service import SessionDiskService
+from ...storage.disk import SessionDiskService
 
 
 def _has_image_texture(obj: bpy.types.Object) -> bool:

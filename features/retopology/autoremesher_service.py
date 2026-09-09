@@ -59,3 +59,10 @@ def create_candidate(obj, settings, disk=None):
         candidate.name = obj.name + "_autoremesh"
         candidate.pop("_remi_session_id", None)
         return candidate, "", {"command": command}
+
+
+class AutoRemesherService:
+    """External automatic retopology use case."""
+
+    def create_candidate(self, candidate, settings, *, disk=None):
+        return create_candidate(candidate, settings, disk=disk)

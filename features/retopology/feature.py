@@ -33,6 +33,9 @@ class RetopologyFeature(FeatureDefaults):
         ),
     )
 
+    def __init__(self, service):
+        self._service = service
+
     def scene_settings(self):
         from .settings import SCENE_SETTINGS
 
@@ -100,10 +103,8 @@ class RetopologyFeature(FeatureDefaults):
         context: FeatureExecutionContext,
     ) -> StageResult:
         if action.id == "AUTO_RETOPO":
-            from .autoremesher_service import create_candidate
-
             return stage_result(
-                create_candidate(
+                self._service.automatic(
                     context.working_copy,
                     context.blender_context.scene.remi_settings,
                     disk=context.disk,
@@ -118,15 +119,11 @@ class RetopologyFeature(FeatureDefaults):
     ) -> None:
         if action.id != "INSTANT_START":
             return super().start_interactive(action, context)
-        from ...instant_meshes.runtime import runtime
-
-        runtime.start(
+        self._service.start_interactive(
             context.working_copy,
             context.blender_context.scene.remi_instant_meshes,
         )
 
     def cancel_interactive(self, action: FeatureAction) -> None:
         if action.id == "INSTANT_START":
-            from ...instant_meshes.runtime import runtime
-
-            runtime.shutdown()
+            self._service.cancel_interactive()

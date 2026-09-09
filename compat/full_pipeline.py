@@ -25,13 +25,13 @@ from ..features.repair.service import (
     _hole_close_distance,
     _prepare_hole_repair,
 )
-from ..infrastructure.blender.mesh_exchange import (
+from ..blender.mesh_exchange import (
     export_obj_for_tool as _export_obj_for_tool,
     export_ply as _export_ply,
     import_obj_result as _import_obj_result,
     import_ply as _import_ply,
 )
-from ..infrastructure.blender.mesh_objects import (
+from ..blender.mesh_objects import (
     apply_modifiers as _apply_modifiers,
     duplicate_object as _duplicate_object,
     remove_mesh_object as _remove_mesh_object,

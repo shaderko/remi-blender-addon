@@ -1,1 +1,1 @@
-"""Blender-specific object and mesh exchange adapters."""
+"""Compatibility package for Blender adapters moved to :mod:`remi.blender`."""

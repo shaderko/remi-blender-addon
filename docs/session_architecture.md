@@ -51,7 +51,7 @@ registration / main UI / Blender command adapters
 ```
 
 Feature services may depend on lower-level mechanisms such as
-`infrastructure/blender`, `uv_mapping`, `instant_meshes`, `baking`, or external
+`blender`, `uv_mapping`, `instant_meshes`, `baking`, or external
 tool wrappers. They must not import the root `operators.py` compatibility
 facade, the main panel, or the session runtime. Manual Repair is the one adapter
 that calls back into the session after its viewport gesture has collected input;
@@ -69,7 +69,7 @@ the geometry service itself still executes inside a normal session transaction.
 - `workflow/session_operators.py`: Blender commands and timer adaptation only.
 - `storage/disk.py`: all session checkpoint and scratch-workspace disk
   lifecycle, including crash-leftover cleanup on add-on start.
-- `infrastructure/blender`: reusable object lifecycle and OBJ/PLY/GLB adapters.
+- `blender`: reusable object lifecycle and OBJ/PLY/GLB adapters.
 - `selection_tools`: edit-mode bridge and double-shell tools outside the main
   mesh-processing workflow.
 - `compat`: operator IDs retained for older scripts and Blender files. The old

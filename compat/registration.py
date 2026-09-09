@@ -3,7 +3,7 @@
 import bpy
 
 from .full_pipeline import Remi_OT_FullPipeline
-from ..infrastructure.blender.import_glb_operator import Remi_OT_ImportGLB
+from ..blender.import_glb_operator import Remi_OT_ImportGLB
 
 
 CLASSES = (Remi_OT_ImportGLB, Remi_OT_FullPipeline)

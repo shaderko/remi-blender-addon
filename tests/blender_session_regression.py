@@ -23,7 +23,7 @@ from remi import meshlab_wrapper
 from remi import operators
 from remi import session
 from remi.features.retopology import autoremesher_service
-from remi.infrastructure.blender import mesh_exchange
+from remi.blender import mesh_exchange
 from remi.uv_mapping import ensure_remi_uv
 from remi.application import get_application
 from remi.workflow.contracts import (

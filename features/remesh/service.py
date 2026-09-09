@@ -5,7 +5,7 @@ from __future__ import annotations
 import bpy
 
 from ... import gn_setup
-from ...infrastructure.blender.mesh_objects import (
+from ...blender.mesh_objects import (
     apply_modifiers,
     duplicate_object,
     remove_mesh_object,

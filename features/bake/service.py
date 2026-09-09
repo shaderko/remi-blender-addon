@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ... import baking
-from ...infrastructure.blender.mesh_objects import duplicate_object, remove_mesh_object
+from ...blender.mesh_objects import duplicate_object, remove_mesh_object
 
 
 def create_candidate(

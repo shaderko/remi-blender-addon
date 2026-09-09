@@ -11,7 +11,7 @@ import sys
 import bpy
 
 from ... import meshlab_wrapper as meshlab
-from ...infrastructure.blender import mesh_exchange
+from ...blender import mesh_exchange
 from ...storage.disk import SessionDiskService
 
 

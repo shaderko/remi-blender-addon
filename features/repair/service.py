@@ -12,11 +12,11 @@ from mathutils.kdtree import KDTree
 
 from ... import alpha_wrap as aw
 from ... import gn_setup
-from ...infrastructure.blender.mesh_exchange import (
+from ...blender.mesh_exchange import (
     export_ply as _export_ply,
     import_ply as _import_ply,
 )
-from ...infrastructure.blender.mesh_objects import (
+from ...blender.mesh_objects import (
     apply_modifiers as _apply_modifiers,
     duplicate_object as _duplicate_object,
     local_bounds_diagonal as _local_bounds_diagonal,

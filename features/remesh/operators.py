@@ -4,7 +4,7 @@ import bpy
 from bpy.types import Operator
 
 from ... import gn_setup
-from ...infrastructure.blender.mesh_objects import apply_modifiers as _apply_modifiers
+from ...blender.mesh_objects import apply_modifiers as _apply_modifiers
 from .decimation import create_candidate as _create_decimate_candidate
 from .service import create_candidate as _create_sdf_candidate
 

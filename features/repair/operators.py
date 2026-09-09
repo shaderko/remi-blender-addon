@@ -4,7 +4,7 @@ import bpy
 from bpy.types import Operator
 
 from ... import alpha_wrap as aw
-from ...infrastructure.blender.mesh_objects import (
+from ...blender.mesh_objects import (
     world_bounds_diagonal as _world_bounds_diagonal,
 )
 from .service import (

@@ -34,14 +34,14 @@ from .features.retopology.autoremesher_service import (
 from .features.retopology.operators import Remi_OT_AutoRemesher
 from .features.uv.operators import Remi_OT_GenerateUV
 from .features.uv.service import create_candidate as _create_uv_candidate
-from .infrastructure.blender.import_glb_operator import Remi_OT_ImportGLB
-from .infrastructure.blender.mesh_exchange import (
+from .blender.import_glb_operator import Remi_OT_ImportGLB
+from .blender.mesh_exchange import (
     export_obj_for_tool as _export_obj_for_tool,
     export_ply as _export_ply,
     import_obj_result as _import_obj_result,
     import_ply as _import_ply,
 )
-from .infrastructure.blender.mesh_objects import (
+from .blender.mesh_objects import (
     apply_modifiers as _apply_modifiers,
     duplicate_object as _duplicate_object,
     local_bounds_diagonal as _local_bounds_diagonal,

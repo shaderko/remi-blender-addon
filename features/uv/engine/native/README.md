@@ -6,7 +6,8 @@ Remi chart identifier as xatlas' per-face material key. This preserves chart
 boundaries while allowing xatlas to scale, rotate, and place the islands using
 pixel-exact padding.
 
-Build for Blender's Python ABI:
+Build for Blender's Python ABI. Install the resulting module into
+`features/uv/engine/_native/`:
 
 ```sh
 cmake -S . -B build \

@@ -24,7 +24,7 @@ from remi import operators
 from remi import session
 from remi.features.retopology import autoremesher_service
 from remi.blender import mesh_exchange
-from remi.uv_mapping import ensure_remi_uv
+from remi.features.uv.engine import ensure_remi_uv
 from remi.app.application import get_application
 from remi.workflow.contracts import (
     FeatureAction,

@@ -22,4 +22,4 @@ pybind11_add_module(_remi_uv_packer
 )
 target_include_directories(_remi_uv_packer PRIVATE ${XATLAS_VENDOR})
 set_target_properties(_remi_uv_packer PROPERTIES CXX_VISIBILITY_PRESET default)
-install(TARGETS _remi_uv_packer DESTINATION uv_mapping/_native)
+install(TARGETS _remi_uv_packer DESTINATION features/uv/engine/_native)

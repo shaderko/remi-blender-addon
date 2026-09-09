@@ -7,15 +7,15 @@ import sys
 import bpy
 
 
-ADDON_PARENT = Path(__file__).resolve().parents[3]
+ADDON_PARENT = Path(__file__).resolve().parents[2]
 for module_name in tuple(sys.modules):
     if module_name == "remi" or module_name.startswith("remi."):
         del sys.modules[module_name]
 if str(ADDON_PARENT) not in sys.path:
     sys.path.insert(0, str(ADDON_PARENT))
 
-from remi.uv_mapping import ensure_remi_uv
-from remi.uv_mapping.metrics import find_uv_overlaps
+from remi.features.uv.engine import ensure_remi_uv
+from remi.features.uv.engine.metrics import find_uv_overlaps
 
 
 def main():

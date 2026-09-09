@@ -1,7 +1,7 @@
 """Headless Blender regression coverage for Remi UV.
 
 Run with:
-  blender --background --factory-startup --python uv_mapping/tests/blender_uv_regression.py
+  blender --background --factory-startup --python tests/blender_uv_regression.py
 """
 
 from pathlib import Path
@@ -11,18 +11,18 @@ import sys
 import bpy
 
 
-ADDON_PARENT = Path(__file__).resolve().parents[3]
+ADDON_PARENT = Path(__file__).resolve().parents[2]
 if str(ADDON_PARENT) not in sys.path:
     sys.path.insert(0, str(ADDON_PARENT))
 
 import remi
-from remi.uv_mapping import ensure_remi_uv
-from remi.uv_mapping.analysis import analyze_mesh
-from remi.uv_mapping.blender_bridge import _repair_uv_flips, _seams_from_active_uv
-from remi.uv_mapping.metrics import find_uv_overlaps
-from remi.uv_mapping.metrics import evaluate_uv
-from remi.uv_mapping.packing import native_packer_available
-from remi.uv_mapping.settings import get_profile
+from remi.features.uv.engine import ensure_remi_uv
+from remi.features.uv.engine.analysis import analyze_mesh
+from remi.features.uv.engine.blender_bridge import _repair_uv_flips, _seams_from_active_uv
+from remi.features.uv.engine.metrics import find_uv_overlaps
+from remi.features.uv.engine.metrics import evaluate_uv
+from remi.features.uv.engine.packing import native_packer_available
+from remi.features.uv.engine.settings import get_profile
 
 
 def _clean_scene():

@@ -34,7 +34,6 @@ paths_exclude_pattern = [
   "/weppy-project-sync/",
   "/instant_meshes/tests/",
   "/instant_meshes/native/",
-  "/uv_mapping/tests/",
-  "/uv_mapping/native/",
+  "/features/uv/engine/native/",
   "/alpha_wrap_helper/build/",
 ]

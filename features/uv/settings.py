@@ -8,7 +8,7 @@ from bpy.props import (
     StringProperty,
 )
 
-from ...uv_mapping.settings import PROFILE_ITEMS
+from .engine.settings import PROFILE_ITEMS
 
 
 SCENE_SETTINGS = {

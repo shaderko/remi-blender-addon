@@ -13,7 +13,7 @@ including the source used to build the bundled macOS Apple Silicon binary.
 - Project: [jpcy/xatlas](https://github.com/jpcy/xatlas)
 - Revision: `f700c7790aaa030e794b52ba7791a05c085faf0c`
 - License: MIT
-- License text: `uv_mapping/native/vendor/xatlas/LICENSE`
+- License text: `features/uv/engine/native/vendor/xatlas/LICENSE`
 
 Remi vendors the upstream `xatlas.cpp` and `xatlas.h` files documented for
 direct integration. The Blender-loop conversion, candidate scoring, and

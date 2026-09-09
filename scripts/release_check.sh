@@ -13,7 +13,7 @@ TESTS=(
   "tests/blender_edit_tools_regression.py"
   "instant_meshes/tests/blender_smoke.py"
   "instant_meshes/tests/blender_topology_regression.py"
-  "uv_mapping/tests/blender_uv_regression.py"
+  "tests/blender_uv_regression.py"
 )
 
 for test_file in "${TESTS[@]}"; do

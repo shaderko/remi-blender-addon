@@ -8,7 +8,7 @@ import math
 
 import bpy
 
-from ...uv_mapping import ensure_remi_uv
+from ..uv.engine import ensure_remi_uv
 
 
 def _ensure_uv(

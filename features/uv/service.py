@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ...blender.mesh_objects import duplicate_object, remove_mesh_object
-from ...uv_mapping import ensure_remi_uv
+from .engine import ensure_remi_uv
 
 
 def _build_candidate(source, settings, suffix="_uv", candidate=None):

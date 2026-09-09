@@ -21,6 +21,8 @@ import remi
 from remi import baking
 from remi import operators
 from remi import session
+from remi.features.retopology import autoremesher_service
+from remi.infrastructure.blender import mesh_exchange
 from remi.application import get_application
 from remi.workflow.contracts import (
     FeatureAction,
@@ -702,11 +704,11 @@ def test_autoremesher_candidate_commits_in_place():
     settings = bpy.context.scene.remi_settings
 
     originals = {
-        "resolve": operators.arm.resolve_executable,
-        "validate": operators.arm.validate_executable,
-        "export": operators._export_obj_for_tool,
-        "run": operators.subprocess.run,
-        "import": operators._import_obj_result,
+        "resolve": autoremesher_service.autoremesher.resolve_executable,
+        "validate": autoremesher_service.autoremesher.validate_executable,
+        "export": mesh_exchange.export_obj_for_tool,
+        "run": autoremesher_service.subprocess.run,
+        "import": mesh_exchange.import_obj_result,
     }
 
     def fake_export(_obj, path, export_materials=False):
@@ -724,11 +726,13 @@ def test_autoremesher_candidate_commits_in_place():
         return candidate
 
     try:
-        operators.arm.resolve_executable = lambda _configured: Path("/usr/bin/true")
-        operators.arm.validate_executable = lambda _executable: ""
-        operators._export_obj_for_tool = fake_export
-        operators.subprocess.run = fake_run
-        operators._import_obj_result = fake_import
+        autoremesher_service.autoremesher.resolve_executable = (
+            lambda _configured: Path("/usr/bin/true")
+        )
+        autoremesher_service.autoremesher.validate_executable = lambda _executable: ""
+        mesh_exchange.export_obj_for_tool = fake_export
+        autoremesher_service.subprocess.run = fake_run
+        mesh_exchange.import_obj_result = fake_import
 
         session.runtime.begin(bpy.context, source)
         session.runtime.execute_action(bpy.context, action_for_command("AUTO_RETOPO"))
@@ -739,11 +743,11 @@ def test_autoremesher_candidate_commits_in_place():
         assert len(session.runtime.object(bpy.context).data.polygons) == original_faces
         session.runtime.cancel(bpy.context)
     finally:
-        operators.arm.resolve_executable = originals["resolve"]
-        operators.arm.validate_executable = originals["validate"]
-        operators._export_obj_for_tool = originals["export"]
-        operators.subprocess.run = originals["run"]
-        operators._import_obj_result = originals["import"]
+        autoremesher_service.autoremesher.resolve_executable = originals["resolve"]
+        autoremesher_service.autoremesher.validate_executable = originals["validate"]
+        mesh_exchange.export_obj_for_tool = originals["export"]
+        autoremesher_service.subprocess.run = originals["run"]
+        mesh_exchange.import_obj_result = originals["import"]
     print("PASS AutoRemesher candidate commits to the locked object")
 
 

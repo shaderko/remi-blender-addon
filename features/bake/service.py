@@ -2,18 +2,8 @@
 
 from __future__ import annotations
 
-import bpy
-
 from ... import baking
-
-
-def _remove_candidate(candidate) -> None:
-    if not candidate:
-        return
-    mesh = candidate.data if candidate.type == "MESH" else None
-    bpy.data.objects.remove(candidate, do_unlink=True)
-    if mesh and mesh.users == 0:
-        bpy.data.meshes.remove(mesh)
+from ...infrastructure.blender.mesh_objects import duplicate_object, remove_mesh_object
 
 
 def create_candidate(
@@ -28,9 +18,7 @@ def create_candidate(
 ):
     """Bake from a disposable source checkpoint onto an isolated candidate."""
     if candidate is None:
-        from ...operators import _duplicate_object
-
-        candidate = _duplicate_object(current, suffix)
+        candidate = duplicate_object(current, suffix)
     try:
         result = baking.bake_textures(
             source_checkpoint,
@@ -51,9 +39,9 @@ def create_candidate(
             reuse_outputs=False,
         )
     except Exception:
-        _remove_candidate(candidate)
+        remove_mesh_object(candidate)
         raise
     if not result["success"]:
-        _remove_candidate(candidate)
+        remove_mesh_object(candidate)
         return None, result.get("error", "Baking failed"), result
     return candidate, "", result

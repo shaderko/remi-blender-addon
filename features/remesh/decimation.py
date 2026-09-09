@@ -11,6 +11,7 @@ import sys
 import bpy
 
 from ... import meshlab_wrapper as meshlab
+from ...infrastructure.blender import mesh_exchange
 from ...workflow.disk_service import SessionDiskService
 
 
@@ -152,10 +153,6 @@ def create_candidate(obj, settings, disk=None):
     if keep_texture and not _has_image_texture(obj):
         return None, "Keep Texture needs a mesh with UVs and an image texture", []
 
-    # Exchange helpers remain Blender adapters; importing lazily avoids coupling
-    # feature discovery to Blender operator registration.
-    from ... import operators as blender_exchange
-
     with SessionDiskService.operation_workspace(disk, "decimate") as workspace:
         temp_dir = str(workspace)
         base_name = bpy.path.clean_name(obj.name)
@@ -170,13 +167,13 @@ def create_candidate(obj, settings, disk=None):
             texture_image_states, _texture_temp_files = texture_export
         try:
             export_ok = (
-                blender_exchange._export_obj_for_tool(
+                mesh_exchange.export_obj_for_tool(
                     obj,
                     input_path,
                     export_materials=True,
                 )
                 if keep_texture
-                else blender_exchange._export_ply(obj, input_path)
+                else mesh_exchange.export_ply(obj, input_path)
             )
         finally:
             _restore_texture_export_images(texture_image_states)
@@ -206,9 +203,9 @@ def create_candidate(obj, settings, disk=None):
                 )
 
         candidate = (
-            blender_exchange._import_obj_result(output_path)
+            mesh_exchange.import_obj_result(output_path)
             if keep_texture
-            else blender_exchange._import_ply(output_path)
+            else mesh_exchange.import_ply(output_path)
         )
         if not candidate:
             kind = "textured OBJ" if keep_texture else "PLY"

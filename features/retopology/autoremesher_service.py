@@ -9,6 +9,7 @@ import subprocess
 import bpy
 
 from ... import autoremesher
+from ...infrastructure.blender import mesh_exchange
 from ...workflow.disk_service import SessionDiskService
 
 
@@ -19,15 +20,13 @@ def create_candidate(obj, settings, disk=None):
     if error:
         return None, error, {}
 
-    from ... import operators as blender_exchange
-
     with SessionDiskService.operation_workspace(disk, "autoremesher") as workspace:
         temp_dir = str(workspace)
         base_name = bpy.path.clean_name(obj.name)
         input_obj = os.path.join(temp_dir, f"{base_name}_input.obj")
         output_obj = os.path.join(temp_dir, f"{base_name}_output.obj")
         report_path = os.path.join(temp_dir, f"{base_name}_report.txt")
-        if not blender_exchange._export_obj_for_tool(obj, input_obj):
+        if not mesh_exchange.export_obj_for_tool(obj, input_obj):
             return None, "OBJ export failed", {}
 
         command = autoremesher.build_command(
@@ -54,7 +53,7 @@ def create_candidate(obj, settings, disk=None):
         if not os.path.isfile(output_obj):
             return None, "AutoRemesher did not produce output file", {"command": command}
 
-        candidate = blender_exchange._import_obj_result(output_obj)
+        candidate = mesh_exchange.import_obj_result(output_obj)
         if not candidate:
             return None, "Failed to import AutoRemesher result", {"command": command}
         candidate.name = obj.name + "_autoremesh"

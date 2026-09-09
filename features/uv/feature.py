@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ..base import FeatureDefaults, stage_result
+from ..base import FeatureDefaults, session_command, stage_result
 from ...workflow.contracts import (
     FeatureAction,
     FeatureDescriptor,
@@ -19,6 +19,19 @@ class UVFeature(FeatureDefaults):
         next_feature="BAKE",
         actions=(FeatureAction("UV", "UV", "Generate and inspect UVs"),),
     )
+
+    def draw(self, layout, context) -> None:
+        settings = context.blender_context.scene.remi_settings
+        layout.label(text="UV", icon="UV")
+        layout.prop(settings, "bake_uv_profile", text="Profile")
+        row = layout.row(align=True)
+        row.prop(settings, "bake_texture_size", text="Texture")
+        row.prop(settings, "bake_uv_margin_px", text="Padding")
+        layout.prop(settings, "bake_uv_preserve_seams", text="Preserve Marked Seams")
+        layout.separator()
+        action = layout.column()
+        action.scale_y = 1.35
+        session_command(action, "UV", "Generate UV", "UV")
 
     def queued_message(
         self,

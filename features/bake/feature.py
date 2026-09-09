@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ..base import FeatureDefaults, stage_result
+from ..base import FeatureDefaults, session_command, stage_result
 from ...workflow.contracts import (
     FeatureAction,
     FeatureDescriptor,
@@ -54,6 +54,37 @@ class BakeFeature(FeatureDefaults):
         "BAKE_NORMAL": ("normal",),
         "BAKE_AO": ("ao",),
     }
+
+    def draw(self, layout, context) -> None:
+        settings = context.blender_context.scene.remi_settings
+        layout.label(text="Bake", icon="RENDER_STILL")
+        layout.label(text="Uses original source checkpoint", icon="LOCKED")
+        layout.prop(settings, "bake_texture_size", text="Texture Size")
+        layout.prop(settings, "bake_auto_unwrap", text="Auto Unwrap")
+        if settings.bake_auto_unwrap:
+            row = layout.row(align=True)
+            row.prop(settings, "bake_uv_method", text="UV Method")
+            if settings.bake_uv_method == "REMI":
+                row.prop(settings, "bake_uv_profile", text="Profile")
+                layout.prop(settings, "bake_uv_margin_px", text="Padding")
+            else:
+                layout.prop(settings, "bake_uv_island_margin", text="Margin")
+        row = layout.row(align=True)
+        row.prop(settings, "bake_recalc_normals", text="Recalc Normals")
+        row.prop(settings, "bake_half_scale", text="Half Scale")
+        row = layout.row(align=True)
+        row.prop(settings, "bake_cage_extrusion", text="Cage")
+        row.prop(settings, "bake_max_ray_distance", text="Max Ray")
+        layout.separator()
+        action = layout.column(align=True)
+        action.scale_y = 1.3
+        session_command(action, "BAKE_ALL", "Bake All Maps", "RENDER_STILL")
+        row = action.row(align=True)
+        session_command(row, "BAKE_DIFFUSE", "Albedo")
+        session_command(row, "BAKE_ROUGHNESS", "Roughness")
+        row = action.row(align=True)
+        session_command(row, "BAKE_NORMAL", "Normal")
+        session_command(row, "BAKE_AO", "AO")
 
     def queued_message(
         self,

@@ -21,12 +21,12 @@ import remi
 from remi import baking
 from remi import operators
 from remi import session
-from remi import ui
 from remi.application import get_application
 from remi.workflow.contracts import (
     FeatureAction,
     FeatureDescriptor,
     FeatureExecutionContext,
+    FeatureUIContext,
     StageResult,
 )
 from remi.workflow.disk_service import SessionDiskService
@@ -35,6 +35,13 @@ from remi.workflow.registry import RegisteredAction
 
 def action_for_command(command):
     return get_application().features.require_action(command)
+
+
+def draw_feature(feature_id, layout, state):
+    get_application().features.get(feature_id).draw(
+        layout,
+        FeatureUIContext(blender_context=bpy.context, state=state),
+    )
 
 
 class _StageFeatureAdapter:
@@ -558,7 +565,7 @@ def test_repair_ui_keeps_manual_and_advanced_controls():
 
     settings.hole_repair_method = "ALPHA_WRAP"
     alpha_layout = _UILayoutRecorder()
-    ui._draw_repair(alpha_layout, settings, state)
+    draw_feature("REPAIR", alpha_layout, state)
     alpha_events = set(alpha_layout.events)
     assert ("operator", "remi.draw_hole_patch") in alpha_events
     assert ("operator", "remi.build_alpha_wrap") in alpha_events
@@ -575,18 +582,18 @@ def test_repair_ui_keeps_manual_and_advanced_controls():
     settings.hole_repair_method = "HYBRID"
     settings.hole_detail_recovery = True
     hybrid_layout = _UILayoutRecorder()
-    ui._draw_repair(hybrid_layout, settings, state)
+    draw_feature("REPAIR", hybrid_layout, state)
     assert ("prop", "hole_detail_ratio") in set(hybrid_layout.events)
 
     settings.hole_repair_method = "VOLUME"
     volume_layout = _UILayoutRecorder()
-    ui._draw_repair(volume_layout, settings, state)
+    draw_feature("REPAIR", volume_layout, state)
     assert ("prop", "volume_surface_fit_ratio") in set(volume_layout.events)
 
     settings.remesh_backend = "VOLUME"
     settings.volume_preserve_features = True
     remesh_layout = _UILayoutRecorder()
-    ui._draw_remesh(remesh_layout, settings)
+    draw_feature("REMESH", remesh_layout, state)
     assert {
         ("prop", "volume_surface_fit_ratio"),
         ("prop", "volume_feature_angle"),

@@ -12,6 +12,12 @@ from ..workflow.contracts import (
 )
 
 
+def session_command(layout, command: str, text: str, icon: str = "NONE"):
+    operator = layout.operator("remi.session_command", text=text, icon=icon)
+    operator.command = command
+    return operator
+
+
 def stage_result(raw_result) -> StageResult:
     """Normalize the existing mesh mechanisms at the feature boundary."""
     candidate, error, report = raw_result

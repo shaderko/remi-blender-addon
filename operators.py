@@ -25,7 +25,7 @@ from .features.repair.operators import (
     _commit_surface_ring_patch,
 )
 from .features.repair.service import (
-    _create_repair_candidate,
+    create_candidate as _create_repair_candidate,
     _create_surface_ring_patch,
 )
 from .features.retopology.autoremesher_service import (

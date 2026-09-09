@@ -118,10 +118,10 @@ class RepairFeature(FeatureDefaults):
     ) -> StageResult:
         settings = context.blender_context.scene.remi_settings
         if action.id == "REPAIR":
-            from .service import _create_repair_candidate
+            from .service import create_candidate
 
             return stage_result(
-                _create_repair_candidate(
+                create_candidate(
                     context.source,
                     settings,
                     candidate=context.working_copy,

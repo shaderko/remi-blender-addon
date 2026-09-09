@@ -8,7 +8,7 @@ from ...blender.mesh_objects import (
     world_bounds_diagonal as _world_bounds_diagonal,
 )
 from .service import (
-    _create_repair_candidate,
+    create_candidate,
     _create_surface_ring_patch,
     _evaluated_world_surface,
     _resample_screen_lasso,
@@ -292,7 +292,7 @@ class Remi_OT_RepairHoles(Operator):
     def execute(self, context):
         settings = context.scene.remi_settings
         source = context.active_object
-        repaired, error, report = _create_repair_candidate(source, settings)
+        repaired, error, report = create_candidate(source, settings)
         if error:
             self.report({"ERROR"}, error)
             return {"CANCELLED"}

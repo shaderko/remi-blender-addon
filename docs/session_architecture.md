@@ -74,6 +74,7 @@ the geometry service itself still executes inside a normal session transaction.
 - `workflow/session_runtime.py`: active object, working copies, commit, failure
   rollback, Back, Redo, Reset, Finish, and Cancel.
 - `workflow/state.py`: Blender properties exposed to UI and operators.
+- `workflow/history.py`: bounded checkpoint transitions and Back/Redo metadata.
 - `blender/session_objects.py`: copying, checkpoint loading, object replacement,
   selection, and orphan data-block cleanup used by the session runtime.
 - `workflow/session_operators.py`: Blender commands and timer adaptation only.

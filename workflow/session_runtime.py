@@ -10,6 +10,7 @@ import bpy
 from ..blender.session_objects import SessionObjectStore
 from ..storage.disk import SESSION_ID_KEY, SessionDiskService
 from .contracts import FeatureExecutionContext
+from .history import SessionHistory
 from .registry import FeatureRegistry, RegisteredAction
 from .state import RemiSessionState
 
@@ -19,16 +20,10 @@ class RemiSessionRuntime:
 
     def __init__(self):
         self.objects = SessionObjectStore()
+        self.history = SessionHistory(self.objects)
         self.features = None
         self.disk = None
         self.pending_command = ""
-        self.last_step_label = ""
-        self.previous_step_label = ""
-        self.previous_stage = "REPAIR"
-        self.redo_step_label = ""
-        self.redo_stage = "REPAIR"
-        self.pending_step_label = ""
-        self.pending_stage = "REPAIR"
         self.interactive_copy = None
 
     def configure_features(self, features: FeatureRegistry | None):
@@ -155,13 +150,7 @@ class RemiSessionRuntime:
             raise
 
         self.pending_command = ""
-        self.last_step_label = ""
-        self.previous_step_label = ""
-        self.previous_stage = "REPAIR"
-        self.redo_step_label = ""
-        self.redo_stage = "REPAIR"
-        self.pending_step_label = ""
-        self.pending_stage = "REPAIR"
+        self.history.reset_labels()
 
         state.active = True
         state.busy = False
@@ -344,134 +333,57 @@ class RemiSessionRuntime:
     def _prepare_step(self, context, label: str):
         state = self.state(context)
         current = self.object(context)
-        if not current:
-            raise RuntimeError("The Remi working object is missing")
-        state.busy = True
-        state.status = f"Saving recovery point before {label.lower()}…"
-        self._snapshot(current, "pending")
-        self.last_step_label = label
-        self.pending_step_label = state.current_step
-        self.pending_stage = state.stage
+        self.history.prepare(state, self._require_disk(), current, label)
 
     def _abandon_step(self, context, candidate=None, message="Step failed"):
-        if candidate and candidate != self.object(context):
-            self._remove_object(candidate)
-        if self.disk is not None:
-            self.disk.discard("pending")
         state = self.state(context)
-        state.busy = False
         current = self.object(context)
-        if current:
-            self._select_only(context, current)
+        self.history.abandon(
+            context,
+            state,
+            self.disk,
+            current,
+            candidate,
+        )
         self._update_stats(context, message)
 
     def _commit_step(self, context, candidate, label: str, next_stage=None):
         state = self.state(context)
         current = self.object(context)
-        if not current or not candidate or candidate.type != "MESH":
-            raise RuntimeError("Remi did not produce a valid mesh result")
-        if candidate == current:
-            raise RuntimeError("Remi cannot commit the working object as its own candidate")
-
-        old_name = current.name
-        old_collections = list(current.users_collection)
-        old_dependencies = self.objects.object_dependencies(current)
-        candidate_collections = set(candidate.users_collection)
-        for collection in old_collections:
-            if collection not in candidate_collections:
-                collection.objects.link(candidate)
-        for collection in list(candidate.users_collection):
-            if collection not in old_collections:
-                collection.objects.unlink(candidate)
-
-        self._remove_object(current)
-        self.objects.remove_orphan_dependencies(old_dependencies)
-        candidate.name = old_name
-        candidate[SESSION_ID_KEY] = state.session_id
-        self._select_only(context, candidate)
-
-        disk = self._require_disk()
-        disk.promote("pending", "previous")
-        disk.discard("redo")
-
-        state.busy = False
-        state.current_step = label
-        state.step_index += 1
-        state.can_undo = True
-        state.can_redo = False
-        self.previous_step_label = self.pending_step_label or "Source"
-        self.previous_stage = self.pending_stage
-        self.redo_step_label = ""
-        self.redo_stage = "REPAIR"
-        if next_stage is not None:
-            state.stage = next_stage
-        else:
-            # Compatibility for interactive consumers that began their
-            # transaction before returning a candidate.
-            state.stage = {
-                "Repair": "REMESH",
-                "Remesh": "RETOPOLOGY",
-                "Decimate": "RETOPOLOGY",
-                "Retopology": "UV",
-                "Auto Retopology": "UV",
-                "UV": "BAKE",
-            }.get(label, "BAKE" if label.startswith("Bake") else state.stage)
+        self.history.commit(
+            context,
+            state,
+            self._require_disk(),
+            current,
+            candidate,
+            label,
+            next_stage=next_stage,
+        )
         self._update_stats(context, f"{label} complete")
 
     def undo(self, context):
         state = self.state(context)
         disk = self._require_disk()
-        if not state.can_undo or not disk.exists("previous"):
-            raise RuntimeError("There is no previous Remi step")
         current = self.object(context)
-        self.redo_step_label = state.current_step
-        self.redo_stage = state.stage
-        self._snapshot(current, "redo")
-        self._load_checkpoint(context, "previous")
-        disk.discard("previous")
-        state.step_index = max(0, state.step_index - 1)
-        state.can_undo = False
-        state.can_redo = True
-        state.current_step = self.previous_step_label or "Source"
-        state.stage = self.previous_stage
-        self.previous_step_label = ""
+        self.history.undo(context, state, disk, current)
         self._update_stats(context, "Returned to the previous committed mesh")
 
     def redo(self, context):
         state = self.state(context)
         disk = self._require_disk()
-        if not state.can_redo or not disk.exists("redo"):
-            raise RuntimeError("There is no Remi step to redo")
         current = self.object(context)
-        self.previous_step_label = state.current_step
-        self.previous_stage = state.stage
-        self._snapshot(current, "previous")
-        self._load_checkpoint(context, "redo")
-        disk.discard("redo")
-        state.step_index += 1
-        state.can_undo = True
-        state.can_redo = False
-        state.current_step = self.redo_step_label or self.last_step_label or "Result"
-        state.stage = self.redo_stage
-        self.redo_step_label = ""
+        self.history.redo(context, state, disk, current)
         self._update_stats(context, "Restored the next committed mesh")
 
     def reset(self, context):
         state = self.state(context)
         current = self.object(context)
-        if not current:
-            raise RuntimeError("The Remi working object is missing")
-        self.redo_step_label = state.current_step
-        self.redo_stage = state.stage
-        self._snapshot(current, "redo")
-        self._load_checkpoint(context, "source")
-        self._require_disk().discard("previous")
-        state.current_step = "Source"
-        state.stage = "REPAIR"
-        state.step_index = 0
-        state.can_undo = False
-        state.can_redo = True
-        self.previous_step_label = ""
+        self.history.restore_source(
+            context,
+            state,
+            self._require_disk(),
+            current,
+        )
         self._update_stats(context, "Restored the source mesh")
 
     def _clear_state(self, context):
@@ -499,13 +411,7 @@ class RemiSessionRuntime:
             self.disk.close()
         self.disk = None
         self.pending_command = ""
-        self.last_step_label = ""
-        self.previous_step_label = ""
-        self.previous_stage = "REPAIR"
-        self.redo_step_label = ""
-        self.redo_stage = "REPAIR"
-        self.pending_step_label = ""
-        self.pending_stage = "REPAIR"
+        self.history.reset_labels()
 
     def finish(self, context):
         obj = self.object(context)

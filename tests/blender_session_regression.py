@@ -18,7 +18,7 @@ if str(ADDON_PARENT) not in sys.path:
     sys.path.insert(0, str(ADDON_PARENT))
 
 import remi
-from remi import baking
+from remi.features.bake import engine as baking
 from remi.integrations import meshlab
 from remi import operators
 from remi import session

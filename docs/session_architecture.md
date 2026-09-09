@@ -66,6 +66,8 @@ the geometry service itself still executes inside a normal session transaction.
 - `features/<name>/service.py`: candidate construction for session actions.
 - `features/remesh/geometry_nodes.py`: the reusable SDF node group and modifier
   mechanism used by Remesh and volume-guided Repair.
+- `features/bake/engine.py`: Blender image, material, source-preparation, and
+  bake execution mechanics behind the Bake service.
 - `features/repair/boundary.py`, `alpha_wrap.py`, `volume.py`, `guided.py`, and
   `manual.py`: focused strategies and shared patch composition behind the
   repair use case.

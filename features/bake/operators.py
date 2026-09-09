@@ -2,7 +2,7 @@
 
 from bpy.types import Operator
 
-from ... import baking
+from . import engine
 
 
 class Remi_BakeOperatorMixin:
@@ -30,7 +30,7 @@ class Remi_BakeOperatorMixin:
             return {"CANCELLED"}
 
         s = context.scene.remi_settings
-        result = baking.bake_textures(
+        result = engine.bake_textures(
             sources, target,
             texture_size=s.bake_texture_size,
             uv_method=s.bake_uv_method,

@@ -15,7 +15,7 @@ import bpy
 from bpy.types import Operator
 
 from ..integrations import autoremesher as arm
-from .. import baking
+from ..features.bake import engine as baking
 from ..features.remesh import geometry_nodes
 from ..integrations import meshlab as mlw
 from ..features.repair.service import (

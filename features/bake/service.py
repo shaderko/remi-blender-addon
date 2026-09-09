@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from ... import baking
 from ...blender.mesh_objects import duplicate_object, remove_mesh_object
+from . import engine
 
 
 def create_candidate(
@@ -20,7 +20,7 @@ def create_candidate(
     if candidate is None:
         candidate = duplicate_object(current, suffix)
     try:
-        result = baking.bake_textures(
+        result = engine.bake_textures(
             source_checkpoint,
             candidate,
             texture_size=settings.bake_texture_size,

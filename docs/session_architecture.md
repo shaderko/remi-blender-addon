@@ -64,8 +64,8 @@ the geometry service itself still executes inside a normal session transaction.
   `scene.remi_settings` facade.
 - `features/<name>/operators.py`: standalone Blender operator adapters.
 - `features/<name>/service.py`: candidate construction for session actions.
-- `features/repair/boundary.py` and `guided.py`: focused topology and
-  guide-based repair mechanisms behind the repair use case.
+- `features/repair/boundary.py`, `guided.py`, and `manual.py`: focused topology,
+  guide-based, and viewport-directed mechanisms behind the repair use case.
 - `workflow/session_runtime.py`: active object, working copies, commit, failure
   rollback, Back, Redo, Reset, Finish, and Cancel.
 - `workflow/state.py`: Blender properties exposed to UI and operators.

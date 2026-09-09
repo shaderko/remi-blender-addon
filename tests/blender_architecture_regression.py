@@ -149,10 +149,12 @@ canonical_paths = (
     "features/repair/guided.py",
     "features/repair/manual.py",
     "features/repair/volume.py",
+    "features/edit_tools/bridge.py",
     "features/remesh/geometry_nodes.py",
     "features/retopology/instant_meshes/runtime.py",
     "features/uv/engine/blender_bridge.py",
     "features/bake/engine.py",
+    "integrations/alpha_wrap/helper/CMakeLists.txt",
     "integrations/meshlab/worker.py",
 )
 for relative_path in canonical_paths:
@@ -172,9 +174,20 @@ legacy_paths = (
     "session_operators.py",
     "settings.py",
     "workflow/session_runtime.py",
+    "alpha_wrap_helper",
+    "instant_meshes",
+    "selection_tools",
+    "storage",
+    "ui",
+    "uv_mapping",
 )
 for relative_path in legacy_paths:
     assert not (ADDON_PARENT / "remi" / relative_path).exists(), relative_path
+
+root_python_files = {
+    path.name for path in (ADDON_PARENT / "remi").glob("*.py")
+}
+assert root_python_files == {"__init__.py"}, root_python_files
 
 for feature_path in feature_root.rglob("*.py"):
     tree = ast.parse(feature_path.read_text(encoding="utf-8"), filename=str(feature_path))

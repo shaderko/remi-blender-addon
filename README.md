@@ -81,13 +81,16 @@ an edge. Accepting the preview commits it to the same locked mesh.
 3. If Remi is disabled, enable it under **Preferences -> Add-ons**.
 4. In the 3D Viewport, press `N` and open the **Remi** tab.
 
-For development or a manual installation from this repository:
+For development, build the same extension archive that users install:
 
 ```bash
-python3 install_blender_addon.py --blender-version 5.2
+./scripts/build_extension.sh "/Applications/Blender.app/Contents/MacOS/Blender"
 ```
 
-Restart Blender after a manual installation.
+Then use Blender's **Install from Disk** action with the archive written to
+`dist/`. Do not also copy the repository into Blender's legacy
+`scripts/addons` directory; two installations can register the same operator
+IDs and invalidate testing.
 
 Maintainers can run the complete headless regression suite and build a
 validator-checked extension archive with:

@@ -27,7 +27,6 @@ paths_exclude_pattern = [
   "__pycache__/",
   ".*",
   "*.zip",
-  "/install_blender_addon.py",
   "/dist/",
   "/scripts/",
   "/tests/",

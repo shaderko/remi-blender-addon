@@ -23,7 +23,7 @@ from .manual import _create_surface_ring_patch, _resample_screen_lasso
 from .volume import _closing_volume_remesh
 
 
-def create_candidate(source, settings, suffix="_prepared", candidate=None, disk=None):
+def _build_candidate(source, settings, suffix="_prepared", candidate=None, disk=None):
     """Build a repaired result without changing ``source``."""
     if settings.hole_repair_method in {"ALPHA_WRAP", "VOLUME"}:
         return _guided_hole_patches(
@@ -74,10 +74,40 @@ def create_candidate(source, settings, suffix="_prepared", candidate=None, disk=
     }
 
 
+class RepairService:
+    """Public Repair use cases consumed by :class:`RepairFeature`."""
+
+    def repair(self, source, settings, *, candidate=None, disk=None):
+        return _build_candidate(source, settings, candidate=candidate, disk=disk)
+
+    def manual_patch(
+        self,
+        source,
+        settings,
+        ring_world,
+        *,
+        ring_normals=None,
+        candidate=None,
+    ):
+        return _create_surface_ring_patch(
+            source,
+            settings,
+            ring_world,
+            ring_normals=ring_normals,
+            result=candidate,
+        )
+
+
+def create_candidate(source, settings, suffix="_prepared", candidate=None, disk=None):
+    """Compatibility function for standalone callers."""
+    return _build_candidate(source, settings, suffix, candidate, disk)
+
+
 _create_repair_candidate = create_candidate
 
 __all__ = (
     "create_candidate",
+    "RepairService",
     "_create_repair_candidate",
     "_create_surface_ring_patch",
     "_evaluated_world_surface",

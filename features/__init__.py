@@ -3,6 +3,7 @@
 from .bake.feature import BakeFeature
 from .remesh.feature import RemeshFeature
 from .repair.feature import RepairFeature
+from .repair.service import RepairService
 from .retopology.feature import RetopologyFeature
 from .uv.feature import UVFeature
 from ..workflow.registry import FeatureRegistry
@@ -12,7 +13,7 @@ def create_default_registry() -> FeatureRegistry:
     """Build the ordered workflow without filesystem or import-time discovery."""
     return FeatureRegistry(
         (
-            RepairFeature(),
+            RepairFeature(RepairService()),
             RemeshFeature(),
             RetopologyFeature(),
             UVFeature(),

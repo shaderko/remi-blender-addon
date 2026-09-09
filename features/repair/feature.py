@@ -32,6 +32,9 @@ class RepairFeature(FeatureDefaults):
         ),
     )
 
+    def __init__(self, service):
+        self._service = service
+
     def scene_settings(self):
         from .settings import SCENE_SETTINGS
 
@@ -118,10 +121,8 @@ class RepairFeature(FeatureDefaults):
     ) -> StageResult:
         settings = context.blender_context.scene.remi_settings
         if action.id == "REPAIR":
-            from .service import create_candidate
-
             return stage_result(
-                create_candidate(
+                self._service.repair(
                     context.source,
                     settings,
                     candidate=context.working_copy,
@@ -129,15 +130,13 @@ class RepairFeature(FeatureDefaults):
                 )
             )
         if action.id == "MANUAL_REPAIR":
-            from .service import _create_surface_ring_patch
-
             return stage_result(
-                _create_surface_ring_patch(
+                self._service.manual_patch(
                     context.source,
                     settings,
                     context.payload["ring_world"],
                     ring_normals=context.payload.get("ring_normals"),
-                    result=context.working_copy,
+                    candidate=context.working_copy,
                 )
             )
         return super().execute(action, context)

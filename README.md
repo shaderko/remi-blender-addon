@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="remi_logo.png" alt="Remi Logo" width="180"/>
+  <img src="assets/remi_logo.png" alt="Remi Logo" width="180"/>
 </p>
 
 # Remi
@@ -11,8 +11,10 @@ geometry into a cleaner working mesh. It can close holes and cracks, rebuild a
 surface, reduce triangle count, create guided quad topology with Instant Meshes,
 and bake the source appearance onto the result.
 
-Repair, remesh, decimation, and retopology create separate results. The source
-mesh stays untouched; standalone baking writes only to the target you select.
+Remi Mode keeps one mesh selected and locked for the workflow. A successful
+stage replaces that working mesh in place; a failed stage leaves it untouched.
+The source, previous step, and optional redo state are compressed checkpoints on
+disk instead of permanent scene duplicates.
 
 The Interactive Instant Meshes workspace uses the **actual native Instant Meshes
 field solver and quad extraction code** inside Blender. It is not a slow Python
@@ -40,19 +42,24 @@ surface-drawing tools.
 | Transfer the original appearance | Albedo, roughness, normal, and AO baking |
 | Work with fused parts or doubled shells | Edit Mode selection and separation tools |
 
-## Two ways to work
+## One mesh, one workflow
 
-### Automated optimization
-
-Use **Run Full Remi** to chain the enabled non-interactive stages:
+Select a mesh once, click **Start Remi**, and move through the focused stages:
 
 ```text
-Source mesh -> Repair / Remesh -> Decimate -> [AutoRemesher] -> [Bake textures]
+Repair -> Remesh -> Retopology -> UV -> Bake
 ```
 
-Each stage can also run on its own. AutoRemesher and texture baking are optional.
+Every completed stage advances the panel. **Back** restores the mesh from before
+the latest committed stage, **Redo** restores the reverted result, and **Start**
+returns directly to the original source. **Finish** keeps the current mesh;
+**Cancel Session** restores the source.
 
-### Guided quad retopology
+Only the current mesh remains in the scene while the session is idle. Remi may
+hold a temporary candidate while an operation is running, but it commits that
+candidate only after the operation succeeds.
+
+### Guided retopology
 
 Use the Interactive Instant Meshes workspace when you want to see and influence
 the quad flow:
@@ -61,9 +68,9 @@ the quad flow:
 Source mesh -> Solve fields -> Draw surface guides -> Preview quads -> Accept
 ```
 
-This is a hands-on workspace, not a stage in **Run Full Remi**. Draw an
-**Orientation Comb** to steer nearby quad directions, or an **Output Edge** guide
-when the extracted topology should follow a particular path with an edge.
+Draw an **Orientation Comb** to steer nearby quad directions, or an **Output
+Edge** guide when the extracted topology should follow a particular path with
+an edge. Accepting the preview commits it to the same locked mesh.
 
 ## Download and install
 
@@ -93,57 +100,53 @@ The release archive is written to `dist/`.
 
 ## Quick start
 
-### Create guided quad topology with Instant Meshes
+### Run a Remi session
 
 1. Select a mesh in **Object Mode**.
-2. Open **N-panel -> Remi -> Instant Meshes (Interactive)**.
-3. Choose the approximate **Target** face count and click **Start Interactive Retopology**.
-4. Wait for the native solve and initial quad preview to finish.
-5. Use **Orientation Comb** or **Output Edge**, then drag with the left mouse button on the visible mesh surface. Release to re-solve the fields; with auto-update enabled, Remi also rebuilds the quad preview.
-6. Use **Dim Original**, **Retopo Offset**, and **Face Fill** to make the cage easier to read. Enable **X-Ray Retopo** only when you deliberately want to see the back side.
-7. Click **Accept Retopology** to create a new Blender mesh.
+2. Open **N-panel -> Remi** and click **Start Remi**.
+3. Run only the stages the mesh needs. A successful stage becomes the new
+   working mesh and opens the next stage automatically.
+4. Use **Back**, **Redo**, or **Start** without finding or reselecting another
+   object.
+5. Click **Finish** to keep the current mesh, or **Cancel Session** to restore
+   the original source.
+
+### Create guided quad topology with Instant Meshes
+
+1. Open **Retopo** inside an active Remi session.
+2. Choose the approximate **Target** face count and click **Start Interactive Retopology**.
+3. Wait for the native solve and initial quad preview to finish.
+4. Use **Orientation Comb** or **Output Edge**, then drag with the left mouse button on the visible mesh surface. Release to re-solve the fields; with auto-update enabled, Remi also rebuilds the quad preview.
+5. Use **Dim Original**, **Retopo Offset**, and **Face Fill** to make the cage easier to read. Enable **X-Ray Retopo** only when you deliberately want to see the back side.
+6. Click **Accept Retopology** to replace the locked mesh, or **Cancel Retopology** to keep the mesh from before the interactive step.
 
 The target count is approximate. Instant Meshes generates a field-aligned layout;
 the guides influence that layout rather than acting as manually drawn topology.
 
-### Run the automated pipeline
-
-1. Select a mesh in **Object Mode**.
-2. Open the **Remi** tab in the 3D Viewport sidebar.
-3. Enable the stages you need and expand them to adjust their settings.
-4. Start with **Voxel Remesh** for speed. Use **Closing Volume** when filling gaps is more important than runtime and memory use.
-5. Click **Run Full Remi** and follow the progress shown in Blender.
-
-Press `Esc` to cancel between stages or while an external decimation/remeshing
-process is running. A Blender-native SDF or baking operation must finish its
-current operation before Blender can receive the key press.
-
-When baking is enabled, Remi validates the target UV map first. A missing,
-blank, folded, or overlapping map is regenerated with the selected Remi UV
-profile before any texture pass starts.
-
 ### Generate a UV map
 
-1. Select the target mesh in **Object Mode** or **Edit Mode**.
-2. Open **N-panel -> Remi -> Remi UV**.
-3. Choose a profile and the texture resolution used to calculate padding.
-4. Keep **Padding** at `4 px` for dense general-purpose packing, or raise it for
+1. Open **UV** inside an active Remi session.
+2. Choose a profile and the texture resolution used to calculate padding.
+3. Keep **Padding** at `4 px` for dense general-purpose packing, or raise it for
    more conservative mip and bake isolation.
-5. Enable **Preserve Marked Seams** when artist seams must remain locked.
-6. Click **Generate UV Map**. The result summary reports chart count,
+4. Enable **Preserve Marked Seams** when artist seams must remain locked.
+5. Click **Generate UV**. The result summary reports chart count,
    95th-percentile stretch, and true occupied area in the UV tile.
 
-Remi UV can run directly on an accepted Instant Meshes result. Small local
+Remi UV runs directly on an accepted Instant Meshes result. Small local
 foldovers produced by a Blender unwrap solver are isolated and repaired without
 discarding the rest of the valid chart layout.
 
-### Patch one visible hole
+### Repair holes
 
-1. Select **Voxel Remesh** and frame the hole in the viewport.
-2. Click **Draw Around Hole** under **Targeted Hole Patching**.
-3. Draw on the intact visible surface around the rim, not through the empty hole.
-4. Release to create a separate `_targeted_patch` preparation mesh.
-5. Run **Remesh Copy** on that prepared copy.
+1. Open **Repair** inside an active Remi session.
+2. For one visible hole, click **Draw Around Hole**, draw on the intact surface
+   around its rim, and release. The local patch becomes a normal Remi step, so
+   **Back** and **Redo** work without creating another scene object.
+3. For automatic repair, choose **Boundary** for clear topology holes, **Hybrid** for holes plus narrow
+   cracks, or a guided method for fragmented scan/AI geometry.
+4. Click **Run Repair**. Remi keeps the current mesh unchanged if preparation
+   fails and advances to **Remesh** after a successful commit.
 
 ## Choosing a repair method
 
@@ -151,7 +154,7 @@ discarding the rest of the valid chart layout.
 |--------|----------|-----------|
 | **Voxel Remesh** | Fast general cleanup and surface consolidation | Rebuilds the whole surface and can soften fine detail |
 | **Closing Volume** | Fragmented meshes, cracks, and holes that must be closed automatically | Slow and memory intensive; fits the result back to source surfaces and sharp creases |
-| **Targeted Hole Patching** | One visible, ambiguous hole | Requires drawing around each hole, but changes only the local preparation mesh |
+| **Targeted Hole Patching** | One visible, ambiguous hole | Requires drawing around each hole, but commits only the local patch and supports Back/Redo |
 | **Alpha-Guided Patches** | Heavily fragmented or AI-generated geometry | Requires the optional CGAL helper; uses the wrap only to find donor patches |
 | **Boundary Only** | Clear, bounded topology holes | Does not bridge spatial cracks or disconnected fragments |
 | **Hybrid** | A mix of boundary holes and narrow cracks | More aggressive than boundary filling alone |
@@ -188,15 +191,17 @@ discarding the rest of the valid chart layout.
   Set its path in the Remi panel or with the `AUTOREMESHER_PATH` environment
   variable.
 
-## Pipeline behavior
+## Session behavior
 
-| Stage | What happens | Full pipeline default |
-|-------|--------------|-----------------------|
-| **Repair / Remesh** | Creates a rebuilt copy with Voxel Remesh or Closing Volume | On |
-| **MeshLab Decimation** | Reduces faces through one or more quadric-collapse passes | On |
-| **Interactive Instant Meshes** | Opens the guided viewport workspace and extracts a quad result | Separate manual workflow |
-| **AutoRemesher** | Sends a mesh to the optional external automatic quad remesher | Off |
-| **Bake Textures** | Bakes albedo, roughness, tangent-space normal, and AO maps to the result | On |
+| Stage | What happens |
+|-------|--------------|
+| **Repair** | Commits either a manually drawn local patch or an automatic repair only when successful |
+| **Remesh** | Applies Voxel Remesh or Closing Volume to a temporary candidate |
+| **Reduce Faces** | Optionally commits a MeshLab-decimated candidate before retopology |
+| **Retopology** | Opens guided Instant Meshes or runs optional external AutoRemesher |
+| **UV** | Generates and validates the working mesh's atlas transactionally |
+| **Bake** | Loads the source checkpoint automatically and bakes it onto the working mesh |
+| **Back / Redo / Start** | Swaps disk checkpoints into the same visible object identity |
 
 ## UI reference
 
@@ -215,8 +220,7 @@ also shows a tooltip when you hover over a control.
 | **Preserve Sharp Creases** | Fits nearby reconstructed vertices toward detected source feature edges. |
 | **Feature / Reach** | Minimum crease angle and the width of crease fitting measured in final voxels. |
 | **Fillet / Smooth** | Optional post-remesh SDF refinement. |
-| **Remesh Copy** | Creates a remeshed object while keeping the source. |
-| **Apply Modifier** | Applies the Voxel Remesh Geometry Nodes modifier permanently to the copy. |
+| **Run Remesh** | Builds an isolated candidate, applies the result, and replaces the locked mesh only after success. |
 | **Ray px** | Pixel spacing between samples for a targeted hole stroke. Lower values follow the stroke more densely. |
 | **Depth** | Rejects ray hits whose visible-surface depth changes too much, helping avoid the back surface through a hole. |
 | **Patch Resolution / Relax** | Controls targeted or guide-derived patch tessellation and interior smoothing. Patch borders remain locked. |
@@ -259,8 +263,8 @@ also shows a tooltip when you hover over a control.
 | **Rebuild Both Fields** | Rebuilds orientation and position while retaining guides. Auto-update also rebuilds the preview. |
 | **Re-solve Position** | Rebuilds the position field without discarding the orientation result. |
 | **Update Quad Preview** | Re-extracts the quad result from the current fields. |
-| **Accept Retopology** | Creates a new Blender object from the current preview. |
-| **Cancel Session** | Releases the native session and removes its overlays. |
+| **Accept Retopology** | Commits the current preview to the locked mesh and preserves a Back checkpoint. |
+| **Cancel Retopology** | Releases the native workspace and keeps the pre-retopology mesh. |
 
 </details>
 
@@ -272,7 +276,7 @@ also shows a tooltip when you hover over a control.
 | **Decimation Passes** | Number of sequential PyMeshLab decimation passes. |
 | **Keep** | Fraction of faces retained per pass. For example, six `50%` passes retain roughly `1.56%` before topology limits. |
 | **Preserve Detail** | Enables normal preservation and planar quadrics during decimation. |
-| **Keep Texture (standalone only)** | Uses MeshLab's texture-aware decimation to preserve the object's UVs and image texture. The full pipeline ignores it because textures are baked at its final stage. |
+| **Keep Texture (standalone only)** | Uses MeshLab's texture-aware decimation to preserve the object's UVs and image texture. |
 | **AutoRemesher Target / Adaptive** | Requested quad count and curvature-adaptive density. |
 | **Edge Scale / Sharp / Smooth** | External AutoRemesher edge scaling, sharp-angle threshold, and normal smoothing angle. |
 | **Texture Size** | Square output resolution for every baked map. |
@@ -286,9 +290,9 @@ also shows a tooltip when you hover over a control.
 | **Half Scale** | Temporarily scales both meshes to `0.5x` during baking, then restores them. |
 | **Cage / Max Ray** | Cage extrusion and maximum source-ray distance. |
 
-For standalone baking, select the source mesh or meshes first and the target last,
-so the target is active. Use **Bake All Maps** or bake albedo, roughness, normal,
-and AO independently.
+Inside Remi Mode, the original source is loaded from its recovery checkpoint
+automatically. Use **Bake All Maps** or bake albedo, roughness, normal, and AO
+independently; Back restores the pre-bake mesh and Redo restores the baked data.
 
 </details>
 

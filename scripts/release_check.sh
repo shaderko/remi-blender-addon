@@ -8,6 +8,7 @@ OUTPUT_DIR="${2:-$REPO_DIR/dist}"
 
 TESTS=(
   "tests/blender_release_regression.py"
+  "tests/blender_session_regression.py"
   "tests/blender_edit_tools_regression.py"
   "instant_meshes/tests/blender_smoke.py"
   "instant_meshes/tests/blender_topology_regression.py"

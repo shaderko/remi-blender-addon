@@ -253,6 +253,69 @@ def test_repeatability():
     print("PASS deterministic repeatability")
 
 
+def test_large_mesh_native_route_and_cached_reuse():
+    _clean_scene()
+    bpy.ops.mesh.primitive_grid_add(x_subdivisions=110, y_subdivisions=110, size=2.0)
+    obj = bpy.context.active_object
+    obj.name = "LargeUvFlow"
+    while obj.data.uv_layers:
+        obj.data.uv_layers.remove(obj.data.uv_layers[0])
+
+    result = ensure_remi_uv(
+        obj,
+        profile_id="SCAN",
+        texture_size=1024,
+        margin_px=4,
+        replace_existing=True,
+    )
+    _assert_valid(result, "large-mesh native route")
+    assert result.solver.startswith("XATLAS_LARGE_MESH+")
+
+    # Verify the native atlas once with the exact validator, then ensure the
+    # session-only trusted path reuses that result instead of running it again.
+    exact = evaluate_uv(
+        obj.data,
+        analyze_mesh(obj.data),
+        _seams_from_active_uv(obj.data),
+        check_overlaps=True,
+    )
+    assert exact.valid, exact.to_dict()
+    reused = ensure_remi_uv(
+        obj,
+        profile_id="SCAN",
+        texture_size=1024,
+        margin_px=4,
+        replace_existing=False,
+        trust_stored_result=True,
+    )
+    assert reused.success and not reused.created
+    assert "Reused" in reused.warnings[0]
+    print("PASS large-mesh native route and session UV reuse")
+
+
+def test_pathological_overlap_validation_is_bounded():
+    mesh = bpy.data.meshes.new("StackedUvStress")
+    triangle_count = 10_001
+    vertices = []
+    faces = []
+    for index in range(triangle_count):
+        offset = float(index) * 2.0
+        start = len(vertices)
+        vertices.extend(((offset, 0.0, 0.0), (offset + 1.0, 0.0, 0.0), (offset, 1.0, 0.0)))
+        faces.append((start, start + 1, start + 2))
+    mesh.from_pydata(vertices, [], faces)
+    uv_layer = mesh.uv_layers.new(name="FullyStacked")
+    triangle_uvs = ((0.1, 0.1), (0.9, 0.1), (0.1, 0.9))
+    for loop_index, loop in enumerate(uv_layer.data):
+        loop.uv = triangle_uvs[loop_index % 3]
+
+    stats = evaluate_uv(mesh, analyze_mesh(mesh), set(), check_overlaps=True)
+    expected_cap = max(9, triangle_count // 1000 + 1)
+    assert stats.overlap_pairs == expected_cap, stats.to_dict()
+    bpy.data.meshes.remove(mesh)
+    print("PASS pathological overlap validation is bounded")
+
+
 def test_topology_edge_cases():
     _clean_scene()
     mesh = bpy.data.meshes.new("NonManifoldMesh")
@@ -405,6 +468,8 @@ def main():
         test_existing_uv_short_circuit()
         test_seam_and_edit_state_preservation()
         test_repeatability()
+        test_large_mesh_native_route_and_cached_reuse()
+        test_pathological_overlap_validation_is_bounded()
         test_topology_edge_cases()
         test_registered_operator()
         test_material_boundaries_and_pixel_padding()

@@ -8,7 +8,6 @@ import json
 import math
 import select
 import subprocess
-import tempfile
 from pathlib import Path
 import bmesh
 import bpy
@@ -23,17 +22,7 @@ from . import autoremesher as arm
 from . import baking
 from . import alpha_wrap as aw
 from .uv_mapping import ensure_remi_uv
-
-
-# ============================================================
-# Utility helpers
-# ============================================================
-
-def _get_temp_dir() -> str:
-    """Return a temp directory for intermediate files."""
-    temp_dir = os.path.join(tempfile.gettempdir(), "autoremesh")
-    os.makedirs(temp_dir, exist_ok=True)
-    return temp_dir
+from .workflow.disk_service import SessionDiskService
 
 
 def _duplicate_object(obj: bpy.types.Object, suffix: str = "_copy") -> bpy.types.Object:
@@ -44,6 +33,11 @@ def _duplicate_object(obj: bpy.types.Object, suffix: str = "_copy") -> bpy.types
     bpy.ops.object.duplicate()
     dup = bpy.context.view_layer.objects.active
     dup.name = obj.name + suffix
+    # Session identity belongs only to the visible working object. Blender
+    # duplicates custom properties, so leaving this on a candidate would make
+    # the session resolver see two objects with the same identity.
+    dup.pop("_remi_session_id", None)
+    dup.pop("_remi_checkpoint_materials", None)
     obj.select_set(False)
     return dup
 
@@ -469,6 +463,7 @@ def _create_alpha_wrap_guide(
     settings,
     suffix: str = "_wrapped",
     alpha_ratio: float = None,
+    disk=None,
 ) -> tuple:
     """Run compiled Alpha Wrapping and import its temporary watertight guide."""
     executable, error = _resolve_alpha_wrap(settings)
@@ -486,9 +481,9 @@ def _create_alpha_wrap_guide(
     offset = min(offset, alpha * 0.95)
 
     try:
-        with tempfile.TemporaryDirectory(prefix="remi_alpha_wrap_") as temp_dir:
-            input_path = os.path.join(temp_dir, "input.ply")
-            output_path = os.path.join(temp_dir, "wrapped.ply")
+        with SessionDiskService.operation_workspace(disk, "alpha-wrap") as workspace:
+            input_path = str(workspace / "input.ply")
+            output_path = str(workspace / "wrapped.ply")
             if not _export_ply(source, input_path):
                 return None, "Could not export the source mesh for Alpha Wrap", {}
             command = aw.build_command(executable, input_path, output_path, alpha, offset)
@@ -634,11 +629,12 @@ def _compose_source_with_guide_patches(
     report,
     projection_distance=None,
     source_boundary_points=None,
+    prepared=None,
 ):
     """Copy only selected guide patches onto evaluated source geometry."""
     guide_mesh = guide.data
     guide_face_count = len(guide_mesh.polygons)
-    prepared = _duplicate_object(source, suffix)
+    prepared = prepared or _duplicate_object(source, suffix)
     _apply_modifiers(prepared)
     inverse_world = prepared.matrix_world.inverted()
     used_vertices = {
@@ -791,13 +787,15 @@ def _alpha_wrap_hole_patches(
     source: bpy.types.Object,
     settings,
     suffix: str = "_prepared",
+    prepared=None,
+    disk=None,
 ) -> tuple:
     """Keep the original mesh and add only gap-spanning faces from an Alpha Wrap guide."""
     source_bvh, boundary_points = _evaluated_world_surface(source)
     if source_bvh is None:
         return None, "Could not build a surface index for the original mesh", {}
     if not boundary_points:
-        prepared = _duplicate_object(source, suffix)
+        prepared = prepared or _duplicate_object(source, suffix)
         _apply_modifiers(prepared)
         bpy.ops.object.select_all(action="DESELECT")
         prepared.select_set(True)
@@ -835,6 +833,7 @@ def _alpha_wrap_hole_patches(
             settings,
             "_alpha_guide",
             alpha_ratio=candidate_ratio,
+            disk=disk,
         )
         if error:
             if guide:
@@ -906,6 +905,7 @@ def _alpha_wrap_hole_patches(
         suffix,
         report,
         source_boundary_points=boundary_points,
+        prepared=prepared,
     )
 
 
@@ -913,13 +913,14 @@ def _volume_hole_patches(
     source: bpy.types.Object,
     settings,
     suffix: str = "_prepared",
+    prepared=None,
 ) -> tuple:
     """Use a fine SDF closing only as a guide, retaining its hole patches."""
     source_bvh, boundary_points = _evaluated_world_surface(source)
     if source_bvh is None:
         return None, "Could not build a surface index for the original mesh", {}
     if not boundary_points:
-        prepared = _duplicate_object(source, suffix)
+        prepared = prepared or _duplicate_object(source, suffix)
         _apply_modifiers(prepared)
         bpy.ops.object.select_all(action="DESELECT")
         prepared.select_set(True)
@@ -1024,6 +1025,7 @@ def _volume_hole_patches(
         report,
         projection_distance=projection_distance,
         source_boundary_points=boundary_points,
+        prepared=prepared,
     )
 
 
@@ -1049,6 +1051,7 @@ def _create_surface_ring_patch(
     ring_world,
     ring_normals=None,
     suffix="_targeted_patch",
+    result=None,
 ):
     """Triangulate and fair a local membrane bounded by ray hits on the source.
 
@@ -1161,7 +1164,7 @@ def _create_surface_ring_patch(
 
         # Apply evaluated geometry only on the duplicate, then transfer the
         # local patch into that prepared copy.
-        result = _duplicate_object(source, suffix)
+        result = result or _duplicate_object(source, suffix)
         _apply_modifiers(result)
         bm = bmesh.new()
         try:
@@ -1194,11 +1197,58 @@ def _create_surface_ring_patch(
     }
 
 
-def _guided_hole_patches(source, settings, suffix="_prepared"):
+def _commit_surface_ring_patch(
+    context,
+    source,
+    settings,
+    ring_world,
+    ring_normals=None,
+):
+    """Create a targeted patch and commit it through Remi Mode when active."""
+    state = getattr(context.window_manager, "remi_session", None)
+    if state is None or not state.active:
+        return _create_surface_ring_patch(
+            source,
+            settings,
+            ring_world,
+            ring_normals=ring_normals,
+        )
+
+    # Import lazily to avoid the operators/session registration cycle.
+    from .session import runtime as session_runtime
+
+    current = session_runtime.object(context)
+    if current is None or current != source:
+        return None, "The locked Remi mesh changed before the repair was applied", {}
+
+    try:
+        result, report = session_runtime.execute_manual_repair(
+            context,
+            ring_world,
+            ring_normals,
+        )
+        return result, "", report
+    except Exception as exc:
+        return None, str(exc), {}
+
+
+def _guided_hole_patches(
+    source,
+    settings,
+    suffix="_prepared",
+    prepared=None,
+    disk=None,
+):
     if settings.hole_repair_method == "ALPHA_WRAP":
-        return _alpha_wrap_hole_patches(source, settings, suffix)
+        return _alpha_wrap_hole_patches(
+            source,
+            settings,
+            suffix,
+            prepared=prepared,
+            disk=disk,
+        )
     if settings.hole_repair_method == "VOLUME":
-        return _volume_hole_patches(source, settings, suffix)
+        return _volume_hole_patches(source, settings, suffix, prepared=prepared)
     return None, "The selected repair method is not guide-based", {}
 
 
@@ -1297,9 +1347,14 @@ def _fit_volume_remesh_to_source(source, volume, settings) -> dict:
     }
 
 
-def _closing_volume_remesh(source, settings, suffix="_volume_remesh") -> tuple:
+def _closing_volume_remesh(
+    source,
+    settings,
+    suffix="_volume_remesh",
+    result=None,
+) -> tuple:
     """Create the slow hole-closing remesh and fit it back to source features."""
-    result = _duplicate_object(source, suffix)
+    result = result or _duplicate_object(source, suffix)
     _apply_modifiers(result)
     volume_voxel = max(
         float(settings.voxel_size) * float(settings.volume_guide_voxel_scale),
@@ -1336,22 +1391,40 @@ def _closing_volume_remesh(source, settings, suffix="_volume_remesh") -> tuple:
 
 
 class Remi_OT_DrawHolePatch(Operator):
-    """Ray-project a viewport lasso and add a membrane to a prepared copy."""
+    """Ray-project a viewport lasso and add a local repair patch."""
 
     bl_idname = "remi.draw_hole_patch"
     bl_label = "Draw Around Hole"
-    bl_description = "Draw around one visible hole and create a separate prepared patch mesh"
+    bl_description = "Draw around one visible hole and commit a recoverable manual repair"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
     def poll(cls, context):
+        state = getattr(context.window_manager, "remi_session", None)
+        session_ready = bool(
+            state is None
+            or not state.active
+            or (not state.busy and not state.interactive)
+        )
         return bool(
-            context.mode == "OBJECT"
+            session_ready
+            and context.mode == "OBJECT"
             and context.active_object
             and context.active_object.type == "MESH"
             and context.area
             and context.area.type == "VIEW_3D"
         )
+
+    def _end_session_interaction(self, context, message=None):
+        if not getattr(self, "_session_active", False):
+            return
+        from .session import runtime as session_runtime
+
+        state = getattr(context.window_manager, "remi_session", None)
+        if state is not None and state.active:
+            state.interactive = False
+            if message is not None and not state.busy:
+                session_runtime._update_stats(context, message)
 
     def _viewport_point(self, event):
         x = event.mouse_x - self._window_region.x
@@ -1399,6 +1472,16 @@ class Remi_OT_DrawHolePatch(Operator):
         if self._window_region is None:
             self.report({"ERROR"}, "Could not find the 3D viewport region")
             return {"CANCELLED"}
+        state = getattr(context.window_manager, "remi_session", None)
+        self._session_active = bool(state is not None and state.active)
+        if self._session_active:
+            from .session import runtime as session_runtime
+
+            if not session_runtime.ensure_active_object(context):
+                self.report({"ERROR"}, "The locked Remi mesh is missing")
+                return {"CANCELLED"}
+            state.interactive = True
+            state.status = "Draw on the intact surface around one hole; release to apply"
         self._region_3d = context.area.spaces.active.region_3d
         self._source_name = context.active_object.name
         self._points = []
@@ -1419,6 +1502,7 @@ class Remi_OT_DrawHolePatch(Operator):
     def modal(self, context, event):
         if event.type in {"ESC", "RIGHTMOUSE"}:
             self._cleanup(context)
+            self._end_session_interaction(context, "Manual repair cancelled")
             return {"CANCELLED"}
 
         if event.type == "LEFTMOUSE" and event.value == "PRESS":
@@ -1450,6 +1534,7 @@ class Remi_OT_DrawHolePatch(Operator):
             self._cleanup(context)
             if not source:
                 self.report({"ERROR"}, "Source object was removed")
+                self._end_session_interaction(context, "Manual repair failed: the mesh was removed")
                 return {"CANCELLED"}
 
             from bpy_extras import view3d_utils
@@ -1457,6 +1542,7 @@ class Remi_OT_DrawHolePatch(Operator):
             source_bvh, _boundary_points = _evaluated_world_surface(source)
             if source_bvh is None:
                 self.report({"ERROR"}, "The source has no usable surface geometry")
+                self._end_session_interaction(context, "Manual repair failed: no usable surface")
                 return {"CANCELLED"}
             settings = context.scene.remi_settings
             screen_samples = _resample_screen_lasso(
@@ -1476,6 +1562,7 @@ class Remi_OT_DrawHolePatch(Operator):
                     {"ERROR"},
                     "Too much of the stroke missed the mesh. Draw the loop on the visible surface around the hole.",
                 )
+                self._end_session_interaction(context, "Manual repair cancelled: redraw on the visible surface")
                 return {"CANCELLED"}
 
             sorted_depths = sorted(depth for _point, _normal, depth in ray_hits)
@@ -1498,9 +1585,11 @@ class Remi_OT_DrawHolePatch(Operator):
                     {"ERROR"},
                     "The stroke hit multiple depth layers. Lower Depth or redraw tightly on the front rim.",
                 )
+                self._end_session_interaction(context, "Manual repair cancelled: multiple depth layers")
                 return {"CANCELLED"}
 
-            result, error, report = _create_surface_ring_patch(
+            result, error, report = _commit_surface_ring_patch(
+                context,
                 source,
                 settings,
                 ring_world,
@@ -1508,15 +1597,84 @@ class Remi_OT_DrawHolePatch(Operator):
             )
             if error:
                 self.report({"ERROR"}, error)
+                self._end_session_interaction(context)
                 return {"CANCELLED"}
+            was_session = self._session_active
+            self._end_session_interaction(context)
             self.report(
                 {"INFO"},
-                f"Created '{result.name}' with {report.get('patch_faces', 0):,} patch faces",
+                (
+                    f"Added {report.get('patch_faces', 0):,} patch faces to the Remi mesh"
+                    if was_session
+                    else f"Created '{result.name}' with {report.get('patch_faces', 0):,} patch faces"
+                ),
 
             )
             return {"FINISHED"}
 
         return {"RUNNING_MODAL"}
+
+    def cancel(self, context):
+        self._cleanup(context)
+        self._end_session_interaction(context, "Manual repair cancelled")
+
+
+def _create_repair_candidate(
+    source,
+    settings,
+    suffix="_prepared",
+    candidate=None,
+    disk=None,
+):
+    """Build a repaired result without changing ``source``."""
+    if settings.hole_repair_method in {"ALPHA_WRAP", "VOLUME"}:
+        return _guided_hole_patches(
+            source,
+            settings,
+            suffix,
+            prepared=candidate,
+            disk=disk,
+        )
+
+    prepared = candidate or _duplicate_object(source, suffix)
+    try:
+        _apply_modifiers(prepared)
+        stats = _repair_boundary_holes(
+            prepared,
+            max_sides=settings.hole_max_sides,
+            weld_distance=settings.hole_weld_distance,
+        )
+        close_distance = (
+            _local_bounds_diagonal(prepared) * float(settings.hole_close_ratio)
+            if settings.hole_repair_method == "HYBRID"
+            else 0.0
+        )
+        if close_distance > 0.0:
+            detail_recovery_distance = 0.0
+            if settings.hole_detail_recovery:
+                detail_recovery_distance = max(
+                    _local_bounds_diagonal(prepared) * float(settings.hole_detail_ratio),
+                    float(settings.voxel_size) * 2.0,
+                )
+            gn_setup.apply_remi_modifier(
+                obj=prepared,
+                voxel_size=settings.voxel_size,
+                hole_close_distance=close_distance,
+                detail_recovery_distance=detail_recovery_distance,
+            )
+            _apply_modifiers(prepared)
+    except Exception:
+        _remove_mesh_object(prepared)
+        raise
+    bpy.ops.object.select_all(action="DESELECT")
+    bpy.context.view_layer.objects.active = prepared
+    prepared.select_set(True)
+    return prepared, "", {
+        "new_faces": stats["new_faces"],
+        "close_distance": close_distance,
+        "guide_method": settings.hole_repair_method,
+    }
+
 
 class Remi_OT_RepairHoles(Operator):
     """Prepare holes and cracks on a separate copy of the active mesh."""
@@ -1533,11 +1691,11 @@ class Remi_OT_RepairHoles(Operator):
     def execute(self, context):
         settings = context.scene.remi_settings
         source = context.active_object
+        repaired, error, report = _create_repair_candidate(source, settings)
+        if error:
+            self.report({"ERROR"}, error)
+            return {"CANCELLED"}
         if settings.hole_repair_method in {"ALPHA_WRAP", "VOLUME"}:
-            repaired, error, report = _guided_hole_patches(source, settings)
-            if error:
-                self.report({"ERROR"}, error)
-                return {"CANCELLED"}
             faces = report.get("patch_faces", 0)
             coverage = report.get("boundary_coverage", 1.0)
             if report.get("guide_method") == "VOLUME":
@@ -1552,25 +1710,10 @@ class Remi_OT_RepairHoles(Operator):
                     f"{coverage:.0%} boundary coverage",
                 )
             return {"FINISHED"}
-        prepared = _duplicate_object(source, "_prepared")
-        _apply_modifiers(prepared)
-        stats = _prepare_hole_repair(prepared, settings)
-        close_distance = _hole_close_distance(prepared, settings)
-        if close_distance > 0.0:
-            gn_setup.apply_remi_modifier(
-                obj=prepared,
-                voxel_size=settings.voxel_size,
-                hole_close_distance=close_distance,
-                detail_recovery_distance=_detail_recovery_distance(prepared, settings),
-            )
-            _apply_modifiers(prepared)
-        bpy.ops.object.select_all(action="DESELECT")
-        context.view_layer.objects.active = prepared
-        prepared.select_set(True)
         self.report(
             {"INFO"},
-            f"Patched '{prepared.name}': {stats['new_faces']} boundary patches, "
-            f"close distance {close_distance:.5g}",
+            f"Patched '{repaired.name}': {report['new_faces']} boundary patches, "
+            f"close distance {report['close_distance']:.5g}",
         )
         return {"FINISHED"}
 
@@ -1647,6 +1790,60 @@ class Remi_OT_ImportGLB(Operator):
         return {"RUNNING_MODAL"}
 
 
+def _create_sdf_candidate(
+    source,
+    settings,
+    suffix="_remesh",
+    apply_result=False,
+    candidate=None,
+    disk=None,
+):
+    """Build an SDF result without changing ``source``."""
+    if settings.remesh_backend == "VOLUME":
+        result, error, report = _closing_volume_remesh(
+            source,
+            settings,
+            suffix,
+            result=candidate,
+        )
+        if not error:
+            report["backend"] = "VOLUME"
+        return result, error, report
+
+    report = {"backend": "VOXEL"}
+    if settings.use_hole_repair and settings.hole_repair_method in {"ALPHA_WRAP", "VOLUME"}:
+        result, error, patch_report = _guided_hole_patches(
+            source,
+            settings,
+            suffix,
+            prepared=candidate,
+            disk=disk,
+        )
+        if error:
+            return None, error, patch_report
+        report.update(patch_report)
+    else:
+        result = candidate or _duplicate_object(source, suffix)
+    try:
+        result.select_set(True)
+        bpy.context.view_layer.objects.active = result
+        _prepare_hole_repair(result, settings)
+        gn_setup.apply_remi_modifier(
+            obj=result,
+            voxel_size=settings.voxel_size,
+            hole_close_distance=_hole_close_distance(result, settings),
+            detail_recovery_distance=_detail_recovery_distance(result, settings),
+            fillet_radius=settings.fillet_radius if settings.use_sdf_fillet else 0.0,
+            smooth_iterations=settings.smoothing_iterations if settings.use_sdf_smoothing else 0,
+        )
+        if apply_result:
+            _apply_modifiers(result)
+    except Exception:
+        _remove_mesh_object(result)
+        raise
+    return result, "", report
+
+
 class Remi_OT_SDFRemesh(Operator):
     """Apply SDF voxel remesh to selected object (via geometry nodes on a copy)."""
     bl_idname = "remi.sdf_remesh"
@@ -1662,11 +1859,11 @@ class Remi_OT_SDFRemesh(Operator):
             self.report({"ERROR"}, "Select a mesh object first")
             return {"CANCELLED"}
 
+        result, error, report = _create_sdf_candidate(obj, settings)
+        if error:
+            self.report({"ERROR"}, error)
+            return {"CANCELLED"}
         if settings.remesh_backend == "VOLUME":
-            result, error, report = _closing_volume_remesh(obj, settings, "_remesh")
-            if error:
-                self.report({"ERROR"}, error)
-                return {"CANCELLED"}
             self.report(
                 {"INFO"},
                 f"Closing Volume created {report['faces']:,} faces; fitted "
@@ -1674,12 +1871,7 @@ class Remi_OT_SDFRemesh(Operator):
             )
             return {"FINISHED"}
 
-        # Duplicate/prepare the object (never touch the original).
         if settings.use_hole_repair and settings.hole_repair_method in {"ALPHA_WRAP", "VOLUME"}:
-            dup, error, report = _guided_hole_patches(obj, settings, "_remesh")
-            if error:
-                self.report({"ERROR"}, error)
-                return {"CANCELLED"}
             if report.get("guide_method") == "VOLUME":
                 self.report({"INFO"}, f"Added {report['patch_faces']:,} fitted volume-patch faces")
             else:
@@ -1688,23 +1880,7 @@ class Remi_OT_SDFRemesh(Operator):
                     f"Added {report['patch_faces']:,} hole-patch faces "
                     f"({report['boundary_coverage']:.0%} boundary coverage)",
                 )
-        else:
-            dup = _duplicate_object(obj, "_remesh")
-        dup.select_set(True)
-        bpy.context.view_layer.objects.active = dup
-        _prepare_hole_repair(dup, settings)
-
-        # Apply the SDF geometry nodes modifier
-        gn_setup.apply_remi_modifier(
-            obj=dup,
-            voxel_size=settings.voxel_size,
-            hole_close_distance=_hole_close_distance(dup, settings),
-            detail_recovery_distance=_detail_recovery_distance(dup, settings),
-            fillet_radius=settings.fillet_radius if settings.use_sdf_fillet else 0.0,
-            smooth_iterations=settings.smoothing_iterations if settings.use_sdf_smoothing else 0,
-        )
-
-        self.report({"INFO"}, f"Applied SDF remesh to '{dup.name}'")
+        self.report({"INFO"}, f"Applied SDF remesh to '{result.name}'")
         return {"FINISHED"}
 
 
@@ -1746,49 +1922,28 @@ class Remi_OT_ApplyRemesh(Operator):
         return {"FINISHED"}
 
 
-class Remi_OT_Decimate(Operator):
-    """Run standalone PyMeshLab decimation on the active mesh."""
-    bl_idname = "remi.decimate"
-    bl_label = "Decimate (MeshLab)"
-    bl_description = "Run MeshLab quadric edge collapse on the active object"
-    bl_options = {"REGISTER", "UNDO"}
+def _create_decimate_candidate(obj, settings, disk=None):
+    """Run MeshLab on ``obj`` and return an imported transactional candidate."""
+    if not mlw.ensure_pymeshlab():
+        return None, mlw.pymeshlab_unavailable_message(), []
 
-    def execute(self, context):
-        settings = context.scene.remi_settings
+    keep_texture = settings.decimation_with_texture
+    if keep_texture and not _has_image_texture(obj):
+        return None, "Keep Texture needs a mesh with UVs and an image texture", []
 
-        obj = bpy.context.view_layer.objects.active
-        if not obj or obj.type != "MESH":
-            self.report({"ERROR"}, "Select a mesh object first")
-            return {"CANCELLED"}
-
-        # Check PyMeshLab
-        if not mlw.ensure_pymeshlab():
-            self.report({"ERROR"}, mlw.pymeshlab_unavailable_message())
-            return {"CANCELLED"}
-
-        # Setup temp paths
-        temp_dir = _get_temp_dir()
+    with SessionDiskService.operation_workspace(disk, "decimate") as workspace:
+        temp_dir = str(workspace)
         base_name = bpy.path.clean_name(obj.name)
-        keep_texture = settings.decimation_with_texture
-        if keep_texture and not _has_image_texture(obj):
-            self.report({"ERROR"}, "Keep Texture needs a mesh with UVs and an image texture")
-            return {"CANCELLED"}
-
         file_ext = "obj" if keep_texture else "ply"
         input_path = os.path.join(temp_dir, f"{base_name}_input.{file_ext}")
         output_path = os.path.join(temp_dir, f"{base_name}_decimated.{file_ext}")
         texture_image_states = []
-        texture_temp_files = []
 
-        # PLY is fastest for ordinary decimation. Textured decimation must use
-        # OBJ/MTL so MeshLab can read and preserve UV/image references.
         if keep_texture:
             texture_export = _prepare_texture_export_images(obj, temp_dir, base_name)
             if texture_export is None:
-                self.report({"ERROR"}, "Could not prepare the texture image for MeshLab")
-                return {"CANCELLED"}
-            texture_image_states, texture_temp_files = texture_export
-        self.report({"INFO"}, "Exporting textured OBJ..." if keep_texture else "Exporting to PLY...")
+                return None, "Could not prepare the texture image for MeshLab", []
+            texture_image_states, _texture_temp_files = texture_export
         try:
             export_ok = (
                 _export_obj_for_tool(obj, input_path, export_materials=True)
@@ -1797,20 +1952,11 @@ class Remi_OT_Decimate(Operator):
         finally:
             _restore_texture_export_images(texture_image_states)
         if not export_ok:
-            self.report({"ERROR"}, "Textured OBJ export failed" if keep_texture else "PLY export failed")
-            return {"CANCELLED"}
+            kind = "Textured OBJ" if keep_texture else "PLY"
+            return None, f"{kind} export failed", []
         if keep_texture and not _obj_mtl_has_texture(input_path):
-            self.report({"ERROR"}, "OBJ export did not include an image texture")
-            _remove_obj_artifacts(input_path)
-            for path in texture_temp_files:
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
-            return {"CANCELLED"}
+            return None, "OBJ export did not include an image texture", []
 
-        # Run decimation
-        self.report({"INFO"}, f"Running {settings.decimation_passes} decimation pass(es)...")
         results = (
             _run_textured_decimation_worker(input_path, output_path, settings)
             if keep_texture else mlw.run_multi_pass_decimation(
@@ -1821,60 +1967,100 @@ class Remi_OT_Decimate(Operator):
                 preserve_detail=settings.decimation_preserve_detail,
             )
         )
+        for result in results:
+            if not result["success"]:
+                return (
+                    None,
+                    f"Decimation pass {result['pass']} failed: {result.get('error')}",
+                    results,
+                )
 
-        # Check results
-        for r in results:
-            if not r["success"]:
-                self.report({"ERROR"}, f"Decimation pass {r['pass']} failed: {r.get('error')}")
-                if keep_texture:
-                    _remove_obj_artifacts(input_path)
-                    _remove_obj_artifacts(output_path)
-                    for path in texture_temp_files:
-                        try:
-                            os.remove(path)
-                        except OSError:
-                            pass
-                return {"CANCELLED"}
-            print(f"Remi: Pass {r['pass']}: {r.get('input_faces', '?')} → {r.get('output_faces', '?')} faces")
-
-        # Import the same format that carried the result data.
-        self.report({"INFO"}, "Importing decimated result...")
-        new_obj = _import_obj_result(output_path) if keep_texture else _import_ply(output_path)
-        if new_obj:
-            if keep_texture:
-                _restore_source_materials(obj, new_obj)
-            new_obj.name = obj.name + settings.output_name_suffix
-            bpy.ops.object.select_all(action="DESELECT")
-            new_obj.select_set(True)
-            context.view_layer.objects.active = new_obj
-            # Vertices are already at world-space coords (baked during export),
-            # so the object sits at origin with correct geometry.
-            self.report({"INFO"}, f"Decimated model imported as '{new_obj.name}'")
-        else:
-            self.report({"ERROR"}, "Failed to import decimated textured OBJ" if keep_texture else "Failed to import decimated PLY")
-            return {"CANCELLED"}
-
-        # Cleanup temp meshes and OBJ material sidecars. Source texture images
-        # are only referenced by the MTL, so they are never removed.
+        candidate = _import_obj_result(output_path) if keep_texture else _import_ply(output_path)
+        if not candidate:
+            kind = "textured OBJ" if keep_texture else "PLY"
+            return None, f"Failed to import decimated {kind}", results
         if keep_texture:
-            _remove_obj_artifacts(input_path)
-            _remove_obj_artifacts(output_path)
-            output_base, _ = os.path.splitext(output_path)
-            for pass_number in range(1, settings.decimation_passes):
-                _remove_obj_artifacts(f"{output_base}_pass{pass_number:02d}.obj")
-            for path in texture_temp_files:
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
-        else:
-            for path in (input_path, output_path):
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
+            _restore_source_materials(obj, candidate)
+        candidate.name = obj.name + settings.output_name_suffix
+        candidate.pop("_remi_session_id", None)
+        return candidate, "", results
 
+
+class Remi_OT_Decimate(Operator):
+    """Run standalone PyMeshLab decimation on the active mesh."""
+    bl_idname = "remi.decimate"
+    bl_label = "Decimate (MeshLab)"
+    bl_description = "Run MeshLab quadric edge collapse on the active object"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        settings = context.scene.remi_settings
+        obj = bpy.context.view_layer.objects.active
+        if not obj or obj.type != "MESH":
+            self.report({"ERROR"}, "Select a mesh object first")
+            return {"CANCELLED"}
+        candidate, error, results = _create_decimate_candidate(obj, settings)
+        if error:
+            self.report({"ERROR"}, error)
+            return {"CANCELLED"}
+        for result in results:
+            print(
+                f"Remi: Pass {result['pass']}: "
+                f"{result.get('input_faces', '?')} → {result.get('output_faces', '?')} faces"
+            )
+        bpy.ops.object.select_all(action="DESELECT")
+        candidate.select_set(True)
+        context.view_layer.objects.active = candidate
+        self.report({"INFO"}, f"Decimated model imported as '{candidate.name}'")
         return {"FINISHED"}
+
+
+def _create_autoremesher_candidate(obj, settings, disk=None):
+    """Run the optional AutoRemesher executable and return its mesh candidate."""
+    executable = arm.resolve_executable(settings.autoremesher_executable)
+    error = arm.validate_executable(executable)
+    if error:
+        return None, error, {}
+
+    with SessionDiskService.operation_workspace(disk, "autoremesher") as workspace:
+        temp_dir = str(workspace)
+        base_name = bpy.path.clean_name(obj.name)
+        input_obj = os.path.join(temp_dir, f"{base_name}_input.obj")
+        output_obj = os.path.join(temp_dir, f"{base_name}_output.obj")
+        report_path = os.path.join(temp_dir, f"{base_name}_report.txt")
+        if not _export_obj_for_tool(obj, input_obj):
+            return None, "OBJ export failed", {}
+
+        command = arm.build_command(
+            executable,
+            Path(input_obj),
+            Path(output_obj),
+            Path(report_path),
+            target_quads=settings.ar_target_quads,
+            edge_scaling=settings.ar_edge_scaling,
+            sharp_edge=settings.ar_sharp_edge,
+            smooth_normal=settings.ar_smooth_normal,
+            adaptivity=settings.ar_adaptivity,
+        )
+        result = subprocess.run(
+            command,
+            cwd=str(executable.parent),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            message = result.stderr.strip() or result.stdout.strip()
+            return None, message or "AutoRemesher failed", {"command": command}
+        if not os.path.isfile(output_obj):
+            return None, "AutoRemesher did not produce output file", {"command": command}
+
+        candidate = _import_obj_result(output_obj)
+        if not candidate:
+            return None, "Failed to import AutoRemesher result", {"command": command}
+        candidate.name = obj.name + "_autoremesh"
+        candidate.pop("_remi_session_id", None)
+        return candidate, "", {"command": command}
 
 
 class Remi_OT_AutoRemesher(Operator):
@@ -1891,74 +2077,83 @@ class Remi_OT_AutoRemesher(Operator):
             self.report({"ERROR"}, "Select a mesh object first")
             return {"CANCELLED"}
 
-        executable = arm.resolve_executable(settings.autoremesher_executable)
-        error = arm.validate_executable(executable)
+        candidate, error, _report = _create_autoremesher_candidate(obj, settings)
         if error:
             self.report({"ERROR"}, error)
             return {"CANCELLED"}
-
-        temp_dir = _get_temp_dir()
-        base_name = bpy.path.clean_name(obj.name)
-        input_obj = os.path.join(temp_dir, f"{base_name}_ar_input.obj")
-        output_obj = os.path.join(temp_dir, f"{base_name}_ar_output.obj")
-        report_path = os.path.join(temp_dir, f"{base_name}_ar_report.txt")
-
-        self.report({"INFO"}, "Exporting to OBJ for AutoRemesher...")
-        if not _export_obj_for_tool(obj, input_obj):
-            self.report({"ERROR"}, "OBJ export failed")
-            return {"CANCELLED"}
-
-        command = arm.build_command(
-            executable,
-            Path(input_obj),
-            Path(output_obj),
-            Path(report_path),
-            target_quads=settings.ar_target_quads,
-            edge_scaling=settings.ar_edge_scaling,
-            sharp_edge=settings.ar_sharp_edge,
-            smooth_normal=settings.ar_smooth_normal,
-            adaptivity=settings.ar_adaptivity,
-        )
-
-        self.report({"INFO"}, "Running AutoRemesher...")
-        result = subprocess.run(
-            command,
-            cwd=str(executable.parent),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-
-        if result.returncode != 0:
-            msg = result.stderr.strip() or result.stdout.strip()
-            self.report({"ERROR"}, msg or "AutoRemesher failed")
-            return {"CANCELLED"}
-
-        if not os.path.isfile(output_obj):
-            self.report({"ERROR"}, "AutoRemesher did not produce output file")
-            return {"CANCELLED"}
-
-        self.report({"INFO"}, "Importing AutoRemesher result...")
-        new_obj = _import_obj_result(output_obj)
-        if new_obj:
-            new_obj.name = obj.name + "_autoremesh"
-            if settings.ar_hide_original:
-                obj.hide_set(True)
-            bpy.context.view_layer.objects.active = new_obj
-            new_obj.select_set(True)
-            self.report({"INFO"}, f"AutoRemesher result imported as '{new_obj.name}'")
-        else:
-            self.report({"ERROR"}, "Failed to import AutoRemesher result")
-            return {"CANCELLED"}
-
-        # Cleanup
-        for f in (input_obj, output_obj, report_path):
-            try:
-                os.remove(f)
-            except OSError:
-                pass
-
+        if settings.ar_hide_original:
+            obj.hide_set(True)
+        bpy.ops.object.select_all(action="DESELECT")
+        candidate.select_set(True)
+        context.view_layer.objects.active = candidate
+        self.report({"INFO"}, f"AutoRemesher result imported as '{candidate.name}'")
         return {"FINISHED"}
+
+
+def _create_uv_candidate(source, settings, suffix="_uv", candidate=None):
+    """Generate validated UVs on a separate candidate object."""
+    candidate = candidate or _duplicate_object(source, suffix)
+    try:
+        result = ensure_remi_uv(
+            candidate,
+            profile_id=settings.bake_uv_profile,
+            texture_size=settings.bake_texture_size,
+            margin_px=settings.bake_uv_margin_px,
+            preserve_existing_seams=settings.bake_uv_preserve_seams,
+            replace_existing=False,
+            trust_stored_result=True,
+        )
+    except Exception:
+        _remove_mesh_object(candidate)
+        raise
+    if not result.success:
+        _remove_mesh_object(candidate)
+        return None, result.error or "Remi UV generation failed", {}
+    return candidate, "", {
+        "chart_count": result.chart_count,
+        "stats": result.stats,
+        "warnings": list(result.warnings),
+    }
+
+
+def _create_bake_candidate(
+    source_checkpoint,
+    current,
+    settings,
+    *,
+    passes=("diffuse", "roughness", "normal", "ao"),
+    name_prefix="",
+    suffix="_baked",
+    candidate=None,
+):
+    """Bake from a disposable source checkpoint onto an isolated candidate."""
+    candidate = candidate or _duplicate_object(current, suffix)
+    try:
+        result = baking.bake_textures(
+            source_checkpoint,
+            candidate,
+            texture_size=settings.bake_texture_size,
+            final_name=name_prefix or current.name,
+            uv_method=settings.bake_uv_method,
+            uv_island_margin=settings.bake_uv_island_margin,
+            uv_profile=settings.bake_uv_profile,
+            uv_margin_px=settings.bake_uv_margin_px,
+            uv_preserve_seams=settings.bake_uv_preserve_seams,
+            auto_unwrap=settings.bake_auto_unwrap,
+            recalc_normals=settings.bake_recalc_normals,
+            cage_extrusion=settings.bake_cage_extrusion,
+            max_ray_distance=settings.bake_max_ray_distance,
+            passes=passes,
+            consume_sources=True,
+            reuse_outputs=False,
+        )
+    except Exception:
+        _remove_mesh_object(candidate)
+        raise
+    if not result["success"]:
+        _remove_mesh_object(candidate)
+        return None, result.get("error", "Baking failed"), result
+    return candidate, "", result
 
 
 class Remi_OT_GenerateUV(Operator):
@@ -1980,29 +2175,29 @@ class Remi_OT_GenerateUV(Operator):
     def execute(self, context):
         obj = context.active_object
         settings = context.scene.remi_settings
-        result = ensure_remi_uv(
-            obj,
-            profile_id=settings.bake_uv_profile,
-            texture_size=settings.bake_texture_size,
-            margin_px=settings.bake_uv_margin_px,
-            preserve_existing_seams=settings.bake_uv_preserve_seams,
-            replace_existing=True,
-        )
-        if not result.success:
-            self.report({"ERROR"}, result.error or "Remi UV generation failed")
+        candidate, error, report = _create_uv_candidate(obj, settings)
+        if error:
+            self.report({"ERROR"}, error)
             return {"CANCELLED"}
-        stats = result.stats
+        # Standalone UV keeps its historical in-place behavior while sharing
+        # the same isolated candidate path as a Remi session.
+        old_mesh = obj.data
+        obj.data = candidate.data
+        bpy.data.objects.remove(candidate, do_unlink=True)
+        if old_mesh.users == 0:
+            bpy.data.meshes.remove(old_mesh)
+        stats = report["stats"]
         if stats:
             self.report(
                 {"INFO"},
-                f"Remi UV: {result.chart_count} charts, "
+                f"Remi UV: {report['chart_count']} charts, "
                 f"p95 stretch {stats.conformal_p95:.2f}, "
                 f"{stats.packing_occupancy:.0%} occupancy",
             )
         else:
             self.report({"INFO"}, "Remi UV map is ready")
-        if result.warnings:
-            print("Remi UV warnings: " + "; ".join(result.warnings))
+        if report["warnings"]:
+            print("Remi UV warnings: " + "; ".join(report["warnings"]))
         return {"FINISHED"}
 
 
@@ -2133,11 +2328,11 @@ class Remi_OT_FullPipeline(Operator):
             except Exception:
                 pass
             self._subproc = None
-        for f in getattr(self, "_files", []):
-            try:
-                os.remove(f)
-            except OSError:
-                pass
+        disk = getattr(self, "_disk", None)
+        if disk is not None:
+            disk.close()
+            self._disk = None
+        self._temp_dir = ""
         if discard_generated:
             generated_names = {
                 name
@@ -2198,6 +2393,14 @@ class Remi_OT_FullPipeline(Operator):
             self.report({"ERROR"}, mlw.pymeshlab_unavailable_message())
             return {"CANCELLED"}
 
+        disk = SessionDiskService.create("full-pipeline")
+        try:
+            return self._sync_run_owned(context, settings, obj, disk)
+        finally:
+            disk.close()
+
+    def _sync_run_owned(self, context, settings, obj, disk):
+        temp_dir = str(disk.create_workspace("full-pipeline"))
         current = None
         dup = None
 
@@ -2215,7 +2418,12 @@ class Remi_OT_FullPipeline(Operator):
             else:
                 if settings.use_hole_repair and settings.hole_repair_method in {"ALPHA_WRAP", "VOLUME"}:
                     self.report({"INFO"}, "Preparing guide-derived hole patches...")
-                    dup, error, patch_report = _guided_hole_patches(obj, settings, "_remesh")
+                    dup, error, patch_report = _guided_hole_patches(
+                        obj,
+                        settings,
+                        "_remesh",
+                        disk=disk,
+                    )
                     if error:
                         self.report({"ERROR"}, error)
                         return {"CANCELLED"}
@@ -2246,11 +2454,10 @@ class Remi_OT_FullPipeline(Operator):
 
         if settings.use_decimation:
             self.report({"INFO"}, "Decimating...")
-            td = _get_temp_dir()
             source = dup if dup else obj
             base = bpy.path.clean_name(source.name)
-            inp = os.path.join(td, f"{base}_input.ply")
-            out = os.path.join(td, f"{base}_decimated.ply")
+            inp = os.path.join(temp_dir, f"{base}_input.ply")
+            out = os.path.join(temp_dir, f"{base}_decimated.ply")
             if not _export_ply(source, inp):
                 self.report({"ERROR"}, "PLY export failed")
                 return {"CANCELLED"}
@@ -2265,11 +2472,6 @@ class Remi_OT_FullPipeline(Operator):
                     {"ERROR"},
                     f"Decimation pass {failed['pass']} failed: {failed.get('error')}",
                 )
-                for path in (inp, out):
-                    try:
-                        os.remove(path)
-                    except OSError:
-                        pass
                 return {"CANCELLED"}
             current = _import_ply(out)
             if not current:
@@ -2279,11 +2481,6 @@ class Remi_OT_FullPipeline(Operator):
                 current.name = dup.name
                 bpy.data.objects.remove(dup, do_unlink=True)
                 dup = None
-            for f in (inp, out):
-                try:
-                    os.remove(f)
-                except OSError:
-                    pass
 
         if settings.use_autoremesher:
             self.report({"INFO"}, "AutoRemesher...")
@@ -2293,11 +2490,10 @@ class Remi_OT_FullPipeline(Operator):
             if err:
                 self.report({"ERROR"}, err)
                 return {"CANCELLED"}
-            td = _get_temp_dir()
             base = bpy.path.clean_name(source.name)
-            ar_in = os.path.join(td, f"{base}_ar_in.obj")
-            ar_out = os.path.join(td, f"{base}_ar_out.obj")
-            ar_rpt = os.path.join(td, f"{base}_ar_report.txt")
+            ar_in = os.path.join(temp_dir, f"{base}_ar_in.obj")
+            ar_out = os.path.join(temp_dir, f"{base}_ar_out.obj")
+            ar_rpt = os.path.join(temp_dir, f"{base}_ar_report.txt")
             if not _export_obj_for_tool(source, ar_in):
                 return {"CANCELLED"}
             cmd = arm.build_command(
@@ -2325,11 +2521,6 @@ class Remi_OT_FullPipeline(Operator):
                 self.report({"ERROR"}, "Failed to import AutoRemesher result")
                 return {"CANCELLED"}
             current.name = base
-            for f in (ar_in, ar_out, ar_rpt):
-                try:
-                    os.remove(f)
-                except OSError:
-                    pass
 
         if settings.use_baking:
             self.report({"INFO"}, "Baking textures...")
@@ -2398,8 +2589,18 @@ class Remi_OT_FullPipeline(Operator):
         self.pipe_cur = obj.name
         self.pipe_next = ""
         self._subproc = None
-        self._files = []
-        self._timer = context.window_manager.event_timer_add(0.15, window=context.window)
+        self._disk = SessionDiskService.create("full-pipeline")
+        try:
+            self._temp_dir = str(self._disk.create_workspace("full-pipeline"))
+            self._timer = context.window_manager.event_timer_add(
+                0.15,
+                window=context.window,
+            )
+        except Exception:
+            self._disk.close()
+            self._disk = None
+            self._temp_dir = ""
+            raise
 
         context.window_manager.modal_handler_add(self)
         context.window_manager.progress_begin(0, self.pipe_total)
@@ -2493,7 +2694,12 @@ class Remi_OT_FullPipeline(Operator):
                 )
             else:
                 if settings.use_hole_repair and settings.hole_repair_method in {"ALPHA_WRAP", "VOLUME"}:
-                    dup, error, patch_report = _guided_hole_patches(obj, settings, "_remesh")
+                    dup, error, patch_report = _guided_hole_patches(
+                        obj,
+                        settings,
+                        "_remesh",
+                        disk=self._disk,
+                    )
                     if error:
                         self.fail(context, error)
                         self.cleanup(context)
@@ -2542,11 +2748,9 @@ class Remi_OT_FullPipeline(Operator):
                 self.fail(context, "Mesh lost before decimation")
                 self.cleanup(context)
                 return {"CANCELLED"}
-            td = _get_temp_dir()
             base = bpy.path.clean_name(current.name)
-            inp = os.path.join(td, f"{base}_input.ply")
-            out = os.path.join(td, f"{base}_decimated.ply")
-            self._files += [inp, out]
+            inp = os.path.join(self._temp_dir, f"{base}_input.ply")
+            out = os.path.join(self._temp_dir, f"{base}_decimated.ply")
             if not _export_ply(current, inp):
                 self.fail(context, "PLY export failed")
                 self.cleanup(context)
@@ -2564,7 +2768,7 @@ class Remi_OT_FullPipeline(Operator):
         elif state == "IMPORT_DEC":
             source = bpy.data.objects.get(self.pipe_cur)
             base = bpy.path.clean_name(source.name) if source else "remesh"
-            out = os.path.join(_get_temp_dir(), f"{base}_decimated.ply")
+            out = os.path.join(self._temp_dir, f"{base}_decimated.ply")
             if not os.path.isfile(out):
                 self.fail(context, "Decimated PLY not found")
                 self.cleanup(context)
@@ -2601,12 +2805,10 @@ class Remi_OT_FullPipeline(Operator):
                 self.fail(context, err)
                 self.cleanup(context)
                 return {"CANCELLED"}
-            td = _get_temp_dir()
             base = bpy.path.clean_name(current.name)
-            ar_in = os.path.join(td, f"{base}_ar_in.obj")
-            ar_out = os.path.join(td, f"{base}_ar_out.obj")
-            ar_rpt = os.path.join(td, f"{base}_ar_report.txt")
-            self._files += [ar_in, ar_out, ar_rpt]
+            ar_in = os.path.join(self._temp_dir, f"{base}_ar_in.obj")
+            ar_out = os.path.join(self._temp_dir, f"{base}_ar_out.obj")
+            ar_rpt = os.path.join(self._temp_dir, f"{base}_ar_report.txt")
             if not _export_obj_for_tool(current, ar_in):
                 self.fail(context, "OBJ export failed")
                 self.cleanup(context)
@@ -2625,7 +2827,7 @@ class Remi_OT_FullPipeline(Operator):
         elif state == "AR_IMPORT":
             current = bpy.data.objects.get(self.pipe_cur)
             base = bpy.path.clean_name(current.name) if current else "ar"
-            ar_out = os.path.join(_get_temp_dir(), f"{base}_ar_out.obj")
+            ar_out = os.path.join(self._temp_dir, f"{base}_ar_out.obj")
             if not os.path.isfile(ar_out):
                 self.fail(context, "AutoRemesher produced no output")
                 self.cleanup(context)

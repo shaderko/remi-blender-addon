@@ -30,7 +30,7 @@ class REMI_OT_instant_meshes_draw(Operator):
     bl_idname = "remi.instant_meshes_draw"
     bl_label = "Draw Field Guide"
     bl_description = "Draw directly on the surface to guide the Instant Meshes field"
-    bl_options = {"REGISTER", "UNDO"}
+    bl_options = {"REGISTER"}
 
     stroke_type: EnumProperty(
         items=[
@@ -211,6 +211,28 @@ class REMI_OT_instant_meshes_preview(Operator):
         return {"FINISHED"}
 
 
+def _create_preview_object(context):
+    if runtime.preview is None:
+        runtime.update_preview()
+    vertices, native_faces = runtime.preview
+    faces = []
+    for face in native_faces:
+        values = [int(value) for value in face]
+        if len(values) == 4 and values[2] == values[3]:
+            values = values[:3]
+        faces.append(values)
+    source = runtime.source
+    name = source.name + context.scene.remi_instant_meshes.output_suffix
+    mesh = bpy.data.meshes.new(name + "_mesh")
+    mesh.from_pydata(vertices.tolist(), [], faces)
+    mesh.update()
+    result = bpy.data.objects.new(name, mesh)
+    collection = source.users_collection[0] if source.users_collection else context.collection
+    collection.objects.link(result)
+    result.matrix_world = source.matrix_world.copy()
+    return source, result
+
+
 class REMI_OT_instant_meshes_accept(Operator):
     bl_idname = "remi.instant_meshes_accept"
     bl_label = "Accept Retopology"
@@ -224,24 +246,7 @@ class REMI_OT_instant_meshes_accept(Operator):
         if not runtime.ready:
             return {"CANCELLED"}
         try:
-            if runtime.preview is None:
-                runtime.update_preview()
-            vertices, native_faces = runtime.preview
-            faces = []
-            for face in native_faces:
-                values = [int(value) for value in face]
-                if len(values) == 4 and values[2] == values[3]:
-                    values = values[:3]
-                faces.append(values)
-            source = runtime.source
-            name = source.name + context.scene.remi_instant_meshes.output_suffix
-            mesh = bpy.data.meshes.new(name + "_mesh")
-            mesh.from_pydata(vertices.tolist(), [], faces)
-            mesh.update()
-            result = bpy.data.objects.new(name, mesh)
-            collection = source.users_collection[0] if source.users_collection else context.collection
-            collection.objects.link(result)
-            result.matrix_world = source.matrix_world.copy()
+            source, result = _create_preview_object(context)
             if context.scene.remi_instant_meshes.hide_source:
                 source.hide_set(True)
             bpy.ops.object.select_all(action="DESELECT")
@@ -250,6 +255,59 @@ class REMI_OT_instant_meshes_accept(Operator):
             runtime.shutdown()
             context.scene.remi_instant_meshes.status = f"Created {result.name}"
         except Exception as error:
+            self.report({"ERROR"}, str(error))
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
+class REMI_OT_instant_meshes_session_accept(Operator):
+    bl_idname = "remi.instant_meshes_session_accept"
+    bl_label = "Accept Retopology"
+    bl_description = "Commit the quad preview to the locked Remi mesh"
+
+    @classmethod
+    def poll(cls, context):
+        state = getattr(context.window_manager, "remi_session", None)
+        return bool(
+            state is not None
+            and state.active
+            and state.interactive
+            and runtime.ready
+            and runtime.preview is not None
+            and not runtime.session.active
+        )
+
+    def execute(self, context):
+        result = None
+        session_runtime = None
+        try:
+            _source, result = _create_preview_object(context)
+            runtime.shutdown()
+            from ..session import runtime as session_runtime
+
+            session_runtime.commit_interactive_step(
+                context,
+                result,
+                "Retopology",
+                next_stage="UV",
+            )
+        except Exception as error:
+            runtime.shutdown()
+            if session_runtime is not None:
+                if result and bpy.data.objects.get(result.name):
+                    mesh = result.data
+                    bpy.data.objects.remove(result, do_unlink=True)
+                    if mesh.users == 0:
+                        bpy.data.meshes.remove(mesh)
+                session_runtime.abandon_interactive_step(
+                    context,
+                    f"Retopology failed: {error}",
+                )
+            elif result and bpy.data.objects.get(result.name):
+                mesh = result.data
+                bpy.data.objects.remove(result, do_unlink=True)
+                if mesh.users == 0:
+                    bpy.data.meshes.remove(mesh)
             self.report({"ERROR"}, str(error))
             return {"CANCELLED"}
         return {"FINISHED"}
@@ -269,6 +327,28 @@ class REMI_OT_instant_meshes_cancel(Operator):
         return {"FINISHED"}
 
 
+class REMI_OT_instant_meshes_session_cancel(Operator):
+    bl_idname = "remi.instant_meshes_session_cancel"
+    bl_label = "Cancel Retopology"
+    bl_description = "Discard the interactive preview and keep the current Remi mesh"
+
+    @classmethod
+    def poll(cls, context):
+        state = getattr(context.window_manager, "remi_session", None)
+        return bool(state is not None and state.active and state.interactive and runtime.ready)
+
+    def execute(self, context):
+        runtime.shutdown()
+        from ..session import runtime as session_runtime
+
+        session_runtime.abandon_interactive_step(
+            context,
+            "Interactive retopology cancelled",
+        )
+        context.scene.remi_instant_meshes.status = "Session cancelled"
+        return {"FINISHED"}
+
+
 classes = (
     REMI_OT_instant_meshes_start,
     REMI_OT_instant_meshes_draw,
@@ -278,7 +358,9 @@ classes = (
     REMI_OT_instant_meshes_solve_position,
     REMI_OT_instant_meshes_preview,
     REMI_OT_instant_meshes_accept,
+    REMI_OT_instant_meshes_session_accept,
     REMI_OT_instant_meshes_cancel,
+    REMI_OT_instant_meshes_session_cancel,
 )
 
 

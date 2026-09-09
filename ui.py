@@ -1,11 +1,297 @@
-"""
-UI Panel for Remi addon.
-"""
+"""Focused single-object UI for the Remi workflow."""
 
 import bpy
 from bpy.types import Panel
 
 from . import instant_meshes
+
+
+def _command(layout, command, text, icon="NONE"):
+    operator = layout.operator("remi.session_command", text=text, icon=icon)
+    operator.command = command
+    return operator
+
+
+def _stage(layout, state, stage, text):
+    operator = layout.operator(
+        "remi.session_stage",
+        text=text,
+        depress=state.stage == stage,
+    )
+    operator.stage = stage
+
+
+def _draw_source(layout, context):
+    obj = context.view_layer.objects.active
+
+    layout.label(text="REMI", icon="MOD_REMESH")
+    layout.label(text="One mesh from repair to bake")
+    layout.separator()
+
+    if not obj or obj.type != "MESH" or context.mode != "OBJECT":
+        notice = layout.box()
+        notice.label(text="Select one mesh in Object Mode", icon="INFO")
+        return
+
+    layout.label(text=obj.name, icon="OBJECT_DATA")
+    row = layout.row(align=True)
+    row.label(text=f"{len(obj.data.vertices):,} vertices")
+    row.label(text=f"{len(obj.data.polygons):,} faces")
+    layout.separator()
+    start = layout.column()
+    start.scale_y = 1.5
+    start.operator("remi.start_session", text="Start Remi", icon="PLAY")
+    layout.label(text="Locked until Finish or Cancel", icon="LOCKED")
+
+
+def _draw_repair(layout, settings, state):
+    layout.label(text="Repair", icon="MOD_REMESH")
+
+    if state.interactive:
+        notice = layout.box()
+        notice.label(text="Manual repair active", icon="BRUSH_DATA")
+        notice.label(text="Draw on the surface around one hole")
+        notice.label(text="Release to apply · Esc or right-click to cancel")
+        return
+
+    manual = layout.box()
+    manual.label(text="Manual · One Hole", icon="BRUSH_DATA")
+    manual.label(text="Draw on the intact surface around the rim")
+    row = manual.row(align=True)
+    row.prop(settings, "targeted_ray_spacing", text="Ray px")
+    row.prop(settings, "targeted_ray_depth_ratio", text="Depth")
+    row = manual.row(align=True)
+    row.prop(settings, "alpha_wrap_patch_resolution", text="Resolution")
+    row.prop(settings, "alpha_wrap_patch_relax_iterations", text="Relax")
+    action = manual.column()
+    action.scale_y = 1.35
+    action.operator("remi.draw_hole_patch", text="Draw Around Hole", icon="BRUSH_DATA")
+
+    layout.separator()
+    layout.label(text="Automatic Repair")
+    layout.prop(settings, "hole_repair_method", text="Method")
+
+    if settings.hole_repair_method == "ALPHA_WRAP":
+        layout.prop(settings, "alpha_wrap_alpha_ratio", text="Hole Scale")
+        layout.prop(settings, "alpha_wrap_auto_scale", text="Find Scale Automatically")
+        if settings.alpha_wrap_auto_scale:
+            row = layout.row(align=True)
+            row.prop(settings, "alpha_wrap_max_ratio", text="Maximum")
+            row.prop(settings, "alpha_wrap_coverage_target", text="Coverage")
+        row = layout.row(align=True)
+        row.prop(settings, "alpha_wrap_patch_ratio", text="Detection")
+        row.prop(settings, "alpha_wrap_patch_rings", text="Overlap")
+        layout.prop(settings, "alpha_wrap_offset_ratio", text="Surface Offset")
+        layout.prop(settings, "alpha_wrap_executable", text="Helper")
+        layout.prop(settings, "alpha_wrap_auto_build", text="Build Automatically")
+        layout.operator("remi.build_alpha_wrap", text="Build Helper", icon="TOOL_SETTINGS")
+    elif settings.hole_repair_method in {"HYBRID", "BOUNDARY"}:
+        row = layout.row(align=True)
+        row.prop(settings, "hole_max_sides", text="Max Loop")
+        row.prop(settings, "hole_weld_distance", text="Weld")
+    elif settings.hole_repair_method == "VOLUME":
+        layout.prop(settings, "hole_close_ratio", text="Crack Size")
+        layout.prop(settings, "volume_guide_voxel_scale", text="Resolution")
+        layout.prop(settings, "volume_surface_fit_ratio", text="Surface Fit Reach")
+        row = layout.row(align=True)
+        row.prop(settings, "alpha_wrap_patch_ratio", text="Detection")
+        row.prop(settings, "alpha_wrap_patch_rings", text="Overlap")
+
+    if settings.hole_repair_method in {"HYBRID", "VOLUME"}:
+        layout.prop(settings, "hole_detail_recovery", text="Recover Surface Detail")
+        if settings.hole_detail_recovery and settings.hole_repair_method == "HYBRID":
+            layout.prop(settings, "hole_detail_ratio", text="Detail Reach")
+
+    layout.separator()
+    action = layout.column()
+    action.scale_y = 1.35
+    _command(action, "REPAIR", "Run Repair", "MOD_REMESH")
+
+
+def _draw_remesh(layout, settings):
+    layout.label(text="Remesh", icon="MOD_NORMALEDIT")
+    layout.prop(settings, "remesh_backend", text="Method")
+    layout.prop(settings, "voxel_size", text="Voxel Size")
+    if settings.remesh_backend == "VOLUME":
+        layout.label(text="Closes gaps and fits back to the surface", icon="INFO")
+        row = layout.row(align=True)
+        row.prop(settings, "hole_close_ratio", text="Crack Size")
+        row.prop(settings, "volume_guide_voxel_scale", text="Resolution")
+        layout.prop(settings, "volume_surface_fit_ratio", text="Surface Fit Reach")
+        layout.prop(settings, "volume_preserve_features", text="Preserve Sharp Creases")
+        if settings.volume_preserve_features:
+            row = layout.row(align=True)
+            row.prop(settings, "volume_feature_angle", text="Feature")
+            row.prop(settings, "volume_feature_reach", text="Reach")
+    else:
+        row = layout.row(align=True)
+        row.prop(settings, "use_sdf_fillet", text="Fillet")
+        row.prop(settings, "use_sdf_smoothing", text="Smooth")
+        if settings.use_sdf_fillet:
+            layout.prop(settings, "fillet_radius", text="Fillet Radius")
+        if settings.use_sdf_smoothing:
+            layout.prop(settings, "smoothing_iterations", text="Smooth Steps")
+
+    layout.separator()
+    action = layout.column()
+    action.scale_y = 1.35
+    _command(action, "REMESH", "Run Remesh", "MOD_NORMALEDIT")
+
+    layout.separator()
+    decimate = layout.box()
+    decimate.label(text="Optional · Reduce Faces", icon="MOD_DECIM")
+    row = decimate.row(align=True)
+    row.prop(settings, "decimation_passes", text="Passes")
+    row.prop(settings, "target_percentage", text="Keep")
+    row = decimate.row(align=True)
+    row.prop(settings, "decimation_preserve_detail", text="Preserve Detail")
+    row.prop(settings, "decimation_with_texture", text="Keep Texture")
+    _command(decimate, "DECIMATE", "Run MeshLab Decimation", "MOD_DECIM")
+
+
+def _draw_uv(layout, settings):
+    layout.label(text="UV", icon="UV")
+    layout.prop(settings, "bake_uv_profile", text="Profile")
+    row = layout.row(align=True)
+    row.prop(settings, "bake_texture_size", text="Texture")
+    row.prop(settings, "bake_uv_margin_px", text="Padding")
+    layout.prop(settings, "bake_uv_preserve_seams", text="Preserve Marked Seams")
+    layout.separator()
+    action = layout.column()
+    action.scale_y = 1.35
+    _command(action, "UV", "Generate UV", "UV")
+
+
+def _draw_bake(layout, settings):
+    layout.label(text="Bake", icon="RENDER_STILL")
+    layout.label(text="Uses original source checkpoint", icon="LOCKED")
+    layout.prop(settings, "bake_texture_size", text="Texture Size")
+    layout.prop(settings, "bake_auto_unwrap", text="Auto Unwrap")
+    if settings.bake_auto_unwrap:
+        row = layout.row(align=True)
+        row.prop(settings, "bake_uv_method", text="UV Method")
+        if settings.bake_uv_method == "REMI":
+            row.prop(settings, "bake_uv_profile", text="Profile")
+            layout.prop(settings, "bake_uv_margin_px", text="Padding")
+        else:
+            layout.prop(settings, "bake_uv_island_margin", text="Margin")
+    row = layout.row(align=True)
+    row.prop(settings, "bake_recalc_normals", text="Recalc Normals")
+    row.prop(settings, "bake_half_scale", text="Half Scale")
+    row = layout.row(align=True)
+    row.prop(settings, "bake_cage_extrusion", text="Cage")
+    row.prop(settings, "bake_max_ray_distance", text="Max Ray")
+    layout.separator()
+    action = layout.column(align=True)
+    action.scale_y = 1.3
+    _command(action, "BAKE_ALL", "Bake All Maps", "RENDER_STILL")
+    row = action.row(align=True)
+    _command(row, "BAKE_DIFFUSE", "Albedo")
+    _command(row, "BAKE_ROUGHNESS", "Roughness")
+    row = action.row(align=True)
+    _command(row, "BAKE_NORMAL", "Normal")
+    _command(row, "BAKE_AO", "AO")
+
+
+def _draw_retopology(layout, context, state):
+    layout.label(text="Retopology", icon="MOD_REMESH")
+    instant_settings = context.scene.remi_instant_meshes
+    if state.interactive:
+        instant_meshes.draw_panel(layout, context, embedded=True)
+        return
+
+    row = layout.row(align=True)
+    row.prop(instant_settings, "target_faces", text="Target")
+    row.prop(instant_settings, "pure_quad", text="Pure Quads")
+    row = layout.row(align=True)
+    row.prop(instant_settings, "preserve_creases", text="Creases")
+    if instant_settings.preserve_creases:
+        row.prop(instant_settings, "crease_angle", text="Angle")
+    layout.prop(instant_settings, "align_boundaries", text="Align Open Boundaries")
+    layout.separator()
+    action = layout.column()
+    action.scale_y = 1.35
+    _command(action, "INSTANT_START", "Start Interactive Retopology", "PLAY")
+
+    layout.separator()
+    automatic = layout.box()
+    row = automatic.row()
+    settings = context.scene.remi_settings
+    row.prop(settings, "use_autoremesher", text="")
+    row.label(text="Automatic · External")
+    if settings.use_autoremesher:
+        automatic.prop(settings, "autoremesher_executable", text="Executable")
+        row = automatic.row(align=True)
+        row.prop(settings, "ar_target_quads", text="Target")
+        row.prop(settings, "ar_adaptivity", text="Adaptive")
+        row = automatic.row(align=True)
+        row.prop(settings, "ar_edge_scaling", text="Edge Scale")
+        row.prop(settings, "ar_sharp_edge", text="Sharp")
+        automatic.prop(settings, "ar_smooth_normal", text="Smooth Normals")
+        _command(automatic, "AUTO_RETOPO", "Run AutoRemesher", "MOD_REMESH")
+
+
+def _draw_session(layout, context):
+    state = context.window_manager.remi_session
+    settings = context.scene.remi_settings
+
+    header = layout.row(align=True)
+    header.label(text="REMI MODE", icon="LOCKED")
+    header.label(text=state.object_name)
+
+    stats = layout.row(align=True)
+    stats.label(text=f"{state.current_vertices:,} verts · {state.current_faces:,} faces")
+    if state.source_faces:
+        ratio = state.current_faces / state.source_faces
+        stats.label(text=f"{ratio:.0%}")
+
+    status = layout.box()
+    status.label(text=f"Current · {state.current_step}", icon="INFO")
+    status.label(text=state.status or "Ready")
+    if state.checkpoint_megabytes:
+        status.label(text=f"Recovery on disk · {state.checkpoint_megabytes:.1f} MB")
+
+    layout.separator()
+    stages = layout.row(align=True)
+    _stage(stages, state, "REPAIR", "Repair")
+    _stage(stages, state, "REMESH", "Remesh")
+    _stage(stages, state, "RETOPOLOGY", "Retopo")
+    stages = layout.row(align=True)
+    _stage(stages, state, "UV", "UV")
+    _stage(stages, state, "BAKE", "Bake")
+    layout.separator()
+
+    controls = layout.column()
+    controls.enabled = not state.busy
+    if state.stage == "REPAIR":
+        _draw_repair(controls, settings, state)
+    elif state.stage == "REMESH":
+        _draw_remesh(controls, settings)
+    elif state.stage == "RETOPOLOGY":
+        _draw_retopology(controls, context, state)
+    elif state.stage == "UV":
+        _draw_uv(controls, settings)
+    else:
+        _draw_bake(controls, settings)
+
+    layout.separator()
+    history = layout.row(align=True)
+    history.enabled = not state.interactive
+    back = history.row(align=True)
+    back.enabled = state.can_undo and not state.busy
+    _command(back, "UNDO", "Back", "TRIA_LEFT")
+    redo = history.row(align=True)
+    redo.enabled = state.can_redo and not state.busy
+    _command(redo, "REDO", "Redo", "TRIA_RIGHT")
+    reset = history.row(align=True)
+    reset.enabled = state.step_index > 0 and not state.busy
+    _command(reset, "RESET", "Start", "FILE_REFRESH")
+
+    finish = layout.row(align=True)
+    finish.enabled = not state.busy and not state.interactive
+    finish.scale_y = 1.3
+    _command(finish, "FINISH", "Finish", "CHECKMARK")
+    _command(finish, "CANCEL", "Cancel Session", "X")
 
 
 class Remi_PT_MainPanel(Panel):
@@ -19,202 +305,11 @@ class Remi_PT_MainPanel(Panel):
         layout = self.layout
         layout.use_property_split = False
         layout.use_property_decorate = False
-        s = context.scene.remi_settings
-        obj = context.view_layer.objects.active
-
-        # ── Active Mesh ─────────────────────────────────────────
-        if obj and obj.type == "MESH":
-            box = layout.box()
-            row = box.row()
-            row.label(text="Active", icon="OBJECT_DATA")
-            row.label(text=obj.name)
-            row = box.row()
-            row.label(text=f"{len(obj.data.vertices):,} verts")
-            row.label(text=f"{len(obj.data.polygons):,} faces")
-
-        # The enabled state is also the section's disclosure control: disabled
-        # pipeline stages remain visible but collapse to one easy-to-scan row.
-        # ── SDF Voxel Remesh ───────────────────────────────────
-        box = layout.box()
-        row = box.row()
-        row.prop(s, "use_sdf_remesh", text="")
-        row.label(text="Remesh")
-        if s.use_sdf_remesh:
-            box.prop(s, "remesh_backend", text="Method")
-            if s.remesh_backend == "VOLUME":
-                warning = box.box()
-                warning.label(text="Slow and memory intensive", icon="ERROR")
-                warning.label(text="Closes holes and fits sharp creases")
-                box.prop(s, "hole_close_ratio", text="Crack Size")
-                box.prop(s, "volume_guide_voxel_scale", text="Volume Resolution")
-                box.prop(s, "volume_surface_fit_ratio", text="Surface Fit Reach")
-                box.prop(s, "volume_preserve_features", text="Preserve Sharp Creases")
-                if s.volume_preserve_features:
-                    row = box.row(align=True)
-                    row.prop(s, "volume_feature_angle", text="Feature °")
-                    row.prop(s, "volume_feature_reach", text="Reach")
-            else:
-                targeted = box.box()
-                targeted.label(text="Targeted Hole Patching", icon="BRUSH_DATA")
-                targeted.label(text="Draw on the surface around one hole")
-                row = targeted.row(align=True)
-                row.prop(s, "targeted_ray_spacing", text="Ray px")
-                row.prop(s, "targeted_ray_depth_ratio", text="Depth")
-                row = targeted.row(align=True)
-                row.prop(s, "alpha_wrap_patch_resolution", text="Patch Resolution")
-                row.prop(s, "alpha_wrap_patch_relax_iterations", text="Patch Relax")
-                targeted.operator("remi.draw_hole_patch", text="Draw Around Hole", icon="BRUSH_DATA")
-                box.prop(s, "use_hole_repair", text="Pre-Repair Holes")
-                if s.use_hole_repair:
-                    repair = box.box()
-                    repair.prop(s, "hole_repair_method", text="Method")
-                    if s.hole_repair_method == "ALPHA_WRAP":
-                        repair.label(text="Preserves source triangles", icon="MOD_SHRINKWRAP")
-                        repair.prop(s, "alpha_wrap_alpha_ratio", text="Start Hole Scale")
-                        repair.prop(s, "alpha_wrap_auto_scale", text="Auto Find Hole Scale")
-                        if s.alpha_wrap_auto_scale:
-                            repair.prop(s, "alpha_wrap_max_ratio", text="Maximum Scale")
-                            repair.prop(s, "alpha_wrap_coverage_target", text="Boundary Coverage")
-                        repair.prop(s, "alpha_wrap_offset_ratio", text="Surface Offset")
-                        repair.prop(s, "alpha_wrap_patch_ratio", text="Hole Detection")
-                        repair.prop(s, "alpha_wrap_patch_rings", text="Border Overlap")
-                        repair.prop(s, "alpha_wrap_patch_resolution", text="Patch Resolution")
-                        repair.prop(s, "alpha_wrap_patch_relax_iterations", text="Patch Relax")
-                        repair.prop(s, "alpha_wrap_executable", text="Helper")
-                        repair.prop(s, "alpha_wrap_auto_build", text="Auto Build")
-                        repair.operator("remi.build_alpha_wrap", text="Build Helper", icon="TOOL_SETTINGS")
-                    if s.hole_repair_method in {"HYBRID", "BOUNDARY"}:
-                        repair.prop(s, "hole_max_sides", text="Max Loop Edges")
-                        repair.prop(s, "hole_weld_distance", text="Weld Distance")
-                    if s.hole_repair_method in {"HYBRID", "VOLUME"}:
-                        repair.prop(s, "hole_close_ratio", text="Crack Size")
-                        repair.prop(s, "hole_detail_recovery", text="Recover Detail")
-                        if s.hole_detail_recovery:
-                            if s.hole_repair_method == "VOLUME":
-                                repair.prop(s, "volume_surface_fit_ratio", text="Surface Fit Reach")
-                            else:
-                                repair.prop(s, "hole_detail_ratio", text="Detail Reach")
-                    if s.hole_repair_method == "VOLUME":
-                        repair.label(text="Fine volume used only as guide", icon="VOLUME_DATA")
-                        repair.prop(s, "volume_guide_voxel_scale", text="Guide Resolution")
-                        repair.prop(s, "alpha_wrap_patch_ratio", text="Hole Detection")
-                        repair.prop(s, "alpha_wrap_patch_rings", text="Border Overlap")
-                        repair.prop(s, "alpha_wrap_patch_resolution", text="Patch Resolution")
-                        repair.prop(s, "alpha_wrap_patch_relax_iterations", text="Patch Relax")
-                    button_text = (
-                        "Prepare Hole Patches"
-                        if s.hole_repair_method in {"ALPHA_WRAP", "VOLUME"}
-                        else "Repair Copy"
-                    )
-                    repair.operator("remi.repair_holes", text=button_text, icon="MOD_REMESH")
-            box.prop(s, "voxel_size", text="Voxel Size")
-            row = box.row(align=True)
-            row.prop(s, "use_sdf_fillet", text="Fillet")
-            row.prop(s, "use_sdf_smoothing", text="Smooth")
-            if s.use_sdf_fillet:
-                box.prop(s, "fillet_radius", text="Fillet Radius")
-            if s.use_sdf_smoothing:
-                box.prop(s, "smoothing_iterations", text="Smooth Steps")
-            box.separator(factor=0.3)
-            col = box.column(align=True)
-            col.scale_y = 1.15
-            action_text = "Run Closing Volume" if s.remesh_backend == "VOLUME" else "Remesh Copy"
-            col.operator("remi.sdf_remesh", text=action_text)
-            if s.remesh_backend == "VOXEL":
-                col.operator("remi.apply_remesh", text="Apply Modifier")
-
-        # ── MeshLab Decimation ──────────────────────────────────
-        box = layout.box()
-        row = box.row()
-        row.prop(s, "use_decimation", text="")
-        row.label(text="MeshLab Decimation")
-        if s.use_decimation:
-            row = box.row(align=True)
-            row.prop(s, "decimation_passes", text="Passes")
-            row.prop(s, "target_percentage", text="Keep")
-            box.prop(s, "decimation_preserve_detail", text="Preserve Detail")
-            box.prop(s, "decimation_with_texture", text="Keep Texture (standalone only)")
-            box.prop(s, "output_name_suffix", text="Suffix")
-            box.separator(factor=0.3)
-            box.operator("remi.decimate", text="Decimate")
-
-        # ── Interactive Instant Meshes ─────────────────────────
-        instant_meshes.draw_panel(layout, context)
-
-        # ── AutoRemesher ────────────────────────────────────────
-        box = layout.box()
-        row = box.row()
-        row.prop(s, "use_autoremesher", text="")
-        row.label(text="AutoRemesher (External)")
-        if s.use_autoremesher:
-            box.label(text="Runs as the final remesh step", icon="INFO")
-            box.prop(s, "autoremesher_executable", text="Executable")
-            box.separator(factor=0.3)
-            row = box.row(align=True)
-            row.prop(s, "ar_target_quads", text="Target")
-            row.prop(s, "ar_adaptivity", text="Adaptive")
-            row = box.row(align=True)
-            row.prop(s, "ar_edge_scaling", text="Edge Scale")
-            row.prop(s, "ar_sharp_edge", text="Sharp °")
-            box.prop(s, "ar_smooth_normal", text="Smooth °")
-            box.prop(s, "ar_hide_original", text="Hide Source")
-            box.separator(factor=0.3)
-            box.operator("remi.autoremesher", text="Run AutoRemesher")
-
-        # ── Remi UV ─────────────────────────────────────────────
-        box = layout.box()
-        row = box.row()
-        row.label(text="Remi UV", icon="UV")
-        box.prop(s, "bake_uv_profile", text="Profile")
-        row = box.row(align=True)
-        row.prop(s, "bake_texture_size", text="Texture Size")
-        row.prop(s, "bake_uv_margin_px", text="Padding px")
-        box.prop(s, "bake_uv_preserve_seams", text="Preserve Marked Seams")
-        box.operator("remi.generate_uv", text="Generate UV Map", icon="UV")
-        if obj and "remi_uv_chart_count" in obj:
-            row = box.row(align=True)
-            row.label(text=f"{obj['remi_uv_chart_count']} charts")
-            row.label(text=f"p95 {obj['remi_uv_stretch_p95']:.2f}")
-            row.label(text=f"{obj['remi_uv_occupancy']:.0%} packed")
-
-        # ── Baking ──────────────────────────────────────────────
-        box = layout.box()
-        row = box.row()
-        row.prop(s, "use_baking", text="")
-        row.label(text="Bake Textures")
-        if s.use_baking:
-            box.label(text="Runs as the final pipeline step", icon="INFO")
-            box.prop(s, "bake_texture_size", text="Texture Size")
-            box.prop(s, "bake_auto_unwrap", text="Auto Unwrap")
-            if s.bake_auto_unwrap:
-                row = box.row(align=True)
-                row.prop(s, "bake_uv_method", text="UV Method")
-                if s.bake_uv_method == "REMI":
-                    row.prop(s, "bake_uv_profile", text="Profile")
-                    box.prop(s, "bake_uv_margin_px", text="UV Padding px")
-                else:
-                    row.prop(s, "bake_uv_island_margin", text="Margin")
-            row = box.row(align=True)
-            row.prop(s, "bake_recalc_normals", text="Recalc Normals")
-            row.prop(s, "bake_half_scale", text="Half Scale")
-            row = box.row(align=True)
-            row.prop(s, "bake_cage_extrusion", text="Cage")
-            row.prop(s, "bake_max_ray_distance", text="Max Ray")
-            box.label(text="Source first, target last (active)", icon="INFO")
-            col = box.column(align=True)
-            col.operator("remi.bake_all_maps", text="Bake All Maps", icon="RENDER_STILL")
-            row = col.row(align=True)
-            row.operator("remi.bake_diffuse", text="Albedo")
-            row.operator("remi.bake_roughness", text="Roughness")
-            row = col.row(align=True)
-            row.operator("remi.bake_normal", text="Normal")
-            row.operator("remi.bake_ao", text="AO")
-
-        # ── Full Pipeline ───────────────────────────────────────
-        box = layout.box()
-        col = box.column(align=True)
-        col.scale_y = 1.6
-        col.operator("remi.full_pipeline", text="▶ Run Full Remi")
+        state = getattr(context.window_manager, "remi_session", None)
+        if state is not None and state.active:
+            _draw_session(layout, context)
+        else:
+            _draw_source(layout, context)
 
 
 class Remi_PT_EditToolsPanel(Panel):
@@ -245,10 +340,6 @@ class Remi_PT_EditToolsPanel(Panel):
         col.operator("remi.select_inner_shell", icon="RESTRICT_SELECT_OFF")
         col.operator("remi.remove_inner_shell", icon="TRASH")
 
-
-# ============================================================
-# Registration
-# ============================================================
 
 classes = [
     Remi_PT_MainPanel,

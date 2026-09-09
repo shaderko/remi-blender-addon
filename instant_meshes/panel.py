@@ -1,8 +1,9 @@
-def draw_panel(layout, context):
+def draw_panel(layout, context, embedded=False):
     settings = context.scene.remi_instant_meshes
-    box = layout.box()
-    header = box.row()
-    header.label(text="Instant Meshes (Interactive)", icon="MOD_REMESH")
+    box = layout if embedded else layout.box()
+    if not embedded:
+        header = box.row()
+        header.label(text="Instant Meshes (Interactive)", icon="MOD_REMESH")
 
     if not settings.session_active:
         box.label(text="Native Apple Silicon field solver", icon="INFO")
@@ -69,6 +70,10 @@ def draw_panel(layout, context):
 
     finish = box.column(align=True)
     finish.scale_y = 1.2
-    finish.prop(settings, "hide_source", text="Hide Source on Accept")
-    finish.operator("remi.instant_meshes_accept", text="Accept Retopology", icon="CHECKMARK")
-    finish.operator("remi.instant_meshes_cancel", text="Cancel Session", icon="X")
+    if embedded:
+        finish.operator("remi.instant_meshes_session_accept", text="Accept Retopology", icon="CHECKMARK")
+        finish.operator("remi.instant_meshes_session_cancel", text="Cancel Retopology", icon="X")
+    else:
+        finish.prop(settings, "hide_source", text="Hide Source on Accept")
+        finish.operator("remi.instant_meshes_accept", text="Accept Retopology", icon="CHECKMARK")
+        finish.operator("remi.instant_meshes_cancel", text="Cancel Session", icon="X")

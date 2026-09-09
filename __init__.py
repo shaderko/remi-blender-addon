@@ -303,8 +303,7 @@ class RemiSceneSettings(PropertyGroup):
     decimation_with_texture: BoolProperty(
         name="Keep Texture",
         description=(
-            "For standalone decimation only: preserve the active mesh's UVs and "
-            "image texture. The full pipeline ignores this because it bakes textures last."
+            "Preserve the working mesh's UVs and image texture during MeshLab decimation"
         ),
         default=False,
     )
@@ -480,6 +479,9 @@ def register():
     from . import operators
     operators.register()
 
+    from . import session
+    session.register()
+
     from . import ui
     ui.register()
 
@@ -495,6 +497,9 @@ def unregister():
 
     from . import ui
     ui.unregister()
+
+    from . import session
+    session.unregister()
 
     from . import operators
     operators.unregister()

@@ -16,6 +16,9 @@ from .packing import apply_packing_attempt, pack_candidates, unwrap_candidates
 from .settings import get_profile
 
 
+_LARGE_MESH_TRIANGLE_THRESHOLD = 20_000
+
+
 @dataclass
 class UVResult:
     success: bool
@@ -213,6 +216,8 @@ def _store_summary(
     solver: str,
     stats: UVStats,
     generated_seams: set[int] | None = None,
+    texture_size: int = 0,
+    margin_px: int = 0,
 ):
     """Keep the last quality report on the object for UI and downstream tools."""
     obj["remi_uv_profile"] = profile
@@ -222,6 +227,13 @@ def _store_summary(
     obj["remi_uv_stretch_p95"] = stats.conformal_p95
     obj["remi_uv_occupancy"] = stats.packing_occupancy
     obj["remi_uv_overlap_pairs"] = stats.overlap_pairs
+    obj["remi_uv_triangle_count"] = stats.triangle_count
+    obj["remi_uv_loop_count"] = len(obj.data.loops)
+    obj["remi_uv_polygon_count"] = len(obj.data.polygons)
+    obj["remi_uv_layer_name"] = obj.data.uv_layers.active.name
+    obj["remi_uv_texture_size"] = int(texture_size)
+    obj["remi_uv_margin_px"] = int(margin_px)
+    obj["remi_uv_bounds"] = list(stats.uv_bounds)
     if generated_seams is not None:
         obj["remi_uv_generated_seams"] = sorted(generated_seams)
 
@@ -451,7 +463,10 @@ def _repair_uv_overlaps(
     for _repair_pass in range(max(2, profile.repair_passes)):
         if not stats.overlap_pairs:
             break
-        overlap_details = find_uv_overlaps(mesh)
+        overlap_details = find_uv_overlaps(
+            mesh,
+            max_pairs=max(64, stats.overlap_pairs),
+        )
         overlap_pairs = [
             (detail["polygon_a"], detail["polygon_b"])
             for detail in overlap_details
@@ -534,6 +549,7 @@ def ensure_remi_uv(
     margin_px: int = 4,
     preserve_existing_seams: bool = True,
     replace_existing: bool = False,
+    trust_stored_result: bool = False,
 ) -> UVResult:
     """Create validated, packed UVs on ``obj`` using the Remi UV pipeline."""
     if obj is None or obj.type != "MESH":
@@ -543,6 +559,37 @@ def ensure_remi_uv(
     profile = get_profile(profile_id)
     initial_warnings = []
     if obj.data.uv_layers and not replace_existing:
+        active_uv = obj.data.uv_layers.active
+        stored_matches = bool(
+            trust_stored_result
+            and active_uv is not None
+            and obj.get("remi_uv_profile") == profile.identifier
+            and obj.get("remi_uv_overlap_pairs") == 0
+            and obj.get("remi_uv_loop_count") == len(obj.data.loops)
+            and obj.get("remi_uv_polygon_count") == len(obj.data.polygons)
+            and obj.get("remi_uv_layer_name") == active_uv.name
+            and obj.get("remi_uv_texture_size") == int(texture_size)
+            and obj.get("remi_uv_margin_px") == int(margin_px)
+        )
+        if stored_matches:
+            bounds = tuple(obj.get("remi_uv_bounds", (0.0, 0.0, 0.0, 0.0)))
+            stats = UVStats(
+                triangle_count=int(obj.get("remi_uv_triangle_count", 0)),
+                chart_count=int(obj.get("remi_uv_chart_count", 0)),
+                conformal_p95=float(obj.get("remi_uv_stretch_p95", 1.0)),
+                packing_occupancy=float(obj.get("remi_uv_occupancy", 0.0)),
+                uv_bounds=bounds,
+            )
+            return UVResult(
+                True,
+                created=False,
+                profile=profile.identifier,
+                classification=str(obj.get("remi_uv_classification", "")),
+                solver=str(obj.get("remi_uv_solver", "EXISTING")),
+                chart_count=stats.chart_count,
+                stats=stats,
+                warnings=["Reused the UV result already validated by this Remi session"],
+            )
         try:
             existing_analysis = analyze_mesh(obj.data)
             existing_seams = _seams_from_active_uv(obj.data)
@@ -559,6 +606,8 @@ def ensure_remi_uv(
                     existing_analysis.classification,
                     "EXISTING",
                     existing_stats,
+                    texture_size=texture_size,
+                    margin_px=margin_px,
                 )
                 return UVResult(
                     True,
@@ -610,6 +659,74 @@ def ensure_remi_uv(
                 uv_layer.name = "RemiUV"
         mesh.uv_layers.active = uv_layer
         uv_layer.active_render = True
+
+        mesh.calc_loop_triangles()
+        if (
+            len(mesh.loop_triangles) >= _LARGE_MESH_TRIANGLE_THRESHOLD
+            and not locked_artist_seams
+        ):
+            try:
+                attempts = unwrap_candidates(
+                    mesh,
+                    analysis,
+                    texture_size,
+                    margin_px,
+                )
+            except RuntimeError as error:
+                attempts = []
+                warnings.append(f"Native large-mesh UV path could not run: {error}")
+            if attempts:
+                best = max(
+                    attempts,
+                    key=lambda attempt: (
+                        attempt.occupancy,
+                        attempt.xatlas_utilization,
+                        -attempt.chart_count,
+                    ),
+                )
+                apply_packing_attempt(mesh, best)
+                seams = _seams_from_active_uv(mesh)
+                _apply_seams(mesh, seams, preserve_existing=False)
+                final_stats = evaluate_uv(mesh, analysis, seams, check_overlaps=False)
+                min_u, min_v, max_u, max_v = final_stats.uv_bounds
+                if (
+                    not final_stats.non_finite_uvs
+                    and not final_stats.collapsed_triangles
+                    and not final_stats.flipped_triangles
+                    and min_u >= -1.0e-5
+                    and min_v >= -1.0e-5
+                    and max_u <= 1.00001
+                    and max_v <= 1.00001
+                ):
+                    final_solver = f"XATLAS_LARGE_MESH+{best.name}"
+                    warnings.append(
+                        "Used the native large-mesh UV path to avoid repeated "
+                        "Python validation passes"
+                    )
+                    _store_summary(
+                        obj,
+                        profile.identifier,
+                        analysis.classification,
+                        final_solver,
+                        final_stats,
+                        seams,
+                        texture_size=texture_size,
+                        margin_px=margin_px,
+                    )
+                    print(
+                        f"Remi UV: '{obj.name}' used native large-mesh routing for "
+                        f"{final_stats.triangle_count:,} triangles"
+                    )
+                    return UVResult(
+                        True,
+                        created=True,
+                        profile=profile.identifier,
+                        classification=analysis.classification,
+                        solver=final_solver,
+                        chart_count=final_stats.chart_count,
+                        stats=final_stats,
+                        warnings=warnings,
+                    )
 
         seams = generate_seams(
             mesh,
@@ -1060,6 +1177,8 @@ def ensure_remi_uv(
             final_solver,
             final_stats,
             seams,
+            texture_size=texture_size,
+            margin_px=margin_px,
         )
         return UVResult(
             True,

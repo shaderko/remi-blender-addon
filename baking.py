@@ -22,7 +22,10 @@ def _ensure_uv(
     preserve_existing_seams: bool = True,
 ):
     """Ensure the target has UVs, optionally generating them automatically."""
-    if obj.data.uv_layers and (method != "REMI" or not auto_unwrap):
+    # Auto Unwrap means "create UVs when missing". A target coming directly
+    # from Remi's UV stage is already ready for baking; validating the whole
+    # atlas again can take minutes on scan-scale meshes and changes no output.
+    if obj.data.uv_layers:
         return True
     if not auto_unwrap:
         return False
@@ -73,31 +76,63 @@ def _scale_obj(obj: bpy.types.Object, factor: float):
     bpy.context.view_layer.update()
 
 
-def _make_world_space_copy(obj: bpy.types.Object, name: str) -> bpy.types.Object:
-    """Create a duplicate with all modifiers + transform applied (world-space)."""
-    dup = obj.copy()
-    dup.data = obj.data.copy()
-    # The baking source may need temporary material edits.  Give it private
-    # materials so the original object's shader setup is never changed.
-    dup.data.materials.clear()
-    for material in obj.data.materials:
-        dup.data.materials.append(material.copy() if material else None)
-    bpy.context.collection.objects.link(dup)
-    bpy.context.view_layer.objects.active = dup
-    dup.select_set(True)
+def _prepare_world_space_object(obj: bpy.types.Object, name: str) -> bpy.types.Object:
+    """Make a disposable object safe for baking and apply its world transform."""
+    source_materials = list(obj.data.materials)
+    obj.data.materials.clear()
+    for material in source_materials:
+        obj.data.materials.append(material.copy() if material else None)
+    bpy.ops.object.select_all(action="DESELECT")
+    bpy.context.view_layer.objects.active = obj
+    obj.select_set(True)
     # Apply modifiers (iterate in reverse since applying removes them)
-    for mod in list(dup.modifiers):
+    for mod in list(obj.modifiers):
         try:
             bpy.ops.object.modifier_apply(modifier=mod.name)
         except Exception:
             pass
     # Bake transform into vertices
     bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
-    dup.name = name
-    return dup
+    obj.name = name
+    return obj
 
 
-def _create_bake_images(name_prefix: str, size: int, channels: tuple[str, ...]) -> dict:
+def _make_world_space_copy(obj: bpy.types.Object, name: str) -> bpy.types.Object:
+    """Create a duplicate with all modifiers + transform applied (world-space)."""
+    dup = obj.copy()
+    dup.data = obj.data.copy()
+    bpy.context.collection.objects.link(dup)
+    try:
+        return _prepare_world_space_object(dup, name)
+    except Exception:
+        _remove_temp_object(dup)
+        raise
+
+
+def _remove_temp_object(obj: bpy.types.Object):
+    """Remove a disposable bake object and its private mesh/material data."""
+    if obj is None:
+        return
+    try:
+        mesh = obj.data if obj.type == "MESH" else None
+        materials = list(mesh.materials) if mesh else []
+        bpy.data.objects.remove(obj, do_unlink=True)
+    except ReferenceError:
+        return
+    if mesh and mesh.users == 0:
+        bpy.data.meshes.remove(mesh)
+    for material in materials:
+        if material and material.users == 0:
+            bpy.data.materials.remove(material)
+
+
+def _create_bake_images(
+    name_prefix: str,
+    size: int,
+    channels: tuple[str, ...],
+    *,
+    reuse_existing: bool = True,
+) -> dict:
     """Create or reuse blank image textures for the requested bake channels."""
     images = {}
     # Albedo is color-managed for display; data maps are Non-Color.
@@ -110,7 +145,7 @@ def _create_bake_images(name_prefix: str, size: int, channels: tuple[str, ...]) 
         if key not in channels:
             continue
         image_name = f"{name_prefix}{suffix}"
-        img = bpy.data.images.get(image_name)
+        img = bpy.data.images.get(image_name) if reuse_existing else None
         if img is None:
             img = bpy.data.images.new(name=image_name, width=size, height=size, alpha=True)
         elif img.size[0] != size or img.size[1] != size:
@@ -122,10 +157,16 @@ def _create_bake_images(name_prefix: str, size: int, channels: tuple[str, ...]) 
     return images
 
 
-def _build_bake_material(obj: bpy.types.Object, images: dict) -> dict:
-    """Create or update Remi's baked material and return image nodes by channel."""
-    material_name = f"{obj.name}_baked"
-    mat = bpy.data.materials.get(material_name)
+def _build_bake_material(
+    obj: bpy.types.Object,
+    images: dict,
+    name_prefix: str = "",
+    *,
+    reuse_existing: bool = True,
+):
+    """Create or update Remi's baked material and return it with its image nodes."""
+    material_name = f"{name_prefix or obj.name}_baked"
+    mat = bpy.data.materials.get(material_name) if reuse_existing else None
     if mat is None:
         mat = bpy.data.materials.new(name=material_name)
     mat.use_nodes = True
@@ -193,7 +234,7 @@ def _build_bake_material(obj: bpy.types.Object, images: dict) -> dict:
     else:
         obj.data.materials.append(mat)
 
-    return channels
+    return channels, mat
 
 
 def _prepare_albedo_emission(obj: bpy.types.Object):
@@ -246,17 +287,22 @@ def bake_textures(
     cage_extrusion: float = 0.1,
     max_ray_distance: float = 0.0,
     passes: tuple[str, ...] = ("diffuse", "roughness", "normal", "ao"),
+    consume_sources: bool = False,
+    reuse_outputs: bool = True,
 ) -> dict:
     """Bake albedo, roughness, normal, and AO maps from source to target.
 
     Source and target meshes must overlap in world space. This function
     accepts one source or a list of source meshes, creates world-space copies
-    for baking, then cleans them up.
+    for baking, then cleans them up. When ``consume_sources`` is true, the
+    supplied objects are already disposable checkpoint loads and are prepared
+    in place to avoid another high-poly mesh copy.
 
     Returns dict with keys 'success' and 'images' (list of created image names).
     """
     scene = bpy.context.scene
     prev_engine = scene.render.engine
+    prev_cycles_samples = scene.cycles.samples
 
     # Use final_name for image naming if provided
     img_base = final_name or target_result.name
@@ -295,19 +341,37 @@ def bake_textures(
     # 2. Create world-space copies of the originals for baking (sources).
     source_objects = source_original if isinstance(source_original, (list, tuple)) else [source_original]
     temp_sources = []
-    for index, source in enumerate(source_objects):
-        temp_source = _make_world_space_copy(source, f"_bake_source_tmp_{index}")
-        temp_sources.append(temp_source)
+    try:
+        for index, source in enumerate(source_objects):
+            if consume_sources:
+                temp_sources.append(source)
+                temp_source = _prepare_world_space_object(source, f"_bake_source_tmp_{index}")
+            else:
+                temp_source = _make_world_space_copy(source, f"_bake_source_tmp_{index}")
+                temp_sources.append(temp_source)
+    except Exception:
+        for temp_source in temp_sources:
+            _remove_temp_object(temp_source)
+        raise
 
     # 3. Create blank images (use final_name for clean naming)
-    images = _create_bake_images(img_base, texture_size, passes)
+    images = _create_bake_images(
+        img_base,
+        texture_size,
+        passes,
+        reuse_existing=reuse_outputs,
+    )
 
     # 4. Build material on target with image nodes
-    channels = _build_bake_material(target_result, images)
-    bake_mat = bpy.data.materials.get(f"{target_result.name}_baked")
+    channels, bake_mat = _build_bake_material(
+        target_result,
+        images,
+        img_base,
+        reuse_existing=reuse_outputs,
+    )
     if bake_mat is None:
         for temp_source in temp_sources:
-            bpy.data.objects.remove(temp_source, do_unlink=True)
+            _remove_temp_object(temp_source)
         return {"success": False, "images": [], "error": "Could not create baked material"}
 
     # 5. Set up scene for baking
@@ -379,8 +443,13 @@ def bake_textures(
             target_result.scale = _t_save
         bpy.ops.object.select_all(action="DESELECT")
         for temp_source in temp_sources:
-            if bpy.data.objects.get(temp_source.name) is not None:
-                bpy.data.objects.remove(temp_source, do_unlink=True)
+            try:
+                exists = temp_source.name in bpy.data.objects
+            except ReferenceError:
+                exists = False
+            if exists:
+                _remove_temp_object(temp_source)
+        scene.cycles.samples = prev_cycles_samples
         scene.render.engine = prev_engine
 
     if bake_error:

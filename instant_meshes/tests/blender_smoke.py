@@ -106,4 +106,44 @@ print(
     uv_result.stats.chart_count,
     uv_result.stats.flipped_triangles,
 )
+
+# The embedded Remi flow must replace the locked object on accept and keep its
+# disk-backed Back checkpoint. No source/result duplicate should remain visible.
+bpy.ops.object.select_all(action="SELECT")
+bpy.ops.object.delete(use_global=False)
+bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=3, radius=1.0)
+session_source = bpy.context.active_object
+session_source.name = "SessionRetopoSource"
+source_faces = len(session_source.data.polygons)
+
+from remi import session
+from remi.workflow.stages import stage_for_command
+
+session.runtime.begin(bpy.context, session_source)
+session.runtime.start_interactive_stage(
+    bpy.context,
+    stage_for_command("INSTANT_START"),
+)
+assert len(bpy.context.scene.objects) == 1
+wait_for_pipeline(runtime)
+assert runtime.preview is not None
+assert bpy.ops.remi.instant_meshes_session_accept() == {"FINISHED"}
+
+state = bpy.context.window_manager.remi_session
+session_output = session.runtime.object(bpy.context)
+assert state.active and not state.interactive
+assert state.current_step == "Retopology"
+assert session_output.name == "SessionRetopoSource"
+assert len(bpy.context.scene.objects) == 1
+assert len(session_output.data.polygons) > 0
+assert max(len(face.vertices) for face in session_output.data.polygons) == 4
+
+session.runtime.undo(bpy.context)
+restored = session.runtime.object(bpy.context)
+assert len(bpy.context.scene.objects) == 1
+assert restored.name == "SessionRetopoSource"
+assert len(restored.data.polygons) == source_faces
+session.runtime.cancel(bpy.context)
+print("REMI_INSTANT_MESHES_SESSION_OK", source_faces)
+
 remi.unregister()

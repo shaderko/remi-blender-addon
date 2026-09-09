@@ -131,7 +131,7 @@ def _strict_triangle_overlap(a, b, epsilon=_EPS) -> bool:
     return True
 
 
-def _overlap_pairs(triangles) -> list[tuple[int, int]]:
+def _overlap_pairs(triangles, max_pairs: int | None = None) -> list[tuple[int, int]]:
     if len(triangles) < 2:
         return []
     min_u = min(point[0] for triangle in triangles for point in triangle[0])
@@ -142,42 +142,79 @@ def _overlap_pairs(triangles) -> list[tuple[int, int]]:
     span_v = max(max_v - min_v, _EPS)
     grid_size = max(8, min(256, int(math.ceil(math.sqrt(len(triangles))))))
     buckets: dict[tuple[int, int], list[int]] = {}
+    cell_ranges = []
+    bounds = []
+    large_indices = []
 
     for index, (uvs, _vertices, _polygon) in enumerate(triangles):
         tri_min_u = min(point[0] for point in uvs)
         tri_max_u = max(point[0] for point in uvs)
         tri_min_v = min(point[1] for point in uvs)
         tri_max_v = max(point[1] for point in uvs)
+        bounds.append((tri_min_u, tri_max_u, tri_min_v, tri_max_v))
         x0 = max(0, min(grid_size - 1, int((tri_min_u - min_u) / span_u * grid_size)))
         x1 = max(0, min(grid_size - 1, int((tri_max_u - min_u) / span_u * grid_size)))
         y0 = max(0, min(grid_size - 1, int((tri_min_v - min_v) / span_v * grid_size)))
         y1 = max(0, min(grid_size - 1, int((tri_max_v - min_v) / span_v * grid_size)))
+        cell_ranges.append((x0, x1, y0, y1))
+        if (x1 - x0 + 1) * (y1 - y0 + 1) > 64:
+            # A long or tile-sized triangle must not be copied into thousands
+            # of buckets. Handle it separately with cheap AABB rejection.
+            large_indices.append(index)
+            continue
         for x in range(x0, x1 + 1):
             for y in range(y0, y1 + 1):
                 buckets.setdefault((x, y), []).append(index)
 
-    candidates = set()
-    for indices in buckets.values():
+    overlaps = []
+    for cell, indices in buckets.items():
         for offset, a in enumerate(indices):
             for b in indices[offset + 1:]:
-                candidates.add((min(a, b), max(a, b)))
+                # A pair can share several grid cells. Test it only in the
+                # first cell of the two AABB ranges' intersection instead of
+                # constructing a potentially quadratic global candidate set.
+                a_range = cell_ranges[a]
+                b_range = cell_ranges[b]
+                canonical_cell = (max(a_range[0], b_range[0]), max(a_range[2], b_range[2]))
+                if cell != canonical_cell:
+                    continue
+                uvs_a, vertices_a, polygon_a = triangles[a]
+                uvs_b, vertices_b, polygon_b = triangles[b]
+                if polygon_a == polygon_b or len(set(vertices_a).intersection(vertices_b)) >= 2:
+                    continue
+                if _strict_triangle_overlap(uvs_a, uvs_b):
+                    overlaps.append((a, b))
+                    if max_pairs is not None and len(overlaps) >= max_pairs:
+                        return overlaps
 
-    overlaps = []
-    for a, b in candidates:
-        uvs_a, vertices_a, polygon_a = triangles[a]
-        uvs_b, vertices_b, polygon_b = triangles[b]
-        if polygon_a == polygon_b or len(set(vertices_a).intersection(vertices_b)) >= 2:
-            continue
-        if _strict_triangle_overlap(uvs_a, uvs_b):
-            overlaps.append((a, b))
+    large_set = set(large_indices)
+    for a in large_indices:
+        a_min_u, a_max_u, a_min_v, a_max_v = bounds[a]
+        for b in range(len(triangles)):
+            if b == a or (b in large_set and b < a):
+                continue
+            b_min_u, b_max_u, b_min_v, b_max_v = bounds[b]
+            if (
+                min(a_max_u, b_max_u) - max(a_min_u, b_min_u) <= _EPS
+                or min(a_max_v, b_max_v) - max(a_min_v, b_min_v) <= _EPS
+            ):
+                continue
+            uvs_a, vertices_a, polygon_a = triangles[a]
+            uvs_b, vertices_b, polygon_b = triangles[b]
+            if polygon_a == polygon_b or len(set(vertices_a).intersection(vertices_b)) >= 2:
+                continue
+            if _strict_triangle_overlap(uvs_a, uvs_b):
+                overlaps.append((min(a, b), max(a, b)))
+                if max_pairs is not None and len(overlaps) >= max_pairs:
+                    return overlaps
     return overlaps
 
 
-def _overlap_count(triangles) -> int:
-    return len(_overlap_pairs(triangles))
+def _overlap_count(triangles, max_pairs: int | None = None) -> int:
+    return len(_overlap_pairs(triangles, max_pairs=max_pairs))
 
 
-def find_uv_overlaps(mesh) -> list[dict]:
+def find_uv_overlaps(mesh, max_pairs: int | None = None) -> list[dict]:
     """Return exact triangle pairs reported by the active UV validator.
 
     This intentionally exposes polygon, vertex, loop, and UV information so a
@@ -199,7 +236,7 @@ def find_uv_overlaps(mesh) -> list[dict]:
         loop_indices_by_triangle.append(loop_indices)
 
     details = []
-    for a, b in _overlap_pairs(triangles):
+    for a, b in _overlap_pairs(triangles, max_pairs=max_pairs):
         uvs_a, vertices_a, polygon_a = triangles[a]
         uvs_b, vertices_b, polygon_b = triangles[b]
         details.append({
@@ -292,13 +329,24 @@ def evaluate_uv(mesh, analysis, seams: set[int], check_overlaps: bool = True) ->
         bounds = (0.0, 0.0, 0.0, 0.0)
         occupancy = 0.0
 
+    overlap_limit = None
+    if len(triangles_2d) > 10_000:
+        # Downstream routing only needs to know whether the count exceeds its
+        # large-overlap threshold. Bounding the result prevents pathological
+        # stacked UVs from allocating an O(n^2) pair set.
+        overlap_limit = max(9, len(triangles_2d) // 1000 + 1)
+
     return UVStats(
         triangle_count=len(mesh.loop_triangles),
         chart_count=chart_count,
         collapsed_triangles=collapsed,
         degenerate_3d_triangles=degenerate_3d,
         flipped_triangles=flipped,
-        overlap_pairs=_overlap_count(triangles_2d) if check_overlaps else 0,
+        overlap_pairs=(
+            _overlap_count(triangles_2d, max_pairs=overlap_limit)
+            if check_overlaps and not collapsed and not non_finite
+            else 0
+        ),
         non_finite_uvs=non_finite,
         conformal_median=median(distortions) if distortions else math.inf,
         conformal_p95=_percentile(distortions, 0.95) if distortions else math.inf,

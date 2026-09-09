@@ -19,9 +19,9 @@ if str(ADDON_PARENT) not in sys.path:
 
 import remi
 from remi.features.bake import engine as baking
+from remi.features.repair.operators import _commit_surface_ring_patch
 from remi.integrations import meshlab
-from remi import operators
-from remi import session
+from remi.workflow import session
 from remi.features.retopology import autoremesher_service
 from remi.blender import mesh_exchange
 from remi.features.uv.engine import ensure_remi_uv
@@ -536,7 +536,7 @@ def test_manual_hole_repair_is_a_session_step():
     session.runtime.begin(bpy.context, source)
     state = bpy.context.window_manager.remi_session
     state.interactive = True
-    result, error, report = operators._commit_surface_ring_patch(
+    result, error, report = _commit_surface_ring_patch(
         bpy.context,
         source,
         settings,

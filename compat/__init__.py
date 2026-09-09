@@ -1,1 +1,1 @@
-"""Compatibility paths retained while the session workflow replaces legacy flows."""
+"""Legacy product behavior intentionally retained outside the primary workflow."""

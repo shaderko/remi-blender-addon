@@ -19,8 +19,9 @@ if str(ADDON_PARENT) not in sys.path:
 
 import remi
 from remi.features.remesh import geometry_nodes
+from remi.features.repair.manual import create_surface_ring_patch
 from remi.integrations import meshlab
-from remi import operators
+from remi.blender.mesh_objects import duplicate_object
 
 
 def _clean_scene():
@@ -102,7 +103,7 @@ def test_duplicate_isolation():
     source.select_set(True)
     other.select_set(True)
     before = len(bpy.context.scene.objects)
-    duplicate = operators._duplicate_object(source, "_copy")
+    duplicate = duplicate_object(source, "_copy")
     assert len(bpy.context.scene.objects) == before + 1
     assert duplicate.name.startswith("OnlyThisObject_copy")
     assert not source.select_get()
@@ -127,7 +128,7 @@ def test_targeted_patch_preserves_source():
         Vector((-0.5, 0.5, 1.0)),
     ]
     normals = [Vector((0.0, 0.0, 1.0)) for _point in ring]
-    result, error, report = operators._create_surface_ring_patch(
+    result, error, report = create_surface_ring_patch(
         source,
         settings,
         ring,

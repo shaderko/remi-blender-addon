@@ -16,22 +16,9 @@ from remi.app.application import (
     configure_application,
     get_application,
 )
-from remi import alpha_wrap as legacy_alpha_wrap
-from remi import autoremesher as legacy_autoremesher
-from remi import baking as legacy_baking
-from remi import gn_setup as legacy_geometry_nodes
-from remi import meshlab_wrapper as legacy_meshlab
-from remi.blender import mesh_exchange
-from remi.features.bake import engine as bake_engine
 from remi.features import create_default_registry
-from remi.features.remesh import geometry_nodes
 from remi.features.uv.feature import UVFeature
-from remi.infrastructure.blender import mesh_exchange as legacy_mesh_exchange
-from remi.integrations import alpha_wrap, autoremesher, meshlab
 from remi.features.settings import compose_scene_settings
-from remi.workflow.disk import SessionDiskService
-from remi.workflow.session import runtime as session_runtime
-from remi.workflow.session_runtime import runtime as legacy_session_runtime
 from remi.workflow.contracts import (
     FeatureAction,
     FeatureDescriptor,
@@ -148,6 +135,9 @@ for service_path in service_paths:
     assert not forbidden, (service_path, forbidden)
 
 canonical_paths = (
+    "app/application.py",
+    "app/registration.py",
+    "app/ui/main_panel.py",
     "blender/session_objects.py",
     "workflow/disk.py",
     "workflow/session.py",
@@ -160,11 +150,31 @@ canonical_paths = (
     "features/repair/manual.py",
     "features/repair/volume.py",
     "features/remesh/geometry_nodes.py",
+    "features/retopology/instant_meshes/runtime.py",
+    "features/uv/engine/blender_bridge.py",
     "features/bake/engine.py",
     "integrations/meshlab/worker.py",
 )
 for relative_path in canonical_paths:
     assert (ADDON_PARENT / "remi" / relative_path).is_file(), relative_path
+
+legacy_paths = (
+    "alpha_wrap.py",
+    "autoremesher.py",
+    "baking.py",
+    "edit_tools.py",
+    "feature_registration.py",
+    "gn_setup.py",
+    "infrastructure",
+    "meshlab_wrapper.py",
+    "operators.py",
+    "session.py",
+    "session_operators.py",
+    "settings.py",
+    "workflow/session_runtime.py",
+)
+for relative_path in legacy_paths:
+    assert not (ADDON_PARENT / "remi" / relative_path).exists(), relative_path
 
 for feature_path in feature_root.rglob("*.py"):
     tree = ast.parse(feature_path.read_text(encoding="utf-8"), filename=str(feature_path))
@@ -227,14 +237,6 @@ uv_result = uv_feature.execute(
 assert fake_uv.call == (fake_source, fake_settings, fake_candidate)
 assert uv_result.candidate is fake_candidate
 assert uv_result.report == {"injected": True}
-
-assert legacy_alpha_wrap.build_command is alpha_wrap.build_command
-assert legacy_autoremesher.build_command is autoremesher.build_command
-assert legacy_baking.bake_textures is bake_engine.bake_textures
-assert legacy_geometry_nodes.apply_remi_modifier is geometry_nodes.apply_remi_modifier
-assert legacy_meshlab.ensure_pymeshlab is meshlab.ensure_pymeshlab
-assert legacy_mesh_exchange.export_ply is mesh_exchange.export_ply
-assert legacy_session_runtime is session_runtime
 
 _assert_rejected(
     (_Feature("REPAIR", ("ONE",)), _Feature("REPAIR", ("TWO",))),

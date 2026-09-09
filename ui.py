@@ -5,6 +5,7 @@ from bpy.types import Panel
 
 from .application import get_application
 from .features.base import session_command as _command
+from .selection_tools.panel import Remi_PT_EditToolsPanel
 from .workflow.contracts import FeatureUIContext
 
 
@@ -114,38 +115,8 @@ class Remi_PT_MainPanel(Panel):
             _draw_source(layout, context)
 
 
-class Remi_PT_EditToolsPanel(Panel):
-    """Edit Mode topology-selection tools."""
-
-    bl_label = "Remi Selection Tools"
-    bl_idname = "Remi_PT_EditToolsPanel"
-    bl_space_type = "VIEW_3D"
-    bl_region_type = "UI"
-    bl_category = "Remi"
-    bl_context = "mesh_edit"
-
-    def draw(self, context):
-        layout = self.layout
-        box = layout.box()
-        box.label(text="Fused Parts", icon="AUTOMERGE_ON")
-        box.label(text="Select the connected region first")
-        col = box.column(align=True)
-        col.operator("remi.smart_select_object", icon="RESTRICT_SELECT_OFF")
-        col.operator("remi.detect_bridge", icon="MOD_EDGESPLIT")
-        col.operator("remi.select_split_part", icon="RESTRICT_SELECT_OFF")
-        col.operator("remi.split_by_bridge", icon="MOD_BOOLEAN")
-
-        box = layout.box()
-        box.label(text="Double Shell", icon="MOD_SOLIDIFY")
-        box.label(text="Scans the entire visible mesh")
-        col = box.column(align=True)
-        col.operator("remi.select_inner_shell", icon="RESTRICT_SELECT_OFF")
-        col.operator("remi.remove_inner_shell", icon="TRASH")
-
-
 classes = [
     Remi_PT_MainPanel,
-    Remi_PT_EditToolsPanel,
 ]
 
 

@@ -29,6 +29,9 @@ def stage_result(raw_result) -> StageResult:
 class FeatureDefaults:
     """Defaults shared by features while each feature owns its orchestration."""
 
+    def scene_settings(self):
+        return {}
+
     def blender_classes(self) -> tuple[type, ...]:
         return ()
 

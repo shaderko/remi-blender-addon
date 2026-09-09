@@ -15,6 +15,7 @@ from remi.application import (
     get_application,
 )
 from remi.features import create_default_registry
+from remi.settings import compose_scene_settings
 from remi.workflow.contracts import FeatureAction, FeatureDescriptor
 from remi.workflow.registry import FeatureRegistry
 
@@ -96,6 +97,13 @@ assert tuple(
     "remi.bake_normal",
     "remi.bake_ao",
 )
+scene_settings = compose_scene_settings(default_registry)
+assert len(scene_settings) == 58
+assert "hole_repair_method" in scene_settings
+assert "voxel_size" in scene_settings
+assert "ar_target_quads" in scene_settings
+assert "bake_uv_profile" in scene_settings
+assert "bake_texture_size" in scene_settings
 
 _assert_rejected(
     (_Feature("REPAIR", ("ONE",)), _Feature("REPAIR", ("TWO",))),

@@ -20,6 +20,11 @@ class UVFeature(FeatureDefaults):
         actions=(FeatureAction("UV", "UV", "Generate and inspect UVs"),),
     )
 
+    def scene_settings(self):
+        from .settings import SCENE_SETTINGS
+
+        return SCENE_SETTINGS
+
     def blender_classes(self) -> tuple[type, ...]:
         from .operators import Remi_OT_GenerateUV
 

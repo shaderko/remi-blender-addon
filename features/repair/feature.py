@@ -32,6 +32,11 @@ class RepairFeature(FeatureDefaults):
         ),
     )
 
+    def scene_settings(self):
+        from .settings import SCENE_SETTINGS
+
+        return SCENE_SETTINGS
+
     def blender_classes(self) -> tuple[type, ...]:
         from .operators import (
             Remi_OT_BuildAlphaWrap,

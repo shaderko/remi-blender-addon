@@ -23,6 +23,11 @@ class RemeshFeature(FeatureDefaults):
         ),
     )
 
+    def scene_settings(self):
+        from .settings import SCENE_SETTINGS
+
+        return SCENE_SETTINGS
+
     def blender_classes(self) -> tuple[type, ...]:
         from .operators import Remi_OT_ApplyRemesh, Remi_OT_Decimate, Remi_OT_SDFRemesh
 

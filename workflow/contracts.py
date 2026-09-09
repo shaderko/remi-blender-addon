@@ -56,6 +56,9 @@ class StageResult:
 class WorkflowFeature(Protocol):
     descriptor: FeatureDescriptor
 
+    def scene_settings(self) -> Mapping[str, Any]:
+        """Return Blender scene properties owned by this feature."""
+
     def blender_classes(self) -> tuple[type, ...]:
         """Return Blender types registered for this feature."""
 

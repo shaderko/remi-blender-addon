@@ -21,15 +21,20 @@ workflow action.
 | Bake images, materials, or Cycles execution | `features/bake/engine.py` |
 | Back, Redo, Reset, checkpoint promotion | `workflow/history.py` |
 | Session action and interactive transactions | `workflow/session.py` |
+| Temporary files and crash cleanup | `workflow/disk.py` |
 | Blender object copying/loading/cleanup | `blender/session_objects.py` |
 | Mesh file import/export | `blender/mesh_exchange.py` |
-| Temporary files and crash cleanup | `storage/disk.py` |
 | External programs and optional dependencies | `integrations/<tool>/` |
-| Generic panel shell | `ui/` |
+| Application assembly and registration | `app/` |
+| Generic panel shell | `app/ui/` |
+| Interactive Instant Meshes implementation | `features/retopology/instant_meshes/` |
+| UV algorithms and native xatlas bridge | `features/uv/engine/` |
+| Bridge and inner-shell edit tools | `features/edit_tools/` |
 | Legacy operator compatibility only | `compat/` |
 
-The small modules at the repository root are entrypoints or compatibility
-facades. New implementation code should not be added to them.
+The repository root is the Blender extension boundary. Keep Python
+implementation inside an owner package; root `__init__.py` should only delegate
+registration to `app/`.
 
 ## Feature contract
 
@@ -63,13 +68,13 @@ Interactive actions use the same boundary and must finish through
 5. Add architecture and Blender regressions for the action, failure cleanup,
    object count, and recovery behavior.
 
-## Compatibility policy
+## Stable external contracts
 
-Existing root imports and historical operator IDs may be used by Blender files
-or scripts in the wild. Keep a thin forwarding facade when moving one of those
-symbols. Active feature code must import the canonical package, not the facade.
-Remove a compatibility path only as an intentional release decision with a
-documented migration.
+Preserve published Blender operator IDs, scene properties, session recovery,
+and saved-file behavior when moving implementation. Internal Python module
+paths are not a public API and should not be preserved with root forwarding
+modules. Put intentionally retained legacy product behavior under `compat/`
+and test the user-visible contract through its canonical owner.
 
 ## Validation
 

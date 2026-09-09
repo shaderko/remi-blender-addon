@@ -7,7 +7,7 @@ runtime, or a central action switch.
 
 ## Composition
 
-`application.py` is the composition root. Add-on registration creates one
+`app/application.py` is the composition root. Add-on registration creates one
 `RemiApplication` containing:
 
 - the singleton `RemiSessionRuntime` transaction engine;
@@ -56,10 +56,9 @@ registration / main UI / Blender command adapters
        Blender adapters / external integrations
 ```
 
-Feature services may depend on lower-level mechanisms such as
-`blender`, `uv_mapping`, `instant_meshes`, feature-owned engines, or clients
-under `integrations`. They must not import root-level compatibility facades,
-the main panel, or the session runtime. Manual Repair is the one adapter
+Feature services may depend on lower-level mechanisms under their own feature,
+reusable `blender` adapters, or clients under `integrations`. They must not
+import the main panel or the session runtime. Manual Repair is the one adapter
 that calls back into the session after its viewport gesture has collected input;
 the geometry service itself still executes inside a normal session transaction.
 
@@ -74,6 +73,12 @@ the geometry service itself still executes inside a normal session transaction.
   mechanism used by Remesh and volume-guided Repair.
 - `features/bake/engine.py`: Blender image, material, source-preparation, and
   bake execution mechanics behind the Bake service.
+- `features/uv/engine`: UV profiles, mesh analysis, charting, packing, native
+  xatlas integration, validation, and Blender orchestration.
+- `features/retopology/instant_meshes`: interactive viewport workspace and its
+  bundled native field solver.
+- `features/edit_tools`: edit-mode bridge and double-shell tools outside the
+  main processing sequence.
 - `features/repair/boundary.py`, `alpha_wrap.py`, `volume.py`, `guided.py`, and
   `manual.py`: focused strategies and shared patch composition behind the
   repair use case.
@@ -84,22 +89,20 @@ the geometry service itself still executes inside a normal session transaction.
 - `blender/session_objects.py`: copying, checkpoint loading, object replacement,
   selection, and orphan data-block cleanup used by the session runtime.
 - `workflow/session_operators.py`: Blender commands and timer adaptation only.
-- `storage/disk.py`: all session checkpoint and scratch-workspace disk
+- `workflow/disk.py`: all session checkpoint and scratch-workspace disk
   lifecycle, including crash-leftover cleanup on add-on start.
-- `ui/main_panel.py`: generic session shell and feature-registry rendering.
-- `ui/source_view.py`, `session_header.py`, and `history_controls.py`: focused
+- `app/ui/main_panel.py`: generic session shell and feature-registry rendering.
+- `app/ui/source_view.py`, `session_header.py`, and `history_controls.py`: focused
   pieces of the session chrome, separate from feature-owned controls.
+- `app/application.py` and `app/registration.py`: explicit dependency
+  composition and Blender lifecycle order.
 - `blender`: reusable object lifecycle and OBJ/PLY/GLB adapters.
 - `integrations`: CGAL Alpha Wrap, AutoRemesher, and optional PyMeshLab clients;
   the MeshLab subprocess worker lives with its client rather than at add-on root.
-- `selection_tools`: edit-mode bridge and double-shell tools outside the main
-  mesh-processing workflow.
 - `compat`: operator IDs retained for older scripts and Blender files. The old
   multi-object full pipeline lives here and is not part of the primary UI.
-- root `operators.py`, `session.py`, `session_operators.py`, `settings.py`,
-  `feature_registration.py`, `edit_tools.py`, `baking.py`, `gn_setup.py`, and
-  external-tool wrapper modules: import-compatible facades, not active
-  architecture owners.
+- repository root: Blender entrypoint, extension manifest, and project metadata
+  only; internal Python import paths are not preserved through forwarding files.
 
 ## Atomic actions
 
@@ -136,7 +139,7 @@ Repair, so applying one patch does not unexpectedly advance the user to Remesh.
 
 ## Disk ownership and crash recovery
 
-`storage.SessionDiskService` is the only owner of checkpoint files and temporary
+`workflow.disk.SessionDiskService` is the only owner of checkpoint files and temporary
 operation directories. It writes checkpoints atomically with manifests that
 identify the exact mesh, parent, materials, and session. Finish, Cancel, failed
 startup, and unregister close the service and remove its directory.

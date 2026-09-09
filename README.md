@@ -367,7 +367,7 @@ fixtures, as well as deterministic output and Edit Mode state restoration:
 ```bash
 /Applications/Blender.app/Contents/MacOS/Blender \
   --background --factory-startup \
-  --python uv_mapping/tests/blender_uv_regression.py
+  --python tests/blender_uv_regression.py
 ```
 
 The Instant Meshes integration smoke test also accepts a generated quad mesh
@@ -376,7 +376,7 @@ and immediately validates it through Remi UV:
 ```bash
 /Applications/Blender.app/Contents/MacOS/Blender \
   --background --factory-startup \
-  --python instant_meshes/tests/blender_smoke.py
+  --python tests/blender_instant_meshes_smoke.py
 ```
 
 ## Baking notes
@@ -395,33 +395,28 @@ and immediately validates it through Remi UV:
   describes the transaction and dependency rules in detail.
 - [`features/`](features/) contains the five injected workflow features. Each
   feature owns its descriptor, UI, settings, Blender adapters, and use-case
-  service. Repair strategies, Remesh Geometry Nodes, and the Bake engine live
-  beside their owning feature.
+  service. Repair strategies, Remesh Geometry Nodes, the Retopology-native
+  Instant Meshes workspace, the complete UV engine, and the Bake engine all
+  live beside their owning feature. Auxiliary edit tools live in
+  `features/edit_tools/`.
+- [`app/`](app/) is the extension composition boundary: dependency assembly,
+  registration lifecycle, and the shared workflow panel shell.
 - [`workflow/`](workflow/) contains the stable single-mesh session coordinator,
-  bounded history transitions, observable state, feature contracts, and the
-  feature registry. It does not know how Repair, UV, or Bake algorithms work.
-- [`storage/`](storage/) exclusively owns checkpoints, scratch workspaces, and
-  abandoned-session cleanup.
+  bounded history transitions, observable state, disk lifecycle, feature
+  contracts, and the feature registry. It does not know how Repair, UV, or
+  Bake algorithms work.
 - [`blender/`](blender/) owns Blender object/data-block mechanics and mesh file
   exchange used by the workflow.
 - [`integrations/`](integrations/) contains Alpha Wrap, AutoRemesher, and
-  PyMeshLab clients, including the external decimation worker.
-- [`ui/`](ui/) is the generic session shell. Feature-specific controls remain
-  in `features/<name>/feature.py`.
-- [`uv_mapping/`](uv_mapping/) contains Remi UV profiles, mesh analysis,
-  chart/seam generation, Blender solver orchestration, xatlas candidate search,
-  and UV validation.
-- [`uv_mapping/native/`](uv_mapping/native/) contains the small pybind11 bridge
-  and vendored two-file xatlas source used for chart generation and packing.
-- [`instant_meshes/`](instant_meshes/) contains the isolated Blender-facing
-  Interactive Instant Meshes implementation.
-- [`instant_meshes/native/`](instant_meshes/native/) contains the headless C++
-  field solver, pybind11 bridge, build files, and retained upstream source.
+  PyMeshLab clients, including the Alpha Wrap helper source and external
+  decimation worker.
+- [`compat/`](compat/) contains only intentionally retained legacy product
+  behavior. It is not a general home for forwarding imports.
 - The standalone Instant Meshes GUI, NanoGUI, GLFW, OpenGL renderer, and CLI are
   intentionally not included because Blender supplies those responsibilities.
-- [`compat/`](compat/) and the small forwarding modules at repository root keep
-  older imports and operator IDs working; new implementation code belongs in a
-  canonical package above.
+- The repository root is deliberately limited to Blender's `__init__.py` and
+  manifest plus project metadata. New Python implementation belongs to one of
+  the owners above.
 
 ## Credits
 

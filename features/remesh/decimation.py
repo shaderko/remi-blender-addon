@@ -215,3 +215,10 @@ def create_candidate(obj, settings, disk=None):
         candidate.name = obj.name + settings.output_name_suffix
         candidate.pop("_remi_session_id", None)
         return candidate, "", results
+
+
+class DecimationService:
+    """MeshLab-backed reduction use case."""
+
+    def decimate(self, candidate, settings, *, disk=None):
+        return create_candidate(candidate, settings, disk=disk)

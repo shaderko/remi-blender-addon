@@ -73,3 +73,22 @@ def create_candidate(
         remove_mesh_object(result)
         raise
     return result, "", report
+
+
+class RemeshService:
+    """Coordinate remeshing and optional face reduction for one feature."""
+
+    def __init__(self, decimation):
+        self._decimation = decimation
+
+    def remesh(self, source, settings, *, candidate=None, disk=None):
+        return create_candidate(
+            source,
+            settings,
+            apply_result=True,
+            candidate=candidate,
+            disk=disk,
+        )
+
+    def decimate(self, candidate, settings, *, disk=None):
+        return self._decimation.decimate(candidate, settings, disk=disk)

@@ -23,6 +23,9 @@ class RemeshFeature(FeatureDefaults):
         ),
     )
 
+    def __init__(self, service):
+        self._service = service
+
     def scene_settings(self):
         from .settings import SCENE_SETTINGS
 
@@ -81,22 +84,17 @@ class RemeshFeature(FeatureDefaults):
     ) -> StageResult:
         settings = context.blender_context.scene.remi_settings
         if action.id == "REMESH":
-            from .service import create_candidate
-
             return stage_result(
-                create_candidate(
+                self._service.remesh(
                     context.source,
                     settings,
-                    apply_result=True,
                     candidate=context.working_copy,
                     disk=context.disk,
                 )
             )
         if action.id == "DECIMATE":
-            from .decimation import create_candidate
-
             return stage_result(
-                create_candidate(
+                self._service.decimate(
                     context.working_copy,
                     settings,
                     disk=context.disk,

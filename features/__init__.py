@@ -2,7 +2,9 @@
 
 from .bake.feature import BakeFeature
 from .bake.service import BakeService
+from .remesh.decimation import DecimationService
 from .remesh.feature import RemeshFeature
+from .remesh.service import RemeshService
 from .repair.feature import RepairFeature
 from .repair.service import RepairService
 from .retopology.feature import RetopologyFeature
@@ -16,7 +18,7 @@ def create_default_registry() -> FeatureRegistry:
     return FeatureRegistry(
         (
             RepairFeature(RepairService()),
-            RemeshFeature(),
+            RemeshFeature(RemeshService(DecimationService())),
             RetopologyFeature(),
             UVFeature(UVService()),
             BakeFeature(BakeService()),

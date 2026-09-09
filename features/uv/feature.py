@@ -49,10 +49,10 @@ class UVFeature(FeatureDefaults):
         context: FeatureExecutionContext,
     ) -> StageResult:
         if action.id == "UV":
-            from ...operators import _create_uv_candidate
+            from .service import create_candidate
 
             return stage_result(
-                _create_uv_candidate(
+                create_candidate(
                     context.source,
                     context.blender_context.scene.remi_settings,
                     candidate=context.working_copy,

@@ -105,10 +105,10 @@ class BakeFeature(FeatureDefaults):
         passes = self._PASSES.get(action.id)
         if passes is None:
             return super().execute(action, context)
-        from ...operators import _create_bake_candidate
+        from .service import create_candidate
 
         return stage_result(
-            _create_bake_candidate(
+            create_candidate(
                 context.source_checkpoint,
                 context.source,
                 context.blender_context.scene.remi_settings,

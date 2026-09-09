@@ -1821,70 +1821,8 @@ class Remi_OT_AutoRemesher(Operator):
         return {"FINISHED"}
 
 
-def _create_uv_candidate(source, settings, suffix="_uv", candidate=None):
-    """Generate validated UVs on a separate candidate object."""
-    candidate = candidate or _duplicate_object(source, suffix)
-    try:
-        result = ensure_remi_uv(
-            candidate,
-            profile_id=settings.bake_uv_profile,
-            texture_size=settings.bake_texture_size,
-            margin_px=settings.bake_uv_margin_px,
-            preserve_existing_seams=settings.bake_uv_preserve_seams,
-            replace_existing=False,
-            trust_stored_result=True,
-        )
-    except Exception:
-        _remove_mesh_object(candidate)
-        raise
-    if not result.success:
-        _remove_mesh_object(candidate)
-        return None, result.error or "Remi UV generation failed", {}
-    return candidate, "", {
-        "chart_count": result.chart_count,
-        "stats": result.stats,
-        "warnings": list(result.warnings),
-    }
-
-
-def _create_bake_candidate(
-    source_checkpoint,
-    current,
-    settings,
-    *,
-    passes=("diffuse", "roughness", "normal", "ao"),
-    name_prefix="",
-    suffix="_baked",
-    candidate=None,
-):
-    """Bake from a disposable source checkpoint onto an isolated candidate."""
-    candidate = candidate or _duplicate_object(current, suffix)
-    try:
-        result = baking.bake_textures(
-            source_checkpoint,
-            candidate,
-            texture_size=settings.bake_texture_size,
-            final_name=name_prefix or current.name,
-            uv_method=settings.bake_uv_method,
-            uv_island_margin=settings.bake_uv_island_margin,
-            uv_profile=settings.bake_uv_profile,
-            uv_margin_px=settings.bake_uv_margin_px,
-            uv_preserve_seams=settings.bake_uv_preserve_seams,
-            auto_unwrap=settings.bake_auto_unwrap,
-            recalc_normals=settings.bake_recalc_normals,
-            cage_extrusion=settings.bake_cage_extrusion,
-            max_ray_distance=settings.bake_max_ray_distance,
-            passes=passes,
-            consume_sources=True,
-            reuse_outputs=False,
-        )
-    except Exception:
-        _remove_mesh_object(candidate)
-        raise
-    if not result["success"]:
-        _remove_mesh_object(candidate)
-        return None, result.get("error", "Baking failed"), result
-    return candidate, "", result
+from .features.bake.service import create_candidate as _create_bake_candidate
+from .features.uv.service import create_candidate as _create_uv_candidate
 
 
 class Remi_OT_GenerateUV(Operator):

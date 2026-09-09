@@ -41,12 +41,13 @@ def resolve_executable(configured_path: str = "") -> Path:
         candidates.append(Path(os.environ[ENV_EXECUTABLE].strip()).expanduser())
 
     addon_dir = Path(__file__).resolve().parents[2]
+    helper_dir = Path(__file__).resolve().parent / "helper"
     system = platform.system().lower()
     machine = platform.machine().lower()
     candidates.extend([
         addon_dir / "bin" / f"{system}-{machine}" / _executable_name(),
-        addon_dir / "alpha_wrap_helper" / "build" / _executable_name(),
-        addon_dir / "alpha_wrap_helper" / "build" / "Release" / _executable_name(),
+        helper_dir / "build" / _executable_name(),
+        helper_dir / "build" / "Release" / _executable_name(),
     ])
     from_path = shutil.which(_executable_name())
     if from_path:
@@ -69,7 +70,7 @@ def validate_executable(executable: Path) -> str:
 
 
 def build_helper() -> dict:
-    source_dir = Path(__file__).resolve().parents[2] / "alpha_wrap_helper"
+    source_dir = Path(__file__).resolve().parent / "helper"
     build_dir = source_dir / "build"
     cmake = _find_cmake()
     if not cmake:

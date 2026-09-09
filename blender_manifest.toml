@@ -34,5 +34,5 @@ paths_exclude_pattern = [
   "/weppy-project-sync/",
   "/features/retopology/instant_meshes/native/",
   "/features/uv/engine/native/",
-  "/alpha_wrap_helper/build/",
+  "/integrations/alpha_wrap/helper/build/",
 ]

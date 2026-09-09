@@ -3,7 +3,7 @@ __pycache__/
 *.zip
 .DS_Store
 dist/
-alpha_wrap_helper/build/
+integrations/alpha_wrap/helper/build/
 features/retopology/instant_meshes/native/build/
 uv_mapping/native/build/
 features/retopology/instant_meshes/native/dist/

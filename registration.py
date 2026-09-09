@@ -1,11 +1,12 @@
 """Explicit add-on registration order and lifecycle."""
 
 from . import edit_tools
+from . import feature_registration
 from . import instant_meshes
-from . import operators
 from . import session
 from . import settings
 from . import ui
+from .compat import registration as compatibility_registration
 from .application import (
     clear_application,
     configure_application,
@@ -16,7 +17,8 @@ from .application import (
 MODULES = (
     settings,
     instant_meshes,
-    operators,
+    feature_registration,
+    compatibility_registration,
     session,
     ui,
     edit_tools,

@@ -29,6 +29,9 @@ def stage_result(raw_result) -> StageResult:
 class FeatureDefaults:
     """Defaults shared by features while each feature owns its orchestration."""
 
+    def blender_classes(self) -> tuple[type, ...]:
+        return ()
+
     def draw(self, layout: Any, context: FeatureUIContext) -> None:
         # Feature-owned controls are moved behind this seam in a later slice.
         return None

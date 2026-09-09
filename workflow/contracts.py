@@ -56,6 +56,9 @@ class StageResult:
 class WorkflowFeature(Protocol):
     descriptor: FeatureDescriptor
 
+    def blender_classes(self) -> tuple[type, ...]:
+        """Return Blender types registered for this feature."""
+
     def draw(self, layout: Any, context: FeatureUIContext) -> None:
         """Draw controls owned by this feature."""
 

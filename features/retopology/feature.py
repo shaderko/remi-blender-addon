@@ -33,6 +33,11 @@ class RetopologyFeature(FeatureDefaults):
         ),
     )
 
+    def blender_classes(self) -> tuple[type, ...]:
+        from .operators import Remi_OT_AutoRemesher
+
+        return (Remi_OT_AutoRemesher,)
+
     def draw(self, layout, context) -> None:
         blender_context = context.blender_context
         state = context.state

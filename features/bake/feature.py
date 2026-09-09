@@ -55,6 +55,23 @@ class BakeFeature(FeatureDefaults):
         "BAKE_AO": ("ao",),
     }
 
+    def blender_classes(self) -> tuple[type, ...]:
+        from .operators import (
+            Remi_OT_BakeAO,
+            Remi_OT_BakeAllMaps,
+            Remi_OT_BakeDiffuse,
+            Remi_OT_BakeNormal,
+            Remi_OT_BakeRoughness,
+        )
+
+        return (
+            Remi_OT_BakeAllMaps,
+            Remi_OT_BakeDiffuse,
+            Remi_OT_BakeRoughness,
+            Remi_OT_BakeNormal,
+            Remi_OT_BakeAO,
+        )
+
     def draw(self, layout, context) -> None:
         settings = context.blender_context.scene.remi_settings
         layout.label(text="Bake", icon="RENDER_STILL")

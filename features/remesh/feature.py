@@ -23,6 +23,11 @@ class RemeshFeature(FeatureDefaults):
         ),
     )
 
+    def blender_classes(self) -> tuple[type, ...]:
+        from .operators import Remi_OT_ApplyRemesh, Remi_OT_Decimate, Remi_OT_SDFRemesh
+
+        return Remi_OT_SDFRemesh, Remi_OT_ApplyRemesh, Remi_OT_Decimate
+
     def draw(self, layout, context) -> None:
         settings = context.blender_context.scene.remi_settings
         layout.label(text="Remesh", icon="MOD_NORMALEDIT")

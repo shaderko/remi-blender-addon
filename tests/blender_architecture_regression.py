@@ -77,6 +77,25 @@ assert default_registry.action_ids == (
 )
 assert default_registry.require_action("REPAIR").next_feature == "REMESH"
 assert default_registry.require_action("MANUAL_REPAIR").next_feature == "REPAIR"
+assert tuple(
+    blender_class.bl_idname
+    for feature in default_registry
+    for blender_class in feature.blender_classes()
+) == (
+    "remi.draw_hole_patch",
+    "remi.repair_holes",
+    "remi.build_alpha_wrap",
+    "remi.sdf_remesh",
+    "remi.apply_remesh",
+    "remi.decimate",
+    "remi.autoremesher",
+    "remi.generate_uv",
+    "remi.bake_all_maps",
+    "remi.bake_diffuse",
+    "remi.bake_roughness",
+    "remi.bake_normal",
+    "remi.bake_ao",
+)
 
 _assert_rejected(
     (_Feature("REPAIR", ("ONE",)), _Feature("REPAIR", ("TWO",))),

@@ -20,6 +20,11 @@ class UVFeature(FeatureDefaults):
         actions=(FeatureAction("UV", "UV", "Generate and inspect UVs"),),
     )
 
+    def blender_classes(self) -> tuple[type, ...]:
+        from .operators import Remi_OT_GenerateUV
+
+        return (Remi_OT_GenerateUV,)
+
     def draw(self, layout, context) -> None:
         settings = context.blender_context.scene.remi_settings
         layout.label(text="UV", icon="UV")

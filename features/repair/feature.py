@@ -32,6 +32,15 @@ class RepairFeature(FeatureDefaults):
         ),
     )
 
+    def blender_classes(self) -> tuple[type, ...]:
+        from .operators import (
+            Remi_OT_BuildAlphaWrap,
+            Remi_OT_DrawHolePatch,
+            Remi_OT_RepairHoles,
+        )
+
+        return Remi_OT_DrawHolePatch, Remi_OT_RepairHoles, Remi_OT_BuildAlphaWrap
+
     def draw(self, layout, context) -> None:
         settings = context.blender_context.scene.remi_settings
         state = context.state

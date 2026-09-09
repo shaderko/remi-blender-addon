@@ -117,12 +117,12 @@ session_source.name = "SessionRetopoSource"
 source_faces = len(session_source.data.polygons)
 
 from remi import session
-from remi.workflow.stages import stage_for_command
+from remi.application import get_application
 
 session.runtime.begin(bpy.context, session_source)
-session.runtime.start_interactive_stage(
+session.runtime.start_interactive_action(
     bpy.context,
-    stage_for_command("INSTANT_START"),
+    get_application().features.require_action("INSTANT_START"),
 )
 assert len(bpy.context.scene.objects) == 1
 wait_for_pipeline(runtime)

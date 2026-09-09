@@ -33,3 +33,13 @@ def get_application() -> RemiApplication:
 def clear_application():
     global _application
     _application = None
+
+
+def create_default_application() -> RemiApplication:
+    """Compose built-in dependencies at the add-on boundary."""
+    from .features import create_default_registry
+    from .session import runtime
+
+    features = create_default_registry()
+    runtime.configure_features(features)
+    return RemiApplication(session=runtime, features=features)

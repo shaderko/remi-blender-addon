@@ -6,6 +6,11 @@ from . import operators
 from . import session
 from . import settings
 from . import ui
+from .application import (
+    clear_application,
+    configure_application,
+    create_default_application,
+)
 
 
 MODULES = (
@@ -19,12 +24,27 @@ MODULES = (
 
 
 def register():
-    for module in MODULES:
-        module.register()
+    application = create_default_application()
+    configure_application(application)
+    registered = []
+    try:
+        for module in MODULES:
+            module.register()
+            registered.append(module)
+    except Exception:
+        for module in reversed(registered):
+            module.unregister()
+        application.session.configure_features(None)
+        clear_application()
+        raise
     print("Remi: Registered")
 
 
 def unregister():
-    for module in reversed(MODULES):
-        module.unregister()
+    try:
+        for module in reversed(MODULES):
+            module.unregister()
+    finally:
+        session.runtime.configure_features(None)
+        clear_application()
     print("Remi: Unregistered")

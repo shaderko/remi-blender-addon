@@ -22,8 +22,60 @@ from remi import baking
 from remi import operators
 from remi import session
 from remi import ui
+from remi.application import get_application
+from remi.workflow.contracts import (
+    FeatureAction,
+    FeatureDescriptor,
+    FeatureExecutionContext,
+    StageResult,
+)
 from remi.workflow.disk_service import SessionDiskService
-from remi.workflow.stages import stage_for_command
+from remi.workflow.registry import RegisteredAction
+
+
+def action_for_command(command):
+    return get_application().features.require_action(command)
+
+
+class _StageFeatureAdapter:
+    """Keep transaction tests focused while exercising the injected boundary."""
+
+    def __init__(self, stage):
+        self.stage = stage
+        self.action = FeatureAction(
+            id="TEST_ACTION",
+            name=stage.label,
+            requires_source_checkpoint=stage.requires_source_checkpoint,
+            next_feature=stage.next_stage,
+        )
+        self.descriptor = FeatureDescriptor(
+            id="TEST_FEATURE",
+            name="Test Feature",
+            icon="NONE",
+            next_feature=stage.next_stage,
+            actions=(self.action,),
+        )
+
+    def execute(
+        self,
+        _action: FeatureAction,
+        context: FeatureExecutionContext,
+    ) -> StageResult:
+        candidate, error, report = self.stage.build(
+            context.blender_context,
+            context.source,
+            context.working_copy,
+            source_checkpoint=context.source_checkpoint,
+            disk=context.disk,
+        )
+        if error:
+            raise RuntimeError(error)
+        return StageResult(candidate, report)
+
+
+def action_for_stage(stage):
+    feature = _StageFeatureAdapter(stage)
+    return RegisteredAction(feature, feature.action)
 
 
 class _UILayoutRecorder:
@@ -215,7 +267,7 @@ def test_history_and_finish():
     assert len(bpy.context.scene.objects) == 1
     _assert_locked(bpy.context, source)
 
-    session.runtime.execute_stage(bpy.context, _TriangulateStage())
+    session.runtime.execute_action(bpy.context, action_for_stage(_TriangulateStage()))
     current = session.runtime.object(bpy.context)
     assert current.name == "LockedScan"
     assert len(bpy.context.scene.objects) == 1
@@ -272,9 +324,9 @@ def test_cancel_restores_exact_source():
         candidate.modifiers.clear()
         candidate.data.materials.clear()
 
-    session.runtime.execute_stage(
+    session.runtime.execute_action(
         bpy.context,
-        _TriangulateStage("Destructive Test", mutate=mutate),
+        action_for_stage(_TriangulateStage("Destructive Test", mutate=mutate)),
     )
 
     restored = session.runtime.cancel(bpy.context)
@@ -301,7 +353,10 @@ def test_parented_mesh_checkpoint_selects_the_mesh():
     with bpy.data.libraries.load(session.runtime.disk.path("source"), link=False) as (data_from, _data_to):
         assert set(data_from.objects) == {"world", "geometry_0"}
 
-    session.runtime.execute_stage(bpy.context, _TriangulateStage("Parented Test"))
+    session.runtime.execute_action(
+        bpy.context,
+        action_for_stage(_TriangulateStage("Parented Test")),
+    )
     assert len(session.runtime.object(bpy.context).data.polygons) > original_faces
     session.runtime.undo(bpy.context)
     restored = session.runtime.object(bpy.context)
@@ -344,7 +399,7 @@ def test_failed_stage_cannot_mutate_the_locked_mesh():
     session.runtime.begin(bpy.context, source)
     state = bpy.context.window_manager.remi_session
     try:
-        session.runtime.execute_stage(bpy.context, FailingStage())
+        session.runtime.execute_action(bpy.context, action_for_stage(FailingStage()))
     except RuntimeError as exc:
         assert str(exc) == "intentional stage failure"
     else:
@@ -361,7 +416,10 @@ def test_failed_stage_cannot_mutate_the_locked_mesh():
     assert not session.runtime.disk.exists("pending")
     assert not Path(session.runtime.disk.path("pending")).with_suffix(".json").exists()
 
-    session.runtime.execute_stage(bpy.context, _TriangulateStage("Recovery Test"))
+    session.runtime.execute_action(
+        bpy.context,
+        action_for_stage(_TriangulateStage("Recovery Test")),
+    )
     assert len(session.runtime.object(bpy.context).data.polygons) > source_faces
     session.runtime.undo(bpy.context)
     assert len(session.runtime.object(bpy.context).data.polygons) == source_faces
@@ -402,9 +460,9 @@ def test_real_repair_and_remesh_steps():
     settings.hole_weld_distance = 0.0
 
     session.runtime.begin(bpy.context, source)
-    _result, repair_report = session.runtime.execute_stage(
+    _result, repair_report = session.runtime.execute_action(
         bpy.context,
-        stage_for_command("REPAIR"),
+        action_for_command("REPAIR"),
     )
     repaired = session.runtime.object(bpy.context)
     assert len(bpy.context.scene.objects) == 1
@@ -421,9 +479,9 @@ def test_real_repair_and_remesh_steps():
     settings.use_hole_repair = False
     settings.voxel_size = 0.4
     session.runtime.begin(bpy.context, source)
-    session.runtime.execute_stage(
+    session.runtime.execute_action(
         bpy.context,
-        stage_for_command("REMESH"),
+        action_for_command("REMESH"),
     )
     remeshed = session.runtime.object(bpy.context)
     assert len(bpy.context.scene.objects) == 1
@@ -435,9 +493,9 @@ def test_real_repair_and_remesh_steps():
     for layer in list(source.data.uv_layers):
         source.data.uv_layers.remove(layer)
     session.runtime.begin(bpy.context, source)
-    _result, report = session.runtime.execute_stage(
+    _result, report = session.runtime.execute_action(
         bpy.context,
-        stage_for_command("UV"),
+        action_for_command("UV"),
     )
     assert report["stats"] and report["stats"].valid
     assert len(bpy.context.scene.objects) == 1
@@ -575,9 +633,9 @@ def test_transactional_bake_uses_source_checkpoint():
             raise AssertionError("Bake repeated UV generation despite an existing UV layer")
 
         baking.ensure_remi_uv = unexpected_uv_regeneration
-        _result, report = session.runtime.execute_stage(
+        _result, report = session.runtime.execute_action(
             bpy.context,
-            stage_for_command("BAKE_DIFFUSE"),
+            action_for_command("BAKE_DIFFUSE"),
         )
     finally:
         baking.ensure_remi_uv = original_ensure_uv
@@ -619,7 +677,7 @@ def test_transactional_decimation_when_available():
     settings.decimation_with_texture = False
 
     session.runtime.begin(bpy.context, source)
-    session.runtime.execute_stage(bpy.context, stage_for_command("DECIMATE"))
+    session.runtime.execute_action(bpy.context, action_for_command("DECIMATE"))
     assert len(bpy.context.scene.objects) == 1
     assert len(session.runtime.object(bpy.context).data.polygons) < original_faces
 
@@ -666,7 +724,7 @@ def test_autoremesher_candidate_commits_in_place():
         operators._import_obj_result = fake_import
 
         session.runtime.begin(bpy.context, source)
-        session.runtime.execute_stage(bpy.context, stage_for_command("AUTO_RETOPO"))
+        session.runtime.execute_action(bpy.context, action_for_command("AUTO_RETOPO"))
         assert len(bpy.context.scene.objects) == 1
         assert len(session.runtime.object(bpy.context).data.polygons) > original_faces
         session.runtime.undo(bpy.context)

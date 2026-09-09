@@ -4,8 +4,37 @@ import bpy
 from bpy.props import EnumProperty
 from bpy.types import Operator
 
+from .application import get_application
 from .session import runtime
-from .workflow.stages import stage_for_command
+from .workflow.contracts import ExecutionMode
+
+
+CONTROL_COMMANDS = (
+    ("UNDO", "Back", "Return to the previous committed Remi mesh"),
+    ("REDO", "Redo", "Restore the reverted Remi mesh"),
+    ("RESET", "Reset", "Return to the source mesh"),
+    ("FINISH", "Finish", "Keep the current mesh and leave Remi"),
+    ("CANCEL", "Cancel", "Restore the source mesh and leave Remi"),
+)
+
+
+def _command_items(_operator, _context):
+    actions = [
+        (registered.id, registered.action.name, registered.action.description)
+        for feature in get_application().features
+        for registered in (
+            get_application().features.require_action(action.id)
+            for action in feature.descriptor.actions
+        )
+    ]
+    return actions + list(CONTROL_COMMANDS)
+
+
+def _stage_items(_operator, _context):
+    return [
+        (feature.descriptor.id, feature.descriptor.name, feature.descriptor.name)
+        for feature in get_application().features
+    ]
 
 
 class Remi_OT_StartSession(Operator):
@@ -51,11 +80,11 @@ class Remi_OT_StartSession(Operator):
             context.window_manager.event_timer_remove(self._timer)
             self._timer = None
 
-    def _run_stage(self, context, stage):
+    def _run_action(self, context, registered):
         try:
             if context.window is not None:
                 context.window.cursor_modal_set("WAIT")
-            runtime.execute_stage(context, stage)
+            runtime.execute_action(context, registered)
         except Exception as exc:
             self.report({"ERROR"}, str(exc))
         finally:
@@ -67,12 +96,12 @@ class Remi_OT_StartSession(Operator):
 
     def _process_command(self, context, command):
         state = runtime.state(context)
-        stage = stage_for_command(command)
-        if stage is not None:
-            if stage.interactive:
-                runtime.start_interactive_stage(context, stage)
+        registered = get_application().features.action(command)
+        if registered is not None:
+            if registered.action.mode == ExecutionMode.INTERACTIVE:
+                runtime.start_interactive_action(context, registered)
             else:
-                self._run_stage(context, stage)
+                self._run_action(context, registered)
         elif command == "UNDO":
             runtime.undo(context)
         elif command == "REDO":
@@ -151,24 +180,7 @@ class Remi_OT_SessionCommand(Operator):
     bl_description = "Run an action on the locked Remi mesh"
 
     command: EnumProperty(
-        items=[
-            ("REPAIR", "Repair", "Run repair on the locked mesh"),
-            ("REMESH", "Remesh", "Run remeshing on the locked mesh"),
-            ("DECIMATE", "Decimate", "Reduce the locked mesh with MeshLab"),
-            ("INSTANT_START", "Interactive Retopology", "Start interactive quad retopology"),
-            ("AUTO_RETOPO", "Auto Retopology", "Run the external AutoRemesher on the locked mesh"),
-            ("UV", "UV", "Generate UVs on the locked mesh"),
-            ("BAKE_ALL", "Bake All", "Bake all texture maps from the source checkpoint"),
-            ("BAKE_DIFFUSE", "Bake Albedo", "Bake albedo from the source checkpoint"),
-            ("BAKE_ROUGHNESS", "Bake Roughness", "Bake roughness from the source checkpoint"),
-            ("BAKE_NORMAL", "Bake Normal", "Bake normals from the source checkpoint"),
-            ("BAKE_AO", "Bake AO", "Bake ambient occlusion from the source checkpoint"),
-            ("UNDO", "Back", "Return to the previous committed Remi mesh"),
-            ("REDO", "Redo", "Restore the reverted Remi mesh"),
-            ("RESET", "Reset", "Return to the source mesh"),
-            ("FINISH", "Finish", "Keep the current mesh and leave Remi"),
-            ("CANCEL", "Cancel", "Restore the source mesh and leave Remi"),
-        ]
+        items=_command_items,
     )
 
     @classmethod
@@ -201,13 +213,7 @@ class Remi_OT_SessionStage(Operator):
     bl_description = "Show controls for this Remi stage"
 
     stage: EnumProperty(
-        items=[
-            ("REPAIR", "Repair", "Repair holes and fragmented surfaces"),
-            ("REMESH", "Remesh", "Create a clean watertight surface"),
-            ("RETOPOLOGY", "Retopo", "Create production topology"),
-            ("UV", "UV", "Generate and inspect UVs"),
-            ("BAKE", "Bake", "Transfer the source appearance"),
-        ]
+        items=_stage_items,
     )
 
     @classmethod

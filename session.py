@@ -15,7 +15,8 @@ from .workflow.disk_service import (
     SESSION_ID_KEY,
     SessionDiskService,
 )
-from .workflow.stages import ManualRepair, stage_for_command
+from .workflow.contracts import FeatureExecutionContext
+from .workflow.registry import FeatureRegistry, RegisteredAction
 
 
 class RemiSessionState(PropertyGroup):
@@ -51,6 +52,7 @@ class RemiSessionRuntime:
     """Own one visible object and a bounded set of on-disk checkpoints."""
 
     def __init__(self):
+        self.features = None
         self.disk = None
         self.pending_command = ""
         self.last_step_label = ""
@@ -61,6 +63,21 @@ class RemiSessionRuntime:
         self.pending_step_label = ""
         self.pending_stage = "REPAIR"
         self.interactive_copy = None
+
+    def configure_features(self, features: FeatureRegistry | None):
+        if self.state_is_active():
+            raise RuntimeError("Cannot replace Remi features during an active session")
+        self.features = features
+
+    @staticmethod
+    def state_is_active():
+        state = getattr(bpy.context.window_manager, "remi_session", None)
+        return bool(state is not None and state.active)
+
+    def _require_features(self) -> FeatureRegistry:
+        if self.features is None:
+            raise RuntimeError("The Remi feature registry is not configured")
+        return self.features
 
     @staticmethod
     def state(context):
@@ -357,55 +374,68 @@ class RemiSessionRuntime:
         if state.busy or self.pending_command:
             raise RuntimeError("Remi is already processing a command")
         self.pending_command = command
-        stage = stage_for_command(command)
-        if stage is not None:
+        registered = self._require_features().action(command)
+        if registered is not None:
             source = self.object(context)
             state.busy = True
-            state.status = stage.queued_message(context, source)
+            execution = FeatureExecutionContext(
+                blender_context=context,
+                source=source,
+                working_copy=None,
+                disk=self._require_disk(),
+            )
+            state.status = registered.feature.queued_message(
+                registered.action,
+                execution,
+            )
 
     def pop_command(self):
         command = self.pending_command
         self.pending_command = ""
         return command
 
-    def execute_stage(self, context, stage):
-        """Run one stage inside the session-owned checkpoint transaction."""
+    def execute_action(self, context, registered: RegisteredAction, *, payload=None):
+        """Run one injected action inside the session-owned checkpoint transaction."""
         started = time.perf_counter()
         state = self.state(context)
+        action = registered.action
+        feature = registered.feature
         candidate = None
         working_copy = None
         source_checkpoint = None
         dependencies_before = None
         try:
-            # No stage code runs before this validated mesh checkpoint exists.
-            self._prepare_step(context, stage.label)
+            # No feature code runs before this validated mesh checkpoint exists.
+            self._prepare_step(context, action.name)
             current = self.object(context)
-            working_copy = self._create_working_copy(context, current, stage.label)
-            if stage.requires_source_checkpoint:
-                state.status = f"Loading the source checkpoint for {stage.label.lower()}…"
+            working_copy = self._create_working_copy(context, current, action.name)
+            if action.requires_source_checkpoint:
+                state.status = f"Loading the source checkpoint for {action.name.lower()}…"
                 source_checkpoint, dependencies_before = self.load_source_temporary(context)
-            state.status = f"Running {stage.label.lower()}…"
-            candidate, error, report = stage.build(
-                context,
-                current,
-                working_copy,
+            state.status = f"Running {action.name.lower()}…"
+            execution = FeatureExecutionContext(
+                blender_context=context,
+                source=current,
+                working_copy=working_copy,
                 source_checkpoint=source_checkpoint,
                 disk=self._require_disk(),
+                payload=payload or {},
             )
-            if error:
-                raise RuntimeError(error)
+            result = feature.execute(action, execution)
+            candidate = result.candidate
+            report = result.report
             if candidate != working_copy and self._object_exists(working_copy):
                 self._remove_object(working_copy)
                 working_copy = None
             self._commit_step(
                 context,
                 candidate,
-                stage.label,
-                next_stage=stage.next_stage,
+                action.name,
+                next_stage=registered.next_feature,
             )
             elapsed = time.perf_counter() - started
             duration = f"{elapsed:.1f}s" if elapsed < 60.0 else f"{elapsed / 60.0:.1f} min"
-            self._update_stats(context, f"{stage.label} complete in {duration}")
+            self._update_stats(context, f"{action.name} complete in {duration}")
             return self.object(context), report
         except Exception as exc:
             for disposable in (candidate, working_copy):
@@ -414,34 +444,44 @@ class RemiSessionRuntime:
                     and disposable != self.object(context)
                 ):
                     self._remove_object(disposable)
-            self._abandon_step(context, None, f"{stage.label} failed: {exc}")
+            self._abandon_step(context, None, f"{action.name} failed: {exc}")
             raise
         finally:
             if dependencies_before is not None:
                 self.cleanup_temporary_source(source_checkpoint, dependencies_before)
 
-    def start_interactive_stage(self, context, stage):
-        """Checkpoint first, then open an interactive stage on the locked mesh."""
+    def start_interactive_action(self, context, registered: RegisteredAction):
+        """Checkpoint first, then open an injected interactive action."""
         state = self.state(context)
+        action = registered.action
+        feature = registered.feature
         working_copy = None
         try:
-            self._prepare_step(context, stage.label)
-            state.status = f"Building the {stage.label.lower()} workspace…"
+            self._prepare_step(context, action.name)
+            state.status = f"Building the {action.name.lower()} workspace…"
             current = self.object(context)
             working_copy = self._create_working_copy(
                 context,
                 current,
-                stage.label,
+                action.name,
                 linked=False,
             )
             self.interactive_copy = working_copy
-            stage.start(context, working_copy)
+            feature.start_interactive(
+                action,
+                FeatureExecutionContext(
+                    blender_context=context,
+                    source=current,
+                    working_copy=working_copy,
+                    disk=self._require_disk(),
+                ),
+            )
             state.interactive = True
             state.busy = False
-            state.status = f"Interactive {stage.label.lower()} active"
+            state.status = f"{action.name} active"
         except Exception as exc:
             try:
-                stage.cancel()
+                feature.cancel_interactive(action)
             except Exception:
                 pass
             if self._object_exists(working_copy):
@@ -450,13 +490,14 @@ class RemiSessionRuntime:
             current = self.object(context)
             if current:
                 self._select_only(context, current)
-            self._abandon_step(context, None, f"{stage.label} failed: {exc}")
+            self._abandon_step(context, None, f"{action.name} failed: {exc}")
             raise
 
     def execute_manual_repair(self, context, ring_world, ring_normals=None):
-        return self.execute_stage(
+        return self.execute_action(
             context,
-            ManualRepair(ring_world, ring_normals=ring_normals),
+            self._require_features().require_action("MANUAL_REPAIR"),
+            payload={"ring_world": ring_world, "ring_normals": ring_normals},
         )
 
     def commit_interactive_step(self, context, candidate, label, next_stage):

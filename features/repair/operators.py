@@ -43,7 +43,7 @@ class Remi_OT_DrawHolePatch(Operator):
     def _end_session_interaction(self, context, message=None):
         if not getattr(self, "_session_active", False):
             return
-        from ...session import runtime as session_runtime
+        from ...workflow.session_runtime import runtime as session_runtime
 
         state = getattr(context.window_manager, "remi_session", None)
         if state is not None and state.active:
@@ -100,7 +100,7 @@ class Remi_OT_DrawHolePatch(Operator):
         state = getattr(context.window_manager, "remi_session", None)
         self._session_active = bool(state is not None and state.active)
         if self._session_active:
-            from ...session import runtime as session_runtime
+            from ...workflow.session_runtime import runtime as session_runtime
 
             if not session_runtime.ensure_active_object(context):
                 self.report({"ERROR"}, "The locked Remi mesh is missing")

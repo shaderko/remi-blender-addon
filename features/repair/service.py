@@ -854,7 +854,7 @@ def _commit_surface_ring_patch(
         )
 
     # Import lazily to avoid the operators/session registration cycle.
-    from ...session import runtime as session_runtime
+    from ...workflow.session_runtime import runtime as session_runtime
 
     current = session_runtime.object(context)
     if current is None or current != source:

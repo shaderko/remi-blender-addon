@@ -3,10 +3,10 @@
 from . import edit_tools
 from . import feature_registration
 from . import instant_meshes
-from . import session
 from . import settings
 from . import ui
 from .compat import registration as compatibility_registration
+from .workflow import session_runtime as session
 from .application import (
     clear_application,
     configure_application,

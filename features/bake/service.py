@@ -34,6 +34,7 @@ def _build_candidate(
             recalc_normals=settings.bake_recalc_normals,
             cage_extrusion=settings.bake_cage_extrusion,
             max_ray_distance=settings.bake_max_ray_distance,
+            auto_cage=settings.bake_auto_cage,
             passes=passes,
             consume_sources=True,
             reuse_outputs=False,

@@ -50,6 +50,13 @@ SCENE_SETTINGS = {
             precision=3,
             subtype="DISTANCE",
         ),
+    "bake_auto_cage": BoolProperty(
+            name="Auto Cage && Ray",
+            description="Derive Cage Extrusion and Max Ray Distance from the actual gap "
+                        "between the original and the result, instead of fixed world-unit "
+                        "values. Uncheck to set both distances by hand",
+            default=True,
+        ),
     "bake_max_ray_distance": FloatProperty(
             name="Max Ray Distance",
             description="Maximum ray distance for baking. "

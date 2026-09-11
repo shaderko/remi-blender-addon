@@ -98,9 +98,11 @@ class BakeFeature(FeatureDefaults):
         row = layout.row(align=True)
         row.prop(settings, "bake_recalc_normals", text="Recalc Normals")
         row.prop(settings, "bake_half_scale", text="Half Scale")
-        row = layout.row(align=True)
-        row.prop(settings, "bake_cage_extrusion", text="Cage")
-        row.prop(settings, "bake_max_ray_distance", text="Max Ray")
+        layout.prop(settings, "bake_auto_cage", text="Auto Cage && Ray")
+        distances = layout.row(align=True)
+        distances.enabled = not settings.bake_auto_cage
+        distances.prop(settings, "bake_cage_extrusion", text="Cage")
+        distances.prop(settings, "bake_max_ray_distance", text="Max Ray")
         layout.separator()
         action = layout.column(align=True)
         action.scale_y = 1.3

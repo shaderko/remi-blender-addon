@@ -42,6 +42,7 @@ class Remi_BakeOperatorMixin:
             recalc_normals=s.bake_recalc_normals,
             cage_extrusion=s.bake_cage_extrusion,
             max_ray_distance=s.bake_max_ray_distance,
+            auto_cage=s.bake_auto_cage,
             passes=self.bake_passes,
         )
         if result["success"]:

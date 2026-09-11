@@ -768,6 +768,95 @@ def test_bake_half_scale_ignores_the_targets_own_scale():
     print("PASS half-scale bake follows the target's own scale")
 
 
+def test_bake_auto_cage_sizes_the_search_to_the_gap():
+    """Auto Cage must size the bake search to the real original-to-result gap.
+
+    The stored distances are absolute world-unit constants, so they mean
+    nothing across model scales: an original sitting 0.15 units off a
+    unit-radius result bakes completely blank with them. Auto Cage measures
+    that gap and has to recover the map.
+    """
+    import math
+
+    _clean_scene()
+    bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=4, radius=1.0)
+    target = bpy.context.active_object
+    target.name = "AutoCageTarget"
+    target.data.name = "AutoCageTargetMesh"
+    # Object scale 0.5 with doubled vertex data: world radius 1 but a non-unit
+    # object scale, matching an un-applied FBX/scene transform.
+    target.scale = (0.5, 0.5, 0.5)
+    for vertex in target.data.vertices:
+        vertex.co *= 2.0
+
+    gap = 0.15
+    source = target.copy()
+    source.data = target.data.copy()
+    source.name = "AutoCageSource"
+    source.data.name = "AutoCageSourceMesh"
+    bpy.context.collection.objects.link(source)
+    source.scale = (1.0, 1.0, 1.0)
+    for vertex in source.data.vertices:
+        direction = vertex.co.normalized()
+        bump = 0.05 * math.sin(9.0 * vertex.co.x + 1.3) * math.cos(7.0 * vertex.co.y)
+        vertex.co = direction * (1.0 + gap + bump)
+
+    bpy.ops.object.select_all(action="DESELECT")
+    bpy.context.view_layer.objects.active = target
+    target.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.uv.smart_project(angle_limit=1.15192, island_margin=0.02)
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+    cage, ray = baking._derive_bake_distances(target, [source])
+    assert cage > gap, f"derived cage {cage:.4f} must clear the {gap} gap"
+    assert ray >= baking._world_bbox_diagonal(target), (
+        "derived ray distance must be able to cross the model"
+    )
+
+    settings = bpy.context.scene.remi_settings
+    settings.bake_half_scale = True
+    size = 192
+
+    def structure(auto, name):
+        result = baking.bake_textures(
+            source,
+            target,
+            texture_size=size,
+            final_name=name,
+            auto_unwrap=False,
+            recalc_normals=False,
+            cage_extrusion=0.1,
+            max_ray_distance=0.1,
+            auto_cage=auto,
+            passes=("normal",),
+            consume_sources=False,
+            reuse_outputs=False,
+        )
+        assert result["success"], result
+        image = bpy.data.images.get(name + "_normal")
+        buffer = [0.0] * (size * size * 4)
+        image.pixels.foreach_get(buffer)
+        bpy.data.images.remove(image)
+        # Spread of the red channel: a bake whose rays all miss collapses to a
+        # single value, so any structure proves the rays reached the original.
+        reds = buffer[0::4]
+        mean = sum(reds) / len(reds)
+        return (sum((value - mean) ** 2 for value in reds) / len(reds)) ** 0.5
+
+    manual_spread = structure(False, "AutoCageManual")
+    assert manual_spread < 0.01, (
+        "the fixed world-unit defaults were expected to miss this gap entirely "
+        f"(spread {manual_spread:.4f})"
+    )
+    auto_spread = structure(True, "AutoCageAuto")
+    assert auto_spread > 0.05, (
+        f"Auto Cage did not recover the map (spread {auto_spread:.4f})"
+    )
+    print("PASS Auto Cage sizes the bake search to the original-to-result gap")
+
+
 def test_transactional_decimation_when_available():
     if not meshlab.ensure_pymeshlab():
         print("SKIP transactional Decimate: PyMeshLab is not installed")
@@ -862,6 +951,7 @@ try:
     test_repair_ui_keeps_manual_and_advanced_controls()
     test_transactional_bake_uses_source_checkpoint()
     test_bake_half_scale_ignores_the_targets_own_scale()
+    test_bake_auto_cage_sizes_the_search_to_the_gap()
     test_transactional_decimation_when_available()
     test_autoremesher_candidate_commits_in_place()
 finally:

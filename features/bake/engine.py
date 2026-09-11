@@ -7,6 +7,7 @@ high-poly mesh onto the remeshed/decimated result.
 import math
 
 import bpy
+from mathutils import Vector
 
 from ..uv.engine import ensure_remi_uv
 
@@ -124,6 +125,62 @@ def _remove_temp_object(obj: bpy.types.Object):
     for material in materials:
         if material and material.users == 0:
             bpy.data.materials.remove(material)
+
+
+def _world_bbox_diagonal(obj: bpy.types.Object) -> float:
+    """Length of the object's world-space bounding-box diagonal."""
+    matrix = obj.matrix_world
+    corners = [matrix @ Vector(corner) for corner in obj.bound_box]
+    spans = [
+        max(corner[axis] for corner in corners) - min(corner[axis] for corner in corners)
+        for axis in range(3)
+    ]
+    return sum(span * span for span in spans) ** 0.5
+
+
+def _sample_surface_points(obj: bpy.types.Object, limit: int = 1500):
+    """Return up to 'limit' evenly spaced world-space vertices of the object."""
+    vertices = obj.data.vertices
+    total = len(vertices)
+    if not total:
+        return []
+    step = max(1, -(-total // limit))
+    matrix = obj.matrix_world
+    return [matrix @ vertices[index].co for index in range(0, total, step)]
+
+
+def _derive_bake_distances(target: bpy.types.Object, sources) -> tuple:
+    """Size the cage/ray search to the real original-to-result gap.
+
+    The stored defaults are absolute world-unit constants, so they mean
+    nothing across model scales: a remesh sitting 0.5 units off a 9-unit
+    sculpt bakes blank with 0.1, while the same value wildly overshoots a
+    0.02-unit part. Measure how far the target surface actually sits from the
+    originals and cover that, with a small proportional floor so a sparse
+    sample cannot undercut the result.
+
+    Cage rays start on the extruded cage and travel inward, so the extrusion
+    has to clear the target-to-source gap. Max ray distance is the search
+    length and has to cross the model, so it is tied to the bounding box.
+    """
+    diagonal = _world_bbox_diagonal(target)
+    floor = 0.002 * diagonal
+    gaps = []
+    for source in sources:
+        if source is None or source.type != "MESH":
+            continue
+        inverse = source.matrix_world.inverted()
+        for point in _sample_surface_points(target):
+            found, location, _normal, _index = source.closest_point_on_mesh(
+                inverse @ point
+            )
+            if found:
+                gaps.append((point - (source.matrix_world @ location)).length)
+    if not gaps:
+        return floor, diagonal
+    gaps.sort()
+    reach = max(2.0 * gaps[int(0.98 * (len(gaps) - 1))], floor)
+    return reach, max(diagonal, 2.0 * reach)
 
 
 def _create_bake_images(
@@ -286,6 +343,7 @@ def bake_textures(
     recalc_normals: bool = True,
     cage_extrusion: float = 0.1,
     max_ray_distance: float = 0.0,
+    auto_cage: bool = False,
     passes: tuple[str, ...] = ("diffuse", "roughness", "normal", "ao"),
     consume_sources: bool = False,
     reuse_outputs: bool = True,
@@ -386,6 +444,16 @@ def bake_textures(
     bpy.context.view_layer.objects.active = target_result
 
     # Configure bake settings (Blender 5.1+)
+    # Half-scale shrinks both meshes by the same factor, so the derived
+    # distances have to shrink with them to stay in the same world space.
+    _half = bpy.context.scene.remi_settings.bake_half_scale
+    if auto_cage:
+        cage_extrusion, max_ray_distance = _derive_bake_distances(
+            target_result, temp_sources
+        )
+        if _half:
+            cage_extrusion *= 0.5
+            max_ray_distance *= 0.5
     bake_st = scene.render.bake
     bake_st.use_selected_to_active = True
     bake_st.margin = 16
@@ -420,7 +488,6 @@ def bake_textures(
     # the target's scale to a literal 0.5 (instead of multiplying it) leaves a
     # scaled target next to a half-sized source, so the two meshes no longer
     # line up and the rays miss.  Target transform is restored after baking.
-    _half = bpy.context.scene.remi_settings.bake_half_scale
     _t_save = None
     if _half:
         _t_save = (target_result.scale.copy(), target_result.location.copy())

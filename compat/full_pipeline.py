@@ -285,6 +285,7 @@ class Remi_OT_FullPipeline(Operator):
                 recalc_normals=settings.bake_recalc_normals,
                 cage_extrusion=settings.bake_cage_extrusion,
                 max_ray_distance=settings.bake_max_ray_distance,
+                auto_cage=settings.bake_auto_cage,
                 )
             if not result["success"]:
                 self.report({"ERROR"}, result.get("error", "Baking failed"))
@@ -621,6 +622,7 @@ class Remi_OT_FullPipeline(Operator):
                 recalc_normals=settings.bake_recalc_normals,
                 cage_extrusion=settings.bake_cage_extrusion,
                 max_ray_distance=settings.bake_max_ray_distance,
+                auto_cage=settings.bake_auto_cage,
             )
             if result["success"]:
                 self.status(context, f"Baked: {', '.join(result['images'])}")

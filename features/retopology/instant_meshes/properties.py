@@ -5,13 +5,24 @@ from bpy.props import BoolProperty, FloatProperty, IntProperty, StringProperty
 from bpy.types import PropertyGroup
 
 
+def _target_faces_updated(settings, _context):
+    # Changing the count mid-session re-densifies the preview, but the edit is
+    # debounced so dragging the control does not re-solve on every step.
+    from .runtime import runtime
+
+    if runtime.ready:
+        runtime.request_target_faces(settings.target_faces)
+
+
 class RemiInstantMeshesSettings(PropertyGroup):
     target_faces: IntProperty(
         name="Target Faces",
-        description="Approximate final face count; pure-quad subdivision is accounted for automatically",
+        description="Approximate final face count; pure-quad subdivision is accounted for automatically. "
+                    "Changing this during a preview re-solves the fields",
         default=20000,
         min=100,
         soft_max=500000,
+        update=_target_faces_updated,
     )
     pure_quad: BoolProperty(
         name="Pure Quads",

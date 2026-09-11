@@ -19,6 +19,7 @@ class InteractiveRuntime:
     def __init__(self):
         self.session = None
         self.source_name = ""
+        self.source_triangles = None
         self.surface_vertices = None
         self.surface_faces = None
         self.surface_normals = None
@@ -38,6 +39,9 @@ class InteractiveRuntime:
         self.pending_position = False
         self.pending_preview = False
         self.position_ready = False
+        self.preview_warnings = []
+        self.pending_target_faces = None
+        self.target_faces_deadline = 0.0
         self.last_visual_refresh = 0.0
         self.last_error = ""
 
@@ -81,6 +85,7 @@ class InteractiveRuntime:
                 pass
             del session
         self.source_name = ""
+        self.source_triangles = None
         self.surface_vertices = None
         self.surface_faces = None
         self.surface_normals = None
@@ -100,6 +105,9 @@ class InteractiveRuntime:
         self.pending_position = False
         self.pending_preview = False
         self.position_ready = False
+        self.preview_warnings = []
+        self.pending_target_faces = None
+        self.target_faces_deadline = 0.0
         self.last_visual_refresh = 0.0
         self.last_error = ""
         settings = self.settings()
@@ -122,20 +130,31 @@ class InteractiveRuntime:
         finally:
             evaluated.to_mesh_clear()
 
-    def start(self, obj, settings):
+    def start(self, obj, settings, *, target_faces=None, triangles=None, strokes=None):
+        """Build the field session for the given object.
+
+        target_faces overrides the scene setting so a density change can
+        rebuild without writing back to the property that triggered it.
+        triangles reuses an already-extracted source mesh, and strokes
+        restores guide strokes across a rebuild.
+        """
         self.shutdown()
         self.last_error = ""
         from ._native import Session
 
-        vertices, faces = self._evaluated_triangles(obj)
+        if triangles is None:
+            vertices, faces = self._evaluated_triangles(obj)
+        else:
+            vertices, faces = triangles
         if len(faces) == 0:
             raise RuntimeError("The evaluated object has no triangular surface")
+        self.source_triangles = (vertices, faces)
         crease = float(np.degrees(settings.crease_angle)) if settings.preserve_creases else -1.0
         self.set_status("Building native hierarchy…", 0.0)
         self.session = Session(
             vertices,
             faces,
-            target_faces=settings.target_faces,
+            target_faces=int(settings.target_faces if target_faces is None else target_faces),
             pure_quad=settings.pure_quad,
             crease_angle=crease,
             extrinsic=settings.extrinsic,
@@ -156,7 +175,7 @@ class InteractiveRuntime:
             [tuple(int(index) for index in face) for face in self.surface_faces],
             all_triangles=True,
         )
-        self.strokes = []
+        self.strokes = list(strokes) if strokes else []
         self.orientation = None
         self.position = None
         self.preview = None
@@ -167,8 +186,11 @@ class InteractiveRuntime:
         self.pending_preview = bool(settings.auto_update_preview)
         self.position_ready = False
         settings.session_active = True
-        self.session.start_orientation()
-        self.set_status("Solving orientation field (1/2)…", 0.0)
+        if self.strokes:
+            self._send_strokes()
+        else:
+            self.session.start_orientation()
+            self.set_status("Solving orientation field (1/2)…", 0.0)
         ensure_timer()
 
     def ray_hit(self, region, region_3d, coordinate):
@@ -314,6 +336,9 @@ class InteractiveRuntime:
         )
         self.preview_normals = np.asarray(normals, dtype=np.float32)
         self.preview_topology = dict(self.session.output_topology)
+        # Extraction reports quality defects instead of refusing outright, so
+        # the user can inspect the result and decide whether to keep it.
+        self.preview_warnings = list(self.session.output_warnings)
         topology = self.preview_topology
         if topology["boundary_edges"] == 0 and topology["nonmanifold_edges"] == 0:
             integrity = "watertight"
@@ -322,11 +347,90 @@ class InteractiveRuntime:
                 f'{topology["boundary_edges"]:,} boundary edge(s), '
                 f'{topology["nonmanifold_edges"]:,} non-manifold edge(s)'
             )
+        warning = (
+            f' · ⚠ {self.preview_warnings[0]}'
+            if self.preview_warnings
+            else ""
+        )
         self.set_status(
             f"Preview ready · {len(self.preview[1]):,} faces · "
-            f'{topology["components"]:,} component(s) · {integrity}',
+            f'{topology["components"]:,} component(s) · {integrity}{warning}',
             1.0,
         )
+
+    def request_target_faces(self, value):
+        """Queue a density change, coalescing rapid edits into one re-solve.
+
+        Dragging the face-count control fires an update per step. Reseeding and
+        re-solving on every step would stall the viewport, so the work only
+        starts once the value has been still for TARGET_FACES_DEBOUNCE seconds.
+        """
+        if not self.ready:
+            return
+        self.pending_target_faces = int(value)
+        self.target_faces_deadline = time.monotonic() + TARGET_FACES_DEBOUNCE
+        ensure_debounce_timer()
+
+    def apply_target_faces(self, value):
+        """Re-densify the quad preview at a new target without a restart."""
+        if not self.ready:
+            return
+        if self.session.active:
+            raise RuntimeError("Wait for the field solve to finish")
+        value = int(value)
+        if self.session.needs_input_subdivision(value):
+            # The live session's input mesh is too coarse for this density and
+            # a running session cannot refine its own input, so rebuild the
+            # field session instead of re-seeding it.
+            source = self.source
+            settings = self.settings()
+            strokes = list(self.strokes)
+            triangles = self.source_triangles
+            self.start(
+                source,
+                settings,
+                target_faces=value,
+                triangles=triangles,
+                strokes=strokes,
+            )
+            self.pending_preview = True
+            return
+        self.session.set_target_faces(value)
+        # Reseeding discards both fields, so the staged solve starts over from
+        # the orientation pass. Guide strokes live on the session and survive.
+        self.orientation = None
+        self.position = None
+        self.orientation_singularities = None
+        self.position_singularities = None
+        self.preview = None
+        self.preview_normals = None
+        self.preview_topology = None
+        self.preview_warnings = []
+        self.position_ready = False
+        self.pending_position = True
+        self.pending_preview = True
+        self.solve_stage = "ORIENTATION"
+        self.session.start_orientation()
+        self.set_status(f"Re-solving for {int(value):,} faces (1/2)…", 0.0)
+        ensure_timer()
+
+    def flush_target_faces(self):
+        """Run a queued density change once it has settled. Returns True when done."""
+        if self.pending_target_faces is None:
+            return True
+        if time.monotonic() < self.target_faces_deadline:
+            return False
+        if self.session is None or self.session.active:
+            # Let the field solve finish; the value stays queued.
+            return False
+        value = self.pending_target_faces
+        self.pending_target_faces = None
+        try:
+            self.apply_target_faces(value)
+        except Exception as error:
+            self.last_error = str(error)
+            self.set_status(f"Instant Meshes error: {error}", 0.0)
+        return True
 
     def poll(self):
         if not self.ready:
@@ -383,6 +487,11 @@ class InteractiveRuntime:
 runtime = InteractiveRuntime()
 
 
+# Seconds of quiet after the last face-count edit before the preview re-solves.
+TARGET_FACES_DEBOUNCE = 1.0
+_DEBOUNCE_INTERVAL = 0.1
+
+
 def _timer_callback():
     return runtime.poll()
 
@@ -390,3 +499,12 @@ def _timer_callback():
 def ensure_timer():
     if not bpy.app.timers.is_registered(_timer_callback):
         bpy.app.timers.register(_timer_callback, first_interval=0.1)
+
+
+def _debounce_callback():
+    return None if runtime.flush_target_faces() else _DEBOUNCE_INTERVAL
+
+
+def ensure_debounce_timer():
+    if not bpy.app.timers.is_registered(_debounce_callback):
+        bpy.app.timers.register(_debounce_callback, first_interval=_DEBOUNCE_INTERVAL)

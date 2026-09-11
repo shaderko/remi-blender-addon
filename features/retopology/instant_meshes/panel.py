@@ -1,3 +1,6 @@
+from .runtime import runtime
+
+
 def draw_panel(layout, context, embedded=False):
     settings = context.scene.remi_instant_meshes
     box = layout if embedded else layout.box()
@@ -55,6 +58,12 @@ def draw_panel(layout, context, embedded=False):
 
     fields = box.box()
     fields.label(text="Fields and Preview", icon="OVERLAY")
+    fields.prop(settings, "target_faces", text="Target Faces")
+    if runtime.pending_target_faces is not None:
+        fields.label(
+            text=f"Re-solving for {runtime.pending_target_faces:,} faces…",
+            icon="TIME",
+        )
     row = fields.row(align=True)
     row.prop(settings, "show_orientation", text="Orientation")
     row.prop(settings, "show_position", text="Position")
@@ -67,6 +76,13 @@ def draw_panel(layout, context, embedded=False):
     row.operator("remi.instant_meshes_solve_orientation", text="Rebuild Both Fields")
     row.operator("remi.instant_meshes_solve_position", text="Re-solve Position")
     fields.operator("remi.instant_meshes_preview", text="Update Quad Preview", icon="SHADING_WIRE")
+
+    if runtime.preview_warnings:
+        warning = box.box()
+        warning.label(text="Preview warning", icon="ERROR")
+        for message in runtime.preview_warnings:
+            warning.label(text=message)
+        warning.label(text="You can still accept this result.", icon="CHECKMARK")
 
     finish = box.column(align=True)
     finish.scale_y = 1.2

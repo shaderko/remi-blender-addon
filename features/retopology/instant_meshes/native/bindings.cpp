@@ -76,9 +76,9 @@ static py::tuple position_singularities(InteractiveSession &session) {
     return py::make_tuple(matrix_array(std::get<0>(value)), matrix_array(std::get<1>(value)));
 }
 
-static py::tuple extract_mesh(InteractiveSession &session) {
+static py::tuple extract_mesh(InteractiveSession &session, bool strict) {
     py::gil_scoped_release release;
-    auto value = session.extract_mesh();
+    auto value = session.extract_mesh(strict);
     py::gil_scoped_acquire acquire;
     return py::make_tuple(
         matrix_array(std::get<0>(value)),
@@ -178,10 +178,16 @@ PYBIND11_MODULE(_remi_instant_meshes, module) {
         .def("start_orientation", &InteractiveSession::start_orientation)
         .def("start_position", &InteractiveSession::start_position)
         .def("stop", &InteractiveSession::stop)
+        .def("set_target_faces", &InteractiveSession::set_target_faces,
+             py::arg("target_faces"),
+             py::call_guard<py::gil_scoped_release>())
         .def_property_readonly("active", &InteractiveSession::active)
         .def_property_readonly("progress", &InteractiveSession::progress)
         .def_property_readonly("position_solved", &InteractiveSession::position_solved)
         .def_property_readonly("scale", &InteractiveSession::scale)
+        .def_property_readonly("target_faces", &InteractiveSession::target_faces)
+        .def("needs_input_subdivision", &InteractiveSession::needs_input_subdivision,
+             py::arg("target_faces"))
         .def_property_readonly("average_edge_length", &InteractiveSession::average_edge_length)
         .def_property_readonly("stroke_count", &InteractiveSession::stroke_count)
         .def("surface_snapshot", &surface_snapshot)
@@ -195,5 +201,8 @@ PYBIND11_MODULE(_remi_instant_meshes, module) {
         .def_property_readonly("output_topology", [](InteractiveSession &session) {
             return topology_dict(session.output_topology());
         })
-        .def("extract", &extract_mesh);
+        .def_property_readonly("output_warnings", [](InteractiveSession &session) {
+            return session.output_warnings();
+        })
+        .def("extract", &extract_mesh, py::arg("strict") = false);
 }

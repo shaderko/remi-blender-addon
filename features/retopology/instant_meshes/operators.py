@@ -220,6 +220,10 @@ def _create_preview_object(context):
         values = [int(value) for value in face]
         if len(values) == 4 and values[2] == values[3]:
             values = values[:3]
+        # Degenerate faces are reported as a warning rather than refused, so
+        # they can reach this path; Blender cannot build a face from one.
+        if len(set(values)) < 3:
+            continue
         faces.append(values)
     source = runtime.source
     name = source.name + context.scene.remi_instant_meshes.output_suffix

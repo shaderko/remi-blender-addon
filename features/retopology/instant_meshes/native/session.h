@@ -6,7 +6,9 @@
 
 #include <memory>
 #include <set>
+#include <string>
 #include <tuple>
+#include <vector>
 
 class BVH;
 class Optimizer;
@@ -60,15 +62,20 @@ public:
     std::tuple<MatrixXf, MatrixXf> position_snapshot(uint32_t max_points);
     std::tuple<MatrixXf, VectorXi> orientation_singularities();
     std::tuple<MatrixXf, MatrixXi> position_singularities();
-    std::tuple<MatrixXf, MatrixXu, MatrixXf> extract_mesh();
+    std::tuple<MatrixXf, MatrixXu, MatrixXf> extract_mesh(bool strict);
+    void set_target_faces(int target_faces);
+    bool needs_input_subdivision(int target_faces) const;
     RemiTopologyStats source_topology();
     RemiTopologyStats output_topology();
+    std::vector<std::string> output_warnings();
 
     Float scale() const { return mRes.scale(); }
     Float average_edge_length() const { return (Float) mStats.mAverageEdgeLength; }
     uint32_t stroke_count() const { return (uint32_t) mStrokes.size(); }
+    int target_faces() const { return mTargetFaces; }
 
 private:
+    Float target_scale_for(int face_count) const;
     void apply_constraints_locked();
     void stop_locked();
     void update_solve_state_locked();
@@ -83,6 +90,7 @@ private:
     std::set<uint32_t> mCreases;
     RemiTopologyStats mSourceTopology;
     RemiTopologyStats mOutputTopology;
+    std::vector<std::string> mOutputWarnings;
     bool mSolvingOrientation = false;
     bool mSolvingPosition = false;
     bool mPositionSolutionValid = false;
@@ -90,6 +98,7 @@ private:
     bool mExtrinsic;
     bool mAlignBoundaries;
     bool mDeterministic;
+    int mTargetFaces = 0;
     int mRosy;
     int mPosy;
     int mSmoothIterations;

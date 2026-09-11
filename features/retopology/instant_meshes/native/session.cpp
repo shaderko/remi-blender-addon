@@ -103,6 +103,18 @@ RemiTopologyStats compute_topology(uint32_t vertex_count, const MatrixXu &faces)
 
 } // namespace
 
+Float InteractiveSession::target_scale_for(int face_count) const {
+    int effective_faces = std::max(4, face_count);
+    // Instant Meshes performs a regular 4x subdivision when pure-quad output
+    // is requested. Interpret target_faces as the desired final Blender count.
+    if (mPureQuad && mPosy == 4)
+        effective_faces = std::max(4, effective_faces / 4);
+    Float face_area = (Float) (mStats.mSurfaceArea / effective_faces);
+    return mPosy == 4
+        ? std::sqrt(face_area)
+        : 2 * std::sqrt(face_area * std::sqrt(1.f / 3.f));
+}
+
 InteractiveSession::InteractiveSession(
     MatrixXf vertices,
     MatrixXu faces,
@@ -140,15 +152,8 @@ InteractiveSession::InteractiveSession(
     mSourceTopology = compute_topology((uint32_t) vertices.cols(), faces);
 
     mStats = compute_mesh_stats(faces, vertices, deterministic);
-    int effective_faces = std::max(4, target_faces);
-    // Instant Meshes performs a regular 4x subdivision when pure-quad output
-    // is requested. Interpret target_faces as the desired final Blender count.
-    if (pure_quad && posy == 4)
-        effective_faces = std::max(4, effective_faces / 4);
-    Float face_area = (Float) (mStats.mSurfaceArea / effective_faces);
-    Float target_scale = posy == 4
-        ? std::sqrt(face_area)
-        : 2 * std::sqrt(face_area * std::sqrt(1.f / 3.f));
+    mTargetFaces = target_faces;
+    Float target_scale = target_scale_for(target_faces);
 
     VectorXb boundary, nonmanifold;
     if (mStats.mMaximumEdgeLength * 2 > target_scale ||
@@ -443,7 +448,37 @@ std::tuple<MatrixXf, MatrixXi> InteractiveSession::position_singularities() {
     return std::make_tuple(std::move(positions), std::move(indices));
 }
 
-std::tuple<MatrixXf, MatrixXu, MatrixXf> InteractiveSession::extract_mesh() {
+void InteractiveSession::set_target_faces(int target_faces) {
+    std::lock_guard<ordered_lock> lock(mRes.mutex());
+    if (mOptimizer && mOptimizer->active())
+        throw std::runtime_error("Wait for the field solve to finish before changing the face count");
+    mTargetFaces = target_faces;
+    // The lattice spacing is the only knob that changes; the multi-resolution
+    // hierarchy itself is scale independent and stays built. Re-seed the
+    // fields on the new lattice so extraction really reaches the requested
+    // density, then let the caller re-run the field solve.
+    mRes.setScale(target_scale_for(target_faces));
+    mRes.resetSolution();
+    apply_constraints_locked();
+    mPositionSolutionValid = false;
+    mOutputWarnings.clear();
+}
+
+std::vector<std::string> InteractiveSession::output_warnings() {
+    std::lock_guard<ordered_lock> lock(mRes.mutex());
+    return mOutputWarnings;
+}
+
+bool InteractiveSession::needs_input_subdivision(int target_faces) const {
+    // Same test the constructor uses to decide whether the input mesh is too
+    // coarse for the requested density. A live session cannot refine its own
+    // input, so the caller rebuilds when this returns true.
+    Float target_scale = target_scale_for(target_faces);
+    return mStats.mMaximumEdgeLength * 2 > target_scale ||
+           mStats.mMaximumEdgeLength > mStats.mAverageEdgeLength * 2;
+}
+
+std::tuple<MatrixXf, MatrixXu, MatrixXf> InteractiveSession::extract_mesh(bool strict) {
     std::lock_guard<ordered_lock> lock(mRes.mutex());
     update_solve_state_locked();
     if (mOptimizer && mOptimizer->active())
@@ -451,6 +486,7 @@ std::tuple<MatrixXf, MatrixXu, MatrixXf> InteractiveSession::extract_mesh() {
     if (!mPositionSolutionValid)
         throw std::runtime_error(
             "The position field has not been solved. Solve orientation and position before extracting");
+    mOutputWarnings.clear();
     std::vector<std::vector<TaggedLink>> adjacency;
     MatrixXf vertices, normals, face_normals;
     std::set<uint32_t> crease_out;
@@ -465,19 +501,41 @@ std::tuple<MatrixXf, MatrixXu, MatrixXf> InteractiveSession::extract_mesh() {
     mOutputTopology = compute_topology((uint32_t) vertices.cols(), faces);
     if (mOutputTopology.face_count == 0 || mOutputTopology.used_vertex_count == 0)
         throw std::runtime_error("Instant Meshes extraction returned an empty mesh");
-    if (mOutputTopology.degenerate_faces > 0)
-        throw std::runtime_error("Instant Meshes extraction returned degenerate faces");
-    if (mSourceTopology.nonmanifold_edges == 0 && mOutputTopology.nonmanifold_edges > 0)
-        throw std::runtime_error(
-            "Instant Meshes extraction introduced non-manifold edges; result was rejected");
-    if (mSourceTopology.boundary_edges == 0 && mOutputTopology.boundary_edges > 0)
-        throw std::runtime_error(
-            "Instant Meshes extraction opened holes in a watertight source; result was rejected");
+    // Quality defects below are advisory: the caller decides whether to keep
+    // the result. Strict mode (used by unattended batch runs) still refuses.
+    if (mOutputTopology.degenerate_faces > 0) {
+        std::string message = "Instant Meshes extraction returned degenerate faces";
+        if (strict)
+            throw std::runtime_error(message);
+        mOutputWarnings.push_back(
+            message + " (" + std::to_string(mOutputTopology.degenerate_faces) + ")");
+    }
+    if (mSourceTopology.nonmanifold_edges == 0 && mOutputTopology.nonmanifold_edges > 0) {
+        std::string message =
+            "Instant Meshes extraction introduced non-manifold edges";
+        if (strict)
+            throw std::runtime_error(message + "; result was rejected");
+        mOutputWarnings.push_back(
+            message + " (" + std::to_string(mOutputTopology.nonmanifold_edges) + ")");
+    }
+    if (mSourceTopology.boundary_edges == 0 && mOutputTopology.boundary_edges > 0) {
+        std::string message =
+            "Instant Meshes extraction opened holes in a watertight source";
+        if (strict)
+            throw std::runtime_error(message + "; result was rejected");
+        mOutputWarnings.push_back(
+            message + " (" + std::to_string(mOutputTopology.boundary_edges) + ")");
+    }
     uint32_t allowed_components = std::max(
         8u, std::max(1u, mSourceTopology.components) * 4u);
-    if (mOutputTopology.components > allowed_components)
-        throw std::runtime_error(
-            "Instant Meshes extraction fragmented into too many disconnected components; result was rejected");
+    if (mOutputTopology.components > allowed_components) {
+        std::string message =
+            "Instant Meshes extraction fragmented into too many disconnected components";
+        if (strict)
+            throw std::runtime_error(message + "; result was rejected");
+        mOutputWarnings.push_back(
+            message + " (" + std::to_string(mOutputTopology.components) + ")");
+    }
     return std::make_tuple(
         std::move(vertices), std::move(faces), std::move(normals));
 }

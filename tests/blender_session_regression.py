@@ -672,6 +672,102 @@ def test_transactional_bake_uses_source_checkpoint():
     print("PASS transactional Bake uses the source checkpoint and cleans history data")
 
 
+def test_bake_half_scale_ignores_the_targets_own_scale():
+    """Half-scale bake must shrink source and target by the same factor.
+
+    ``_prepare_world_space_object`` normalises the source to unit scale while
+    the target keeps whatever scale it arrived with.  The half-scale step used
+    to force both objects to a literal 0.5; when the target's scale was already
+    0.5 that left a half-sized source next to a full-sized target, so the bake
+    rays no longer matched the original surface and the normal map came back
+    blank, inverted, or scrambled.
+
+    Half-scale is only a numerical proxy: turning it on must not change the
+    baked result.  This bakes the same pair with the option off and on and
+    requires the two maps to agree.
+    """
+    import math
+
+    _clean_scene()
+    bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=3, radius=1.0)
+    target = bpy.context.active_object
+    target.name = "HalfScaleTarget"
+    target.data.name = "HalfScaleTargetMesh"
+    # Object scale 0.5 with vertex data scaled x2 => world radius 1, but a
+    # non-unit object scale (the situation that broke the literal 0.5).
+    target.scale = (0.5, 0.5, 0.5)
+    for vertex in target.data.vertices:
+        vertex.co *= 2.0
+
+    # Bumpy source with the same world footprint, so the bake has real detail
+    # to capture and a misaligned ray pattern is visible in the result.
+    source = target.copy()
+    source.data = target.data.copy()
+    source.name = "HalfScaleSource"
+    source.data.name = "HalfScaleSourceMesh"
+    bpy.context.collection.objects.link(source)
+    source.scale = (1.0, 1.0, 1.0)
+    for vertex in source.data.vertices:
+        normal = vertex.co.normalized()
+        bump = 0.12 * (
+            math.sin(11.0 * vertex.co.x + 2.1) * math.cos(7.0 * vertex.co.y + 0.7)
+            + 0.6 * math.sin(13.0 * vertex.co.z + 3.3)
+        )
+        vertex.co = vertex.co + normal * bump
+
+    bpy.ops.object.select_all(action="DESELECT")
+    bpy.context.view_layer.objects.active = target
+    target.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.uv.smart_project(angle_limit=1.15192, island_margin=0.02)
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+    settings = bpy.context.scene.remi_settings
+    size = 256
+
+    def bake(half_scale, name):
+        settings.bake_half_scale = half_scale
+        result = baking.bake_textures(
+            source,
+            target,
+            texture_size=size,
+            final_name=name,
+            auto_unwrap=False,
+            cage_extrusion=0.25,
+            max_ray_distance=0.0,
+            passes=("normal",),
+            consume_sources=False,
+            reuse_outputs=False,
+        )
+        assert result["success"], result
+        image = bpy.data.images.get(name + "_normal")
+        assert image is not None, "normal image missing"
+        buffer = [0.0] * (size * size * 4)
+        image.pixels.foreach_get(buffer)
+        bpy.data.images.remove(image)
+        return buffer
+
+    half_off = bake(False, "HalfScaleBakeOff")
+    half_on = bake(True, "HalfScaleBakeOn")
+
+    # Alpha (every 4th value) can legitimately differ at island edges, so the
+    # comparison stays on the RGB channels of texels both bakes wrote.
+    texel_diffs = []
+    for index in range(0, size * size * 4, 4):
+        if half_off[index + 3] > 0.5 and half_on[index + 3] > 0.5:
+            texel_diffs.append(
+                sum(abs(half_off[index + c] - half_on[index + c]) for c in range(3)) / 3.0
+            )
+    assert texel_diffs, "both bakes produced no overlapping texels"
+    mean_difference = sum(texel_diffs) / len(texel_diffs)
+    assert mean_difference < 0.02, (
+        "half-scale changed the baked normals "
+        f"(mean RGB difference={mean_difference:.4f}); it must be a no-op proxy"
+    )
+    print("PASS half-scale bake follows the target's own scale")
+
+
 def test_transactional_decimation_when_available():
     if not meshlab.ensure_pymeshlab():
         print("SKIP transactional Decimate: PyMeshLab is not installed")
@@ -765,6 +861,7 @@ try:
     test_manual_hole_repair_is_a_session_step()
     test_repair_ui_keeps_manual_and_advanced_controls()
     test_transactional_bake_uses_source_checkpoint()
+    test_bake_half_scale_ignores_the_targets_own_scale()
     test_transactional_decimation_when_available()
     test_autoremesher_candidate_commits_in_place()
 finally:

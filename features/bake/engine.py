@@ -413,15 +413,22 @@ def bake_textures(
     ]
 
     # ── Half-scale ──────────────────────────────────────────────
-    # Temporarily set both objects to 0.5× scale (no transform apply).
-    # This shrinks the absolute surface displacement so bake rays hit
-    # reliably.  The target's scale is restored after baking.
+    # Shrink both meshes about the world origin by 0.5 so the absolute surface
+    # displacement drops and bake rays hit reliably.  Crucially the shrink has
+    # to be *relative*: _prepare_world_space_object normalises the source to
+    # unit scale, but the target keeps whatever scale it arrived with.  Setting
+    # the target's scale to a literal 0.5 (instead of multiplying it) leaves a
+    # scaled target next to a half-sized source, so the two meshes no longer
+    # line up and the rays miss.  Target transform is restored after baking.
     _half = bpy.context.scene.remi_settings.bake_half_scale
+    _t_save = None
     if _half:
-        _t_save = target_result.scale.copy()
+        _t_save = (target_result.scale.copy(), target_result.location.copy())
         for temp_source in temp_sources:
-            temp_source.scale = (0.5, 0.5, 0.5)
-        target_result.scale = (0.5, 0.5, 0.5)
+            temp_source.scale = tuple(s * 0.5 for s in temp_source.scale)
+            temp_source.location = tuple(l * 0.5 for l in temp_source.location)
+        target_result.scale = tuple(s * 0.5 for s in _t_save[0])
+        target_result.location = tuple(l * 0.5 for l in _t_save[1])
 
     bake_error = None
     try:
@@ -439,8 +446,9 @@ def bake_textures(
         bake_error = str(error)
     finally:
         # Always leave the scene usable after a failed bake.
-        if _half:
-            target_result.scale = _t_save
+        if _half and _t_save is not None:
+            target_result.scale = _t_save[0]
+            target_result.location = _t_save[1]
         bpy.ops.object.select_all(action="DESELECT")
         for temp_source in temp_sources:
             try:

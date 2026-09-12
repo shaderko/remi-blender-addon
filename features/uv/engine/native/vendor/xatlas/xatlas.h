@@ -196,6 +196,10 @@ void ComputeCharts(Atlas *atlas, ChartOptions options = ChartOptions());
 
 struct PackOptions
 {
+	// Remi extension: preserve chart shape and use global scale when fitting.
+	// Raster allocation still rounds outward, but UV geometry is not stretched.
+	bool preserveChartShape = false;
+
 	// Charts larger than this will be scaled down. 0 means no limit.
 	uint32_t maxChartSize = 0;
 

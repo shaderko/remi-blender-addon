@@ -4,6 +4,7 @@ import bpy
 from bpy.types import Operator
 
 from .service import create_candidate as _create_uv_candidate
+from .engine.blender_bridge import _ContextSnapshot
 
 
 class Remi_OT_GenerateUV(Operator):
@@ -25,27 +26,38 @@ class Remi_OT_GenerateUV(Operator):
     def execute(self, context):
         obj = context.active_object
         settings = context.scene.remi_settings
-        candidate, error, report = _create_uv_candidate(obj, settings)
-        if error:
-            self.report({"ERROR"}, error)
-            return {"CANCELLED"}
-        # Standalone UV keeps its historical in-place behavior while sharing
-        # the same isolated candidate path as a Remi session.
-        old_mesh = obj.data
-        obj.data = candidate.data
-        bpy.data.objects.remove(candidate, do_unlink=True)
-        if old_mesh.users == 0:
-            bpy.data.meshes.remove(old_mesh)
-        stats = report["stats"]
-        if stats:
-            self.report(
-                {"INFO"},
-                f"Remi UV: {report['chart_count']} charts, "
-                f"p95 stretch {stats.conformal_p95:.2f}, "
-                f"{stats.packing_occupancy:.0%} occupancy",
-            )
-        else:
-            self.report({"INFO"}, "Remi UV map is ready")
-        if report["warnings"]:
-            print("Remi UV warnings: " + "; ".join(report["warnings"]))
-        return {"FINISHED"}
+        snapshot = _ContextSnapshot(context, obj)
+        try:
+            snapshot.prepare()
+            candidate, error, report = _create_uv_candidate(obj, settings)
+            if error:
+                self.report({"ERROR"}, error)
+                return {"CANCELLED"}
+            # Standalone UV keeps its historical in-place behavior while sharing
+            # the same isolated candidate path as a Remi session.
+            old_mesh = obj.data
+            obj.data = candidate.data
+            for key in tuple(obj.keys()):
+                if key.startswith("remi_uv_"):
+                    del obj[key]
+            for key in candidate.keys():
+                if key.startswith("remi_uv_"):
+                    obj[key] = candidate[key]
+            bpy.data.objects.remove(candidate, do_unlink=True)
+            if old_mesh.users == 0:
+                bpy.data.meshes.remove(old_mesh)
+            stats = report["stats"]
+            if stats:
+                self.report(
+                    {"INFO"},
+                    f"Remi UV: {report['chart_count']} charts, "
+                    f"p95 stretch {stats.conformal_p95:.2f}, "
+                    f"{stats.packing_occupancy:.0%} occupancy",
+                )
+            else:
+                self.report({"INFO"}, "Remi UV map is ready")
+            if report["warnings"]:
+                print("Remi UV warnings: " + "; ".join(report["warnings"]))
+            return {"FINISHED"}
+        finally:
+            snapshot.restore()

@@ -7,8 +7,10 @@ Run with:
 from pathlib import Path
 import math
 import sys
+from unittest.mock import patch
 
 import bpy
+import numpy as np
 
 
 ADDON_PARENT = Path(__file__).resolve().parents[2]
@@ -21,8 +23,12 @@ from remi.features.uv.engine.analysis import analyze_mesh
 from remi.features.uv.engine.blender_bridge import _repair_uv_flips, _seams_from_active_uv
 from remi.features.uv.engine.metrics import find_uv_overlaps
 from remi.features.uv.engine.metrics import evaluate_uv
+from remi.features.uv.engine.metrics import _triangle_distortion
 from remi.features.uv.engine.packing import native_packer_available
 from remi.features.uv.engine.settings import get_profile
+from remi.features.uv.engine.fitting import fit_islands
+from remi.features.uv.engine._native import uv_overlaps, uv_boundaries, boundary_contacts, pack_uvs
+from remi.features.uv.engine.blender_bridge import validate_existing_uv
 
 
 def _clean_scene():
@@ -98,7 +104,7 @@ def test_native_packer_and_smart_quality_guard():
         island_margin=4.0 / 1024.0,
         area_weight=0.0,
         correct_aspect=True,
-        scale_to_bounds=True,
+        scale_to_bounds=False,
     )
     bpy.ops.object.mode_set(mode="OBJECT")
     analysis = analyze_mesh(obj.data)
@@ -310,8 +316,9 @@ def test_pathological_overlap_validation_is_bounded():
         loop.uv = triangle_uvs[loop_index % 3]
 
     stats = evaluate_uv(mesh, analyze_mesh(mesh), set(), check_overlaps=True)
-    expected_cap = max(9, triangle_count // 1000 + 1)
+    expected_cap = 4096
     assert stats.overlap_pairs == expected_cap, stats.to_dict()
+    assert stats.overlaps_checked and not stats.overlap_pairs_complete
     bpy.data.meshes.remove(mesh)
     print("PASS pathological overlap validation is bounded")
 
@@ -361,15 +368,139 @@ def test_registered_operator():
     _clean_scene()
     bpy.ops.mesh.primitive_cube_add()
     obj = bpy.context.active_object
-    while obj.data.uv_layers:
-        obj.data.uv_layers.remove(obj.data.uv_layers[0])
+    for loop in obj.data.uv_layers.active.data:
+        loop.uv *= 0.1
+    before = [tuple(loop.uv) for loop in obj.data.uv_layers.active.data]
     settings = bpy.context.scene.remi_settings
     assert settings.bake_uv_method == "REMI"
     assert settings.bake_uv_profile == "NORMAL_BAKE"
     result = bpy.ops.remi.generate_uv()
     assert "FINISHED" in result, f"registered operator failed: {result}"
     assert obj.data.uv_layers.active is not None
+    assert before != [tuple(loop.uv) for loop in obj.data.uv_layers.active.data]
+    assert obj["remi_uv_occupancy"] > 0.5
+    assert validate_existing_uv(obj).valid
+    bpy.ops.object.mode_set(mode="EDIT")
+    result = bpy.ops.remi.generate_uv()
+    assert "FINISHED" in result and bpy.context.mode == "EDIT_MESH"
+    bpy.ops.object.mode_set(mode="OBJECT")
     print("PASS registered operator and defaults")
+
+
+def test_continuous_gap_fitting_and_shared_scale():
+    triangles = np.asarray(((0, 1, 2), (0, 2, 3), (4, 5, 6), (4, 6, 7)), dtype=np.uint32)
+    charts = np.asarray((0, 0, 1, 1), dtype=np.uint32)
+    for gap in (0, 1, 2, 3, 4, 9, 32):
+        # Two almost packed square islands, with one extra pixel to recover.
+        separation = (gap + 1) / 512
+        width = (1 - separation) / 2 - 0.0002
+        uv = np.asarray(((0.0001, .2), (width + .0001, .2),
+                         (width + .0001, .2 + width), (.0001, .2 + width),
+                         (1-width-.0001, .2), (1-.0001, .2),
+                         (1-.0001, .2+width), (1-width-.0001, .2+width)))
+        fitted = fit_islands(uv, triangles, charts, 512, gap, attempts=32)
+        boundary = uv_boundaries(fitted, triangles, charts)
+        distance = boundary_contacts(fitted[boundary["vertices"]], boundary["charts"], 0.0)["minimum_gap"] * 512
+        assert gap - .001 <= distance < gap + .08, (gap, distance)
+        assert not len(uv_overlaps(fitted, triangles, 1)["pairs"])
+        assert fitted.min() >= -1e-7 and fitted.max() <= 1.0000001
+        scales = []
+        for start in (0, 4):
+            x = fitted[start + 1] - fitted[start]
+            y = fitted[start + 3] - fitted[start]
+            scales.append(np.linalg.norm(x) / width)
+            assert abs(np.dot(x, y)) < 1e-7, "fitting sheared an island"
+            assert abs(np.linalg.norm(x) - np.linalg.norm(y)) < 1e-7
+        assert abs(scales[0] - scales[1]) < 1e-6, "islands received independent scales"
+    print("PASS exact edge gaps and common-scale continuous fitting")
+
+
+def test_native_packing_preserves_thin_shapes_and_relative_area():
+    from mathutils import Vector
+    for size in (1.0e-8, 1.0, 1.0e8):
+        points = [Vector((0, 0, 0)), Vector((size, 0, 0)), Vector((0, size, 0))]
+        distortion, _ = _triangle_distortion(points, ((0, 0), (.1, 0), (0, .1)))
+        assert distortion is not None and abs(distortion - 1) < 1e-6
+    uv = np.asarray(((0, 0), (10, 0), (10, 10), (0, 10),
+                     (20, 0), (21, 0), (21, 1), (20, 1),
+                     (30, 0), (31, 0), (30, .0005)), dtype=np.float32)
+    triangles = np.asarray(((0, 1, 2), (0, 2, 3), (4, 5, 6), (4, 6, 7), (8, 9, 10)), dtype=np.uint32)
+    charts = np.asarray((0, 0, 1, 1, 2), dtype=np.uint32)
+    result = pack_uvs(uv, triangles, charts, 256, 4)
+    assert result["atlas_count"] == 1
+    packed = np.asarray(result["uvs"], dtype=np.float64)
+    scales = []
+    for corners in ((0, 1, 3), (4, 5, 7), (8, 9, 10)):
+        a, b, c = corners
+        source = np.stack((uv[b] - uv[a], uv[c] - uv[a])).astype(float)
+        target = np.stack((packed[b] - packed[a], packed[c] - packed[a]))
+        jacobian = np.linalg.solve(source, target)
+        singular = np.linalg.svd(jacobian, compute_uv=False)
+        assert singular[0] / singular[1] < 1.003, singular
+        scales.append(singular.mean())
+    assert max(scales) / min(scales) < 1.003, scales
+    print("PASS native thin-chart shape and relative island scale preservation")
+
+
+def test_shared_topology_overlaps_and_exact_repair_counts():
+    mesh = bpy.data.meshes.new("DuplicateFaces")
+    mesh.from_pydata(((0, 0, 0), (1, 0, 0), (0, 1, 0)), [], ((0, 1, 2), (0, 1, 2)))
+    layer = mesh.uv_layers.new(name="Stacked")
+    for i, loop in enumerate(layer.data):
+        loop.uv = ((.1, .1), (.9, .1), (.1, .9))[i % 3]
+    stats = evaluate_uv(mesh, analyze_mesh(mesh), set(), True)
+    assert stats.overlap_pairs == 1 and not stats.valid
+    bpy.data.meshes.remove(mesh)
+
+    mesh = bpy.data.meshes.new("PartialStackLargeMesh")
+    n = 10_021
+    vertices = [(float(i * 2 + x), float(y), 0.0) for i in range(n) for x, y in ((0, 0), (1, 0), (0, 1))]
+    mesh.from_pydata(vertices, [], [(i*3, i*3+1, i*3+2) for i in range(n)])
+    layer = mesh.uv_layers.new(name="PartialStack")
+    for i in range(n):
+        cell = 0 if i >= n - 20 else i
+        x, y = (cell % 101) * .009, (cell // 101) * .009
+        for k, xy in enumerate(((x, y), (x+.008, y), (x, y+.008))):
+            layer.data[i*3+k].uv = xy
+    stats = evaluate_uv(mesh, analyze_mesh(mesh), set(), True)
+    assert stats.overlap_pairs == 210, stats.to_dict()
+    assert stats.overlap_pairs_complete and stats.overlaps_checked
+    bpy.data.meshes.remove(mesh)
+    print("PASS adjacent/duplicate face overlaps and uncapped repair progress counts")
+
+
+def test_cache_invalidation_bake_validation_and_failure_rollback():
+    from remi.features.bake.engine import _ensure_uv
+    import remi.features.uv.engine.blender_bridge as bridge
+    _clean_scene()
+    bpy.ops.mesh.primitive_cube_add()
+    obj = bpy.context.object
+    result = ensure_remi_uv(obj, texture_size=512, replace_existing=True)
+    assert result.success
+    layer = obj.data.uv_layers.active
+    a, b = obj.data.polygons[:2]
+    for left, right in zip(a.loop_indices, b.loop_indices):
+        layer.data[right].uv = layer.data[left].uv
+    broken = [tuple(loop.uv) for loop in layer.data]
+    assert not validate_existing_uv(obj).valid, "stale summary hid a new overlap"
+    assert not _ensure_uv(obj, auto_unwrap=False), "bake accepted invalid existing UVs"
+    assert broken == [tuple(loop.uv) for loop in layer.data], "validation modified artist UVs"
+    repaired = ensure_remi_uv(obj, texture_size=512, trust_stored_result=True)
+    assert repaired.success and repaired.created
+    assert _ensure_uv(obj, auto_unwrap=False)
+
+    coordinates = [tuple(loop.uv) for loop in obj.data.uv_layers.active.data]
+    seams = [edge.use_seam for edge in obj.data.edges]
+    name = obj.data.uv_layers.active.name
+    with patch.object(bridge, "unwrap_candidates", return_value=[]), \
+         patch.object(bridge, "_run_unwrap", side_effect=RuntimeError("test failure")), \
+         patch.object(bridge, "_smart_fallback", side_effect=RuntimeError("test failure")):
+        failed = ensure_remi_uv(obj, replace_existing=True)
+    assert not failed.success
+    assert coordinates == [tuple(loop.uv) for loop in obj.data.uv_layers.active.data]
+    assert seams == [edge.use_seam for edge in obj.data.edges]
+    assert name == obj.data.uv_layers.active.name
+    print("PASS content cache invalidation, bake rejection, and rollback on generation failure")
 
 
 def test_material_boundaries_and_pixel_padding():
@@ -462,6 +593,10 @@ def test_overlap_pair_diagnostics():
 def main():
     remi.register()
     try:
+        test_continuous_gap_fitting_and_shared_scale()
+        test_native_packing_preserves_thin_shapes_and_relative_area()
+        test_shared_topology_overlaps_and_exact_repair_counts()
+        test_cache_invalidation_bake_validation_and_failure_rollback()
         test_primitives()
         test_native_packer_and_smart_quality_guard()
         test_face_local_flip_repair()

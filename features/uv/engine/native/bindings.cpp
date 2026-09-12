@@ -12,6 +12,8 @@
 
 namespace py = pybind11;
 
+#include "geometry.h"
+
 namespace {
 
 struct AtlasDeleter {
@@ -70,7 +72,7 @@ void pack_at_exact_resolution(xatlas::Atlas *atlas, xatlas::PackOptions options)
         }
     }
     if (found_upper_bound) {
-        const int refinement_count = atlas->chartCount > 256 ? 1 : 2;
+        const int refinement_count = 5;
         for (int attempt = 0; attempt < refinement_count; ++attempt) {
             const float middle = (low + high) * 0.5f;
             options.texelsPerUnit = middle;
@@ -144,12 +146,16 @@ py::dict pack_uvs(
     xatlas::ComputeCharts(atlas.get(), chart_options);
 
     xatlas::PackOptions options;
+    options.preserveChartShape = true;
     options.resolution = resolution;
-    options.padding = padding;
+    // The public parameter is the gap between islands, not padding per side.
+    // Disable the additional bilinear footprint; geometric fitting/validation
+    // enforces the requested separation after this conservative raster layout.
+    options.padding = padding / 2;
     options.bruteForce = brute_force;
     options.rotateCharts = rotate;
     options.rotateChartsToAxis = rotate_to_axis;
-    options.bilinear = bilinear;
+    options.bilinear = false;
     options.blockAlign = block_align;
     options.createImage = false;
     pack_at_exact_resolution(atlas.get(), options);
@@ -249,9 +255,10 @@ py::dict unwrap_mesh(
     xatlas::ComputeCharts(atlas.get(), chart_options);
 
     xatlas::PackOptions pack_options;
+    pack_options.preserveChartShape = true;
     pack_options.resolution = resolution;
-    pack_options.padding = padding;
-    pack_options.bilinear = true;
+    pack_options.padding = padding / 2;
+    pack_options.bilinear = false;
     pack_options.bruteForce = brute_force;
     pack_options.rotateCharts = true;
     pack_options.rotateChartsToAxis = rotate_to_axis;
@@ -313,6 +320,11 @@ PYBIND11_MODULE(_remi_uv_packer, module)
 {
     module.doc() = "Remi's xatlas-backed existing-chart UV packer";
     xatlas::SetPrint(nullptr, false);
+    module.attr("gap_semantics_version") = 1;
+    module.def("uv_overlaps", &uv_geometry::uv_overlaps,
+        py::arg("uvs"), py::arg("triangles"), py::arg("limit") = 4096);
+    module.def("uv_boundaries", &uv_geometry::uv_boundaries);
+    module.def("boundary_contacts", &uv_geometry::boundary_contacts);
     module.def(
         "pack_uvs",
         &pack_uvs,

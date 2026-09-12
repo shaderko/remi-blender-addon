@@ -17,8 +17,8 @@ def _build_candidate(source, settings, suffix="_uv", candidate=None):
             texture_size=settings.bake_texture_size,
             margin_px=settings.bake_uv_margin_px,
             preserve_existing_seams=settings.bake_uv_preserve_seams,
-            replace_existing=False,
-            trust_stored_result=True,
+            replace_existing=True,
+            trust_stored_result=False,
         )
     except Exception:
         remove_mesh_object(candidate)

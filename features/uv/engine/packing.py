@@ -6,6 +6,7 @@ import time
 import numpy as np
 
 from .metrics import _chart_ids
+from .fitting import fit_islands
 
 try:
     from ._native import pack_uvs as _native_pack_uvs, unwrap_mesh as _native_unwrap_mesh
@@ -106,6 +107,7 @@ def pack_candidates(
         maximum = np.max(output, axis=0)
         if np.any(minimum < -1.0e-6) or np.any(maximum > 1.000001):
             continue
+        output = fit_islands(output, triangles, chart_ids, resolution, padding)
         attempts.append(PackingAttempt(
             name=name,
             uvs=output,
@@ -202,6 +204,8 @@ def unwrap_candidates(
                 "internally; candidate rejected"
             )
             continue
+        # Reconstruct actual chart membership in Blender before continuous
+        # fitting; the generated atlas exposes triangle atlas ids, not chart ids.
         attempt = PackingAttempt(
             name=f"XATLAS_CHARTS_C{max_cost:g}",
             uvs=output,

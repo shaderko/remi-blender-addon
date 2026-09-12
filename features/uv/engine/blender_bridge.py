@@ -1,9 +1,12 @@
 """Context-safe Blender orchestration for the Remi UV pipeline."""
 
 from dataclasses import dataclass, field
+import hashlib
+import json
 import math
 
 import bpy
+import numpy as np
 
 from .analysis import (
     add_distortion_split_seams,
@@ -14,6 +17,9 @@ from .analysis import (
 from .metrics import UVStats, evaluate_uv, find_uv_overlaps
 from .packing import apply_packing_attempt, pack_candidates, unwrap_candidates
 from .settings import get_profile
+from .refinement import refine_atlas
+from .fitting import fit_islands
+from .packing import _input_arrays
 
 
 _LARGE_MESH_TRIANGLE_THRESHOLD = 20_000
@@ -39,6 +45,7 @@ class _UVCandidate:
     seams: set[int]
     stats: UVStats
     packer: str
+    warnings: list[str] = field(default_factory=list)
 
 
 class _ContextSnapshot:
@@ -157,12 +164,18 @@ def _pack(
         attempts = []
         print(f"Remi UV: xatlas packing failed, using Blender fallback: {error}")
     if attempts:
-        best = attempts[0]
+        ranked = []
+        for attempt in attempts:
+            apply_packing_attempt(obj.data, attempt)
+            stats = evaluate_uv(obj.data, analysis, seams, True, texture_size, margin_px)
+            ranked.append(((stats.valid, -stats.collapsed_triangles, -stats.flipped_triangles,
+                            -stats.overlap_pairs, stats.gap_valid, attempt.occupancy), attempt))
+        best = max(ranked, key=lambda item: item[0])[1]
         apply_packing_attempt(obj.data, best)
         print(
             f"Remi UV: {best.name} selected from {len(attempts)} layouts, "
             f"{best.occupancy:.1%} geometry occupancy, "
-            f"{best.xatlas_utilization:.1%} padded utilization, "
+            f"{best.xatlas_utilization:.1%} initial raster utilization, "
             f"{best.duration_ms:.0f} ms"
         )
         return best.name
@@ -175,7 +188,7 @@ def _pack(
         scale=True,
         merge_overlap=False,
         margin_method="FRACTION",
-        margin=margin * (1.25 if conservative else 1.0),
+        margin=margin,
         pin=False,
         shape_method="AABB" if conservative else "CONCAVE",
     )
@@ -195,7 +208,7 @@ def _smart_fallback(obj, texture_size: int, margin_px: int):
         island_margin=max(0.0, float(margin_px) / max(1, texture_size)),
         area_weight=0.0,
         correct_aspect=True,
-        scale_to_bounds=True,
+        scale_to_bounds=False,
     )
     if "FINISHED" not in result:
         raise RuntimeError("Blender Smart Project fallback did not finish")
@@ -234,8 +247,52 @@ def _store_summary(
     obj["remi_uv_texture_size"] = int(texture_size)
     obj["remi_uv_margin_px"] = int(margin_px)
     obj["remi_uv_bounds"] = list(stats.uv_bounds)
+    obj["remi_uv_fingerprint"] = _uv_fingerprint(obj)
+    saved_stats = stats.to_dict()
+    for key in ("valid", "face_distortion", "flipped_faces"):
+        saved_stats.pop(key, None)
+    obj["remi_uv_validation"] = json.dumps(saved_stats)
     if generated_seams is not None:
         obj["remi_uv_generated_seams"] = sorted(generated_seams)
+
+
+def _uv_fingerprint(obj):
+    """Content-address validation; counts alone do not detect UV or mesh edits."""
+    mesh = obj.data
+    if mesh.uv_layers.active is None:
+        return ""
+    digest = hashlib.sha256(b"remi-uv-validation-v2-gap-between-islands")
+    for collection, attribute, width, dtype in (
+        (mesh.vertices, "co", 3, np.float32),
+        (mesh.loops, "vertex_index", 1, np.int32),
+        (mesh.polygons, "loop_total", 1, np.int32),
+        (mesh.polygons, "material_index", 1, np.int32),
+        (mesh.edges, "use_seam", 1, np.bool_),
+        (mesh.uv_layers.active.data, "uv", 2, np.float32),
+    ):
+        values = np.empty(len(collection) * width, dtype=dtype)
+        collection.foreach_get(attribute, values)
+        digest.update(values.tobytes())
+    digest.update(mesh.uv_layers.active.name.encode("utf-8"))
+    digest.update(np.asarray(obj.matrix_world, dtype=np.float64).tobytes())
+    return digest.hexdigest()
+
+
+def validate_existing_uv(obj):
+    """Validate an existing map without changing it or running an unwrap."""
+    if obj.data.uv_layers.active is None:
+        return None
+    if bpy.context.mode == "EDIT_MESH":
+        obj.update_from_editmode()
+    if obj.get("remi_uv_fingerprint") == _uv_fingerprint(obj):
+        try:
+            stats = UVStats(**json.loads(obj.get("remi_uv_validation", "{}")))
+            if stats.valid:
+                return stats
+        except (ValueError, TypeError):
+            pass
+    analysis = analyze_mesh(obj.data)
+    return evaluate_uv(obj.data, analysis, _seams_from_active_uv(obj.data), check_overlaps=True)
 
 
 def _seams_from_active_uv(mesh) -> set[int]:
@@ -302,8 +359,8 @@ def _restore_uvs(mesh, coordinates: list[tuple[float, float]]):
     mesh.update()
 
 
-def _capture_candidate(mesh, name: str, seams: set[int], stats: UVStats, packer: str):
-    return _UVCandidate(name, _capture_uvs(mesh), set(seams), stats, packer)
+def _capture_candidate(mesh, name: str, seams: set[int], stats: UVStats, packer: str, warnings=None):
+    return _UVCandidate(name, _capture_uvs(mesh), set(seams), stats, packer, list(warnings or []))
 
 
 def _restore_candidate(mesh, candidate: _UVCandidate):
@@ -448,98 +505,122 @@ def _repair_uv_flips(
 
 
 def _repair_uv_overlaps(
-    obj,
-    mesh,
-    analysis,
-    seams: set[int],
-    profile,
-    solver: str,
-    texture_size: int,
-    margin_px: int,
-    stats: UVStats,
-    warnings: list[str],
+    obj, mesh, analysis, seams, profile, solver, texture_size, margin_px, stats, warnings,
 ) -> tuple[UVStats, set[int]]:
-    """Repair local foldovers while retaining the best valid attempt."""
-    for _repair_pass in range(max(2, profile.repair_passes)):
+    """Cut conflicting faces and repack without re-flattening good regions."""
+    from .metrics import _chart_ids
+
+    for _ in range(max(3, profile.repair_passes)):
         if not stats.overlap_pairs:
             break
-        overlap_details = find_uv_overlaps(
-            mesh,
-            max_pairs=max(64, stats.overlap_pairs),
-        )
-        overlap_pairs = [
-            (detail["polygon_a"], detail["polygon_b"])
-            for detail in overlap_details
+        details = find_uv_overlaps(mesh, max_pairs=4096)
+        charts, _count = _chart_ids(analysis, seams)
+        intra = [
+            (d["polygon_a"], d["polygon_b"]) for d in details
+            if charts[d["polygon_a"]] == charts[d["polygon_b"]]
         ]
-        additions, repair_faces = add_overlap_split_seams(
-            analysis,
-            overlap_pairs,
-            seams,
-        )
-        if not additions:
+        additions, faces = add_overlap_split_seams(analysis, intra, seams)
+        if len(faces) > max(64, stats.triangle_count // 8):
             break
-
-        previous_uvs = _capture_uvs(mesh)
-        previous_seams = set(seams)
-        candidate_seams = seams.union(additions)
-        _apply_seams(mesh, candidate_seams, preserve_existing=False)
-        _run_unwrap(obj, solver, profile.iterations)
-        _pack(obj, analysis, candidate_seams, profile, texture_size, margin_px)
-        candidate = evaluate_uv(mesh, analysis, candidate_seams, check_overlaps=True)
-        print(
-            f"Remi UV: overlap repair tested {len(repair_faces)} local face "
-            f"regions and left {candidate.overlap_pairs} intersections"
-        )
-        improved = (
-            candidate.overlap_pairs < stats.overlap_pairs
-            and not candidate.collapsed_triangles
-            and not candidate.flipped_triangles
-        )
-        if not improved:
-            _restore_uvs(mesh, previous_uvs)
-            _apply_seams(mesh, previous_seams, preserve_existing=False)
-            # Seam-only parameterization can still weld vertex-only face fans.
-            # Re-project just the minimal conflicting face cover as independent
-            # micro-charts, leaving every other island untouched.
-            local_seams = _lightmap_local_faces(
-                obj,
-                mesh,
-                analysis,
-                repair_faces,
-                profile,
-                texture_size,
-                margin_px,
+        # Selected neighboring faces must also be separated from each other.
+        additions.update(e.index for e in analysis.edges if any(f in faces for f in e.faces))
+        old_uvs, old_seams = _capture_uvs(mesh), set(seams)
+        candidate_seams = seams | additions
+        try:
+            _apply_seams(mesh, candidate_seams, False)
+            _pack(obj, analysis, candidate_seams, profile, texture_size, margin_px, conservative=True)
+            candidate = evaluate_uv(mesh, analysis, candidate_seams, True, texture_size, margin_px)
+            progress = candidate.overlap_pairs_complete and (
+                not stats.overlap_pairs_complete or candidate.overlap_pairs < stats.overlap_pairs
             )
-            local_candidate = evaluate_uv(
-                mesh,
-                analysis,
-                local_seams,
-                check_overlaps=True,
-            )
-            local_improved = (
-                local_candidate.overlap_pairs < stats.overlap_pairs
-                and not local_candidate.collapsed_triangles
-                and not local_candidate.flipped_triangles
-            )
-            if not local_improved:
-                _restore_uvs(mesh, previous_uvs)
-                _apply_seams(mesh, previous_seams, preserve_existing=False)
+            if (
+                not progress or candidate.collapsed_triangles or candidate.flipped_triangles
+                or candidate.non_finite_uvs
+            ):
+                _restore_uvs(mesh, old_uvs)
+                _apply_seams(mesh, old_seams, False)
                 break
             warnings.append(
-                f"Resolved {stats.overlap_pairs - local_candidate.overlap_pairs} "
-                f"UV intersections with {len(repair_faces)} face-local charts"
+                f"Cut {len(faces)} conflicting faces without re-unwrapping other charts; "
+                f"{candidate.overlap_pairs} intersections remain"
             )
-            stats = local_candidate
-            seams = local_seams
-            continue
-
-        warnings.append(
-            f"Repaired {stats.overlap_pairs - candidate.overlap_pairs} UV "
-            f"intersections around {len(repair_faces)} local face regions"
-        )
-        stats = candidate
-        seams = candidate_seams
+            stats, seams = candidate, candidate_seams
+        except (RuntimeError, ValueError):
+            _restore_uvs(mesh, old_uvs)
+            _apply_seams(mesh, old_seams, False)
+            break
     return stats, seams
+
+
+def _unwrap_local_faces(obj, faces, method, iterations):
+    """Reparameterize only an edited region, retaining its total texture area."""
+    _object_mode()
+    mesh = obj.data
+    previous = _capture_uvs(mesh)
+    mesh.calc_loop_triangles()
+    loops = {loop for face in faces for loop in mesh.polygons[face].loop_indices}
+    triangles = [tuple(t.loops) for t in mesh.loop_triangles if t.polygon_index in faces]
+
+    def area(coordinates):
+        p = np.asarray(coordinates)[np.asarray(triangles)]
+        a, b = p[:, 1] - p[:, 0], p[:, 2] - p[:, 0]
+        return np.abs(a[:, 0] * b[:, 1] - a[:, 1] * b[:, 0]).sum() * 0.5
+
+    before_area = area(previous)
+    for vertex in mesh.vertices:
+        vertex.select = False
+    for edge in mesh.edges:
+        edge.select = False
+    for face in mesh.polygons:
+        face.select = face.index in faces
+    bpy.context.tool_settings.mesh_select_mode = (False, False, True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    try:
+        result = bpy.ops.uv.unwrap(
+            method=method, fill_holes=True, correct_aspect=True, margin=0.0,
+            no_flip=True, iterations=min(18, iterations),
+        )
+        if "FINISHED" not in result:
+            raise RuntimeError("Local unwrap failed")
+    finally:
+        _object_mode()
+    current = np.asarray(_capture_uvs(mesh))
+    after_area = area(current)
+    if not np.isfinite(current).all() or after_area <= 1.0e-15:
+        raise RuntimeError("Local unwrap collapsed or produced invalid coordinates")
+    indices = np.asarray(sorted(loops))
+    center = current[indices].mean(axis=0)
+    current[indices] = center + (current[indices] - center) * math.sqrt(before_area / after_area)
+    for index in range(len(current)):
+        if index not in loops:
+            current[index] = previous[index]
+    _restore_uvs(mesh, current)
+
+
+def _project_stretched_triangles(mesh, analysis, seams, stats, limit):
+    """Give a small number of badly stretched triangles their own isometric charts."""
+    faces = {
+        face for face, stretch in stats.face_distortion.items()
+        if stretch > limit and len(mesh.polygons[face].vertices) == 3
+    }
+    if not faces or len(faces) > max(32, stats.triangle_count // 200):
+        return None
+    total_area = sum(face.area for face in mesh.polygons)
+    scale = math.sqrt(stats.packing_occupancy / max(total_area, 1.0e-20))
+    for ordinal, face_index in enumerate(sorted(faces)):
+        face = mesh.polygons[face_index]
+        points = [mesh.vertices[v].co for v in face.vertices]
+        x = (points[1] - points[0]).normalized()
+        normal = (points[1] - points[0]).cross(points[2] - points[0]).normalized()
+        y = normal.cross(x)
+        for loop_index, point in zip(face.loop_indices, points):
+            delta = point - points[0]
+            mesh.uv_layers.active.data[loop_index].uv = (
+                2.0 + ordinal + delta.dot(x) * scale, delta.dot(y) * scale,
+            )
+    seams = seams | {e.index for e in analysis.edges if any(f in faces for f in e.faces)}
+    _apply_seams(mesh, seams, False)
+    return seams, len(faces)
 
 
 def ensure_remi_uv(
@@ -551,652 +632,217 @@ def ensure_remi_uv(
     replace_existing: bool = False,
     trust_stored_result: bool = False,
 ) -> UVResult:
-    """Create validated, packed UVs on ``obj`` using the Remi UV pipeline."""
-    if obj is None or obj.type != "MESH":
-        return UVResult(False, error="Remi UV needs a mesh object")
-    if not obj.data.polygons:
-        return UVResult(False, error=f"'{obj.name}' has no faces")
+    """Generate, refine and verify a UV atlas, preserving input on failure."""
+    if obj is None or obj.type != "MESH" or not obj.data.polygons:
+        return UVResult(False, error="Remi UV needs a mesh with faces")
     profile = get_profile(profile_id)
-    initial_warnings = []
-    if obj.data.uv_layers and not replace_existing:
-        active_uv = obj.data.uv_layers.active
-        stored_matches = bool(
-            trust_stored_result
-            and active_uv is not None
-            and obj.get("remi_uv_profile") == profile.identifier
-            and obj.get("remi_uv_overlap_pairs") == 0
-            and obj.get("remi_uv_loop_count") == len(obj.data.loops)
-            and obj.get("remi_uv_polygon_count") == len(obj.data.polygons)
-            and obj.get("remi_uv_layer_name") == active_uv.name
+    mesh = obj.data
+    if bpy.context.mode == "EDIT_MESH":
+        obj.update_from_editmode()
+    if mesh.uv_layers.active and not replace_existing:
+        cached = bool(
+            trust_stored_result and obj.get("remi_uv_fingerprint") == _uv_fingerprint(obj)
             and obj.get("remi_uv_texture_size") == int(texture_size)
             and obj.get("remi_uv_margin_px") == int(margin_px)
+            and obj.get("remi_uv_profile") == profile.identifier
         )
-        if stored_matches:
-            bounds = tuple(obj.get("remi_uv_bounds", (0.0, 0.0, 0.0, 0.0)))
-            stats = UVStats(
-                triangle_count=int(obj.get("remi_uv_triangle_count", 0)),
-                chart_count=int(obj.get("remi_uv_chart_count", 0)),
-                conformal_p95=float(obj.get("remi_uv_stretch_p95", 1.0)),
-                packing_occupancy=float(obj.get("remi_uv_occupancy", 0.0)),
-                uv_bounds=bounds,
-            )
+        stats = validate_existing_uv(obj)
+        if stats and stats.valid:
             return UVResult(
-                True,
-                created=False,
-                profile=profile.identifier,
+                True, created=False, profile=profile.identifier,
                 classification=str(obj.get("remi_uv_classification", "")),
-                solver=str(obj.get("remi_uv_solver", "EXISTING")),
-                chart_count=stats.chart_count,
-                stats=stats,
-                warnings=["Reused the UV result already validated by this Remi session"],
+                solver=str(obj.get("remi_uv_solver", "EXISTING")) if cached else "EXISTING",
+                chart_count=stats.chart_count, stats=stats,
+                warnings=["Reused the unchanged validated UV result" if cached else "Kept the existing validated UV map"],
             )
-        try:
-            existing_analysis = analyze_mesh(obj.data)
-            existing_seams = _seams_from_active_uv(obj.data)
-            existing_stats = evaluate_uv(
-                obj.data,
-                existing_analysis,
-                existing_seams,
-                check_overlaps=True,
-            )
-            if existing_stats.valid:
-                _store_summary(
-                    obj,
-                    profile.identifier,
-                    existing_analysis.classification,
-                    "EXISTING",
-                    existing_stats,
-                    texture_size=texture_size,
-                    margin_px=margin_px,
-                )
-                return UVResult(
-                    True,
-                    created=False,
-                    profile=profile.identifier,
-                    classification=existing_analysis.classification,
-                    solver="EXISTING",
-                    chart_count=existing_stats.chart_count,
-                    stats=existing_stats,
-                    warnings=["Kept the existing validated UV map"],
-                )
-            initial_warnings.append(
-                "Existing UV map failed validation and was regenerated"
-            )
-        except ValueError:
-            initial_warnings.append(
-                "Existing UV map could not be validated and was regenerated"
-            )
-
+    warnings = ["Existing UV map failed validation and was regenerated"] if mesh.uv_layers.active and not replace_existing else []
     snapshot = _ContextSnapshot(bpy.context, obj)
-    warnings = list(initial_warnings)
-    fallback_used = False
-    smart_baseline_selected = False
-    xatlas_chart_selected = False
-    solver_used = ""
-
+    original_seams = {e.index for e in mesh.edges if e.use_seam}
+    original_layer = mesh.uv_layers.active
+    original_name = original_layer.name if original_layer else None
+    original_uvs = _capture_uvs(mesh) if original_layer else None
+    original_render = [layer.active_render for layer in mesh.uv_layers]
+    success = False
+    candidates = []
+    failures = []
+    analysis = None
     try:
         snapshot.prepare()
-        mesh = obj.data
+        generated = set(obj.get("remi_uv_generated_seams", ()))
+        artist = original_seams - generated if preserve_existing_seams else set()
+        _apply_seams(mesh, artist, False)
         analysis = analyze_mesh(mesh)
-        existing_marked_seams = {edge.index for edge in mesh.edges if edge.use_seam}
-        previous_generated_seams = set(obj.get("remi_uv_generated_seams", ()))
-        locked_artist_seams = (
-            existing_marked_seams.difference(previous_generated_seams)
-            if preserve_existing_seams
-            else set()
-        )
-        # A regenerated map starts from current artist constraints, not seams
-        # emitted by the previous automatic run. This keeps repeated runs
-        # deterministic while retaining genuinely new manual marks.
-        for edge in mesh.edges:
-            edge.use_seam = edge.index in locked_artist_seams
-        mesh.update()
+        mandatory = artist | {
+            e.index for e in analysis.edges
+            if (e.non_manifold and not e.boundary)
+            or (profile.preserve_material_boundaries and e.material_boundary)
+            or (profile.preserve_sharp_edges and e.sharp)
+        }
         if mesh.uv_layers.active is None:
-            uv_layer = mesh.uv_layers.new(name="RemiUV")
-        else:
-            uv_layer = mesh.uv_layers.active
-            if replace_existing and uv_layer.name != "RemiUV":
-                uv_layer.name = "RemiUV"
-        mesh.uv_layers.active = uv_layer
-        uv_layer.active_render = True
-
+            mesh.uv_layers.new(name="RemiUV")
         mesh.calc_loop_triangles()
-        if (
-            len(mesh.loop_triangles) >= _LARGE_MESH_TRIANGLE_THRESHOLD
-            and not locked_artist_seams
-        ):
+        large = len(mesh.loop_triangles) >= _LARGE_MESH_TRIANGLE_THRESHOLD
+
+        def consider(name, seams, solver="CONFORMAL", repack=True):
+            seams = set(seams) | mandatory
+            _apply_seams(mesh, seams, False)
+            local_warnings = []
+            stats = evaluate_uv(mesh, analysis, seams, True)
+            if stats.flipped_triangles and not stats.collapsed_triangles:
+                stats, seams, _ = _repair_uv_flips(
+                    obj, mesh, analysis, seams, profile, texture_size, margin_px,
+                    stats, mandatory, local_warnings,
+                )
+            if stats.non_finite_uvs or stats.collapsed_triangles or stats.flipped_triangles:
+                failures.append((name, stats))
+                return
+            if repack:
+                packer = _pack(obj, analysis, seams, profile, texture_size, margin_px)
+            else:
+                uvs, triangles, charts, _ = _input_arrays(mesh, analysis, seams)
+                _restore_uvs(mesh, fit_islands(uvs, triangles, charts, texture_size, margin_px))
+                packer = name
+            stats = evaluate_uv(mesh, analysis, seams, True, texture_size, margin_px)
+            if stats.overlap_pairs:
+                stats, seams = _repair_uv_overlaps(
+                    obj, mesh, analysis, seams, profile, solver,
+                    texture_size, margin_px, stats, local_warnings,
+                )
+                stats = evaluate_uv(mesh, analysis, seams, True, texture_size, margin_px)
+            if stats.valid:
+                base = _capture_candidate(mesh, name, seams, stats, packer, local_warnings)
+                candidates.append(base)
+                projected = _project_stretched_triangles(mesh, analysis, seams, stats, profile.stretch_limit)
+                if projected:
+                    projected_seams, count = projected
+                    try:
+                        projected_packer = _pack(obj, analysis, projected_seams, profile, texture_size, margin_px)
+                        projected_stats = evaluate_uv(mesh, analysis, projected_seams, True, texture_size, margin_px)
+                        if projected_stats.valid:
+                            candidates.append(_capture_candidate(
+                                mesh, name + "_LOCAL_STRETCH", projected_seams, projected_stats, projected_packer,
+                                local_warnings + [f"Reprojected {count} severely stretched triangles as local charts"],
+                            ))
+                    except (RuntimeError, ValueError):
+                        pass
+                    finally:
+                        _restore_candidate(mesh, base)
+            else:
+                failures.append((name, stats))
+            print(f"Remi UV candidate {name}: {'valid' if stats.valid else 'rejected'}, "
+                  f"{stats.chart_count} charts, {stats.packing_occupancy:.1%} coverage", flush=True)
+
+        # Independent native recovery is eligible even when another route fails.
+        # Artist constraints require a constrained unwrap instead of re-charting.
+        if not artist:
             try:
-                attempts = unwrap_candidates(
-                    mesh,
-                    analysis,
-                    texture_size,
-                    margin_px,
-                )
-            except RuntimeError as error:
-                attempts = []
-                warnings.append(f"Native large-mesh UV path could not run: {error}")
-            if attempts:
-                best = max(
-                    attempts,
-                    key=lambda attempt: (
-                        attempt.occupancy,
-                        attempt.xatlas_utilization,
-                        -attempt.chart_count,
-                    ),
-                )
-                apply_packing_attempt(mesh, best)
-                seams = _seams_from_active_uv(mesh)
-                _apply_seams(mesh, seams, preserve_existing=False)
-                final_stats = evaluate_uv(mesh, analysis, seams, check_overlaps=False)
-                min_u, min_v, max_u, max_v = final_stats.uv_bounds
-                if (
-                    not final_stats.non_finite_uvs
-                    and not final_stats.collapsed_triangles
-                    and not final_stats.flipped_triangles
-                    and min_u >= -1.0e-5
-                    and min_v >= -1.0e-5
-                    and max_u <= 1.00001
-                    and max_v <= 1.00001
-                ):
-                    final_solver = f"XATLAS_LARGE_MESH+{best.name}"
-                    warnings.append(
-                        "Used the native large-mesh UV path to avoid repeated "
-                        "Python validation passes"
-                    )
-                    _store_summary(
-                        obj,
-                        profile.identifier,
-                        analysis.classification,
-                        final_solver,
-                        final_stats,
-                        seams,
-                        texture_size=texture_size,
-                        margin_px=margin_px,
-                    )
-                    print(
-                        f"Remi UV: '{obj.name}' used native large-mesh routing for "
-                        f"{final_stats.triangle_count:,} triangles"
-                    )
-                    return UVResult(
-                        True,
-                        created=True,
-                        profile=profile.identifier,
-                        classification=analysis.classification,
-                        solver=final_solver,
-                        chart_count=final_stats.chart_count,
-                        stats=final_stats,
-                        warnings=warnings,
-                    )
-
-        seams = generate_seams(
-            mesh,
-            analysis,
-            profile,
-            preserve_existing=preserve_existing_seams,
-        )
-        _apply_seams(mesh, seams, preserve_existing_seams)
-        seams = {edge.index for edge in mesh.edges if edge.use_seam}
-
-        # Solvers are routed as a failure-tolerant chain. Minimum Stretch is
-        # the normal path; Angle Based and LSCM remain robust initializers.
-        solvers = [profile.solver, "ANGLE_BASED", "CONFORMAL"]
-        solvers = list(dict.fromkeys(solvers))
-        unwrap_stats = None
-        last_error = None
-        best_invalid = None
-        parameterization_repaired = False
-        for solver in solvers:
-            try:
-                _run_unwrap(obj, solver, profile.iterations)
-                candidate = evaluate_uv(mesh, analysis, seams, check_overlaps=False)
-                if not candidate.collapsed_triangles and not candidate.flipped_triangles:
-                    solver_used = solver
-                    unwrap_stats = candidate
-                    break
-                invalid_rank = (
-                    candidate.non_finite_uvs,
-                    candidate.collapsed_triangles,
-                    candidate.flipped_triangles,
-                    candidate.conformal_p95,
-                )
-                if best_invalid is None or invalid_rank < best_invalid[0]:
-                    best_invalid = (
-                        invalid_rank,
-                        solver,
-                        candidate,
-                        _capture_uvs(mesh),
-                    )
-                last_error = RuntimeError(
-                    f"{solver} produced {candidate.collapsed_triangles} collapsed and "
-                    f"{candidate.flipped_triangles} flipped triangles"
-                )
-            except RuntimeError as error:
-                last_error = error
-
-        if unwrap_stats is None and best_invalid is not None:
-            _rank, solver_used, unwrap_stats, coordinates = best_invalid
-            _restore_uvs(mesh, coordinates)
-            if (
-                not unwrap_stats.non_finite_uvs
-                and not unwrap_stats.collapsed_triangles
-                and unwrap_stats.flipped_triangles
-            ):
-                unwrap_stats, seams, parameterization_repaired = _repair_uv_flips(
-                    obj,
-                    mesh,
-                    analysis,
-                    seams,
-                    profile,
-                    texture_size,
-                    margin_px,
-                    unwrap_stats,
-                    locked_artist_seams,
-                    warnings,
-                )
-
-        # If Blender's three parameterizers all fail on topology emitted by a
-        # remesher, xatlas remains an independent charting/LSCM recovery path.
-        parameterization_usable = (
-            unwrap_stats is not None
-            and not unwrap_stats.non_finite_uvs
-            and not unwrap_stats.collapsed_triangles
-            and not unwrap_stats.flipped_triangles
-        )
-        if not parameterization_usable and not locked_artist_seams:
-            generated_best = None
-            for attempt in unwrap_candidates(
-                mesh,
-                analysis,
-                texture_size,
-                margin_px,
-            ):
-                apply_packing_attempt(mesh, attempt)
-                generated_seams = _seams_from_active_uv(mesh)
-                _apply_seams(mesh, generated_seams, preserve_existing=False)
-                generated_stats = evaluate_uv(
-                    mesh,
-                    analysis,
-                    generated_seams,
-                    check_overlaps=True,
-                )
-                generated_candidate = _capture_candidate(
-                    mesh,
-                    attempt.name,
-                    generated_seams,
-                    generated_stats,
-                    attempt.name,
-                )
-                if (
-                    generated_stats.valid
-                    and (
-                        generated_best is None
-                        or _candidate_rank(generated_candidate)
-                        > _candidate_rank(generated_best)
-                    )
-                ):
-                    generated_best = generated_candidate
-            if generated_best is not None:
-                _restore_candidate(mesh, generated_best)
-                seams = generated_best.seams
-                unwrap_stats = generated_best.stats
-                solver_used = "XATLAS"
-                xatlas_chart_selected = True
-                parameterization_repaired = True
-                warnings.append(
-                    "Blender parameterizers were invalid; recovered with "
-                    f"{generated_best.name}"
-                )
-
-        if unwrap_stats is None:
-            raise last_error or RuntimeError("All Remi UV parameterization methods failed")
-        if (
-            unwrap_stats.non_finite_uvs
-            or unwrap_stats.collapsed_triangles
-            or unwrap_stats.flipped_triangles
-        ):
-            raise last_error or RuntimeError("All Remi UV parameterization methods failed")
-
-        for _repair_pass in range(0 if parameterization_repaired else profile.repair_passes):
-            if unwrap_stats.conformal_p95 <= profile.stretch_limit:
-                break
-            bad_faces = {
-                face
-                for face, distortion in unwrap_stats.face_distortion.items()
-                if distortion > profile.stretch_limit
-            }
-            additions = add_distortion_split_seams(analysis, bad_faces, seams)
-            if not additions:
-                warnings.append(
-                    f"95th-percentile stretch {unwrap_stats.conformal_p95:.2f} "
-                    f"exceeds the {profile.stretch_limit:.2f} profile target"
-                )
-                break
-            seams.update(additions)
-            _apply_seams(mesh, seams, preserve_existing=True)
-            _run_unwrap(obj, solver_used, profile.iterations)
-            unwrap_stats = evaluate_uv(mesh, analysis, seams, check_overlaps=False)
-
-        packer_used = _pack(
-            obj,
-            analysis,
-            seams,
-            profile,
-            texture_size,
-            margin_px,
-        )
-        final_stats = evaluate_uv(mesh, analysis, seams, check_overlaps=True)
-        if final_stats.overlap_pairs:
-            packer_used = _pack(
-                obj,
-                analysis,
-                seams,
-                profile,
-                texture_size,
-                margin_px,
-                conservative=True,
-            )
-            final_stats = evaluate_uv(mesh, analysis, seams, check_overlaps=True)
-
-        # Very large foldover sets indicate that the proposed geometry-aware
-        # chart layout was a poor fit. Route those through Smart Project first,
-        # then retain its charts as seams for precise local repair.
-        overlap_fallback_threshold = max(8, final_stats.triangle_count // 1000)
-        if final_stats.overlap_pairs > overlap_fallback_threshold:
-            _apply_seams(mesh, locked_artist_seams, preserve_existing=False)
-            _smart_fallback(obj, texture_size, margin_px)
-            fallback_used = True
-            seams = _smart_candidate_seams(
-                mesh,
-                analysis,
-                profile,
-                locked_artist_seams,
-            )
-            _apply_seams(mesh, seams, preserve_existing=False)
-            packer_used = _pack(
-                obj,
-                analysis,
-                seams,
-                profile,
-                texture_size,
-                margin_px,
-            )
-            final_stats = evaluate_uv(mesh, analysis, seams, check_overlaps=True)
-
-        # Packing cannot repair intersections between triangles in the same
-        # chart. Isolate a minimal cover of conflicting local face fans and
-        # retain the attempt only when it reduces the intersection count.
-        final_stats, seams = _repair_uv_overlaps(
-            obj,
-            mesh,
-            analysis,
-            seams,
-            profile,
-            solver_used,
-            texture_size,
-            margin_px,
-            final_stats,
-            warnings,
-        )
-
-        # Benchmark every valid Remi chart layout against Blender Smart
-        # Project. Smart's own packed result and an xatlas repack of those same
-        # charts are both eligible, so the add-on cannot return a measurably
-        # looser valid layout merely because Remi generated it first.
-        if final_stats.valid and not fallback_used and not locked_artist_seams:
-            remi_candidate = _capture_candidate(
-                mesh,
-                "REMI",
-                seams,
-                final_stats,
-                packer_used,
-            )
-            smart_warnings = []
-            try:
-                _apply_seams(mesh, locked_artist_seams, preserve_existing=False)
-                _smart_fallback(obj, texture_size, margin_px)
-                smart_seams = _smart_candidate_seams(
-                    mesh,
-                    analysis,
-                    profile,
-                    locked_artist_seams,
-                )
-                _apply_seams(mesh, smart_seams, preserve_existing=False)
-                smart_raw_stats = evaluate_uv(
-                    mesh,
-                    analysis,
-                    smart_seams,
-                    check_overlaps=True,
-                )
-                smart_candidates = [
-                    _capture_candidate(
-                        mesh,
-                        "SMART_NATIVE_PACK",
-                        smart_seams,
-                        smart_raw_stats,
-                        "BLENDER_SMART_PACK",
-                    )
-                ]
-
-                smart_packer = _pack(
-                    obj,
-                    analysis,
-                    smart_seams,
-                    profile,
-                    texture_size,
-                    margin_px,
-                )
-                smart_packed_stats = evaluate_uv(
-                    mesh,
-                    analysis,
-                    smart_seams,
-                    check_overlaps=True,
-                )
-                smart_packed_stats, smart_seams = _repair_uv_overlaps(
-                    obj,
-                    mesh,
-                    analysis,
-                    smart_seams,
-                    profile,
-                    solver_used,
-                    texture_size,
-                    margin_px,
-                    smart_packed_stats,
-                    smart_warnings,
-                )
-                smart_candidates.append(_capture_candidate(
-                    mesh,
-                    "SMART_XATLAS_PACK",
-                    smart_seams,
-                    smart_packed_stats,
-                    smart_packer,
-                ))
-                smart_candidate = max(smart_candidates, key=_candidate_rank)
-
-                if _candidate_rank(smart_candidate) > _candidate_rank(remi_candidate):
-                    _restore_candidate(mesh, smart_candidate)
-                    seams = smart_candidate.seams
-                    final_stats = smart_candidate.stats
-                    packer_used = smart_candidate.packer
-                    smart_baseline_selected = True
-                    warnings.extend(smart_warnings)
-                    warnings.append(
-                        "Smart charting won the quality benchmark: "
-                        f"{smart_candidate.stats.packing_occupancy:.1%} occupancy "
-                        f"vs {remi_candidate.stats.packing_occupancy:.1%}"
-                    )
-                else:
-                    _restore_candidate(mesh, remi_candidate)
-                    seams = remi_candidate.seams
-                    final_stats = remi_candidate.stats
-                    packer_used = remi_candidate.packer
-                    warnings.append(
-                        "Remi charting retained after beating the Smart UV "
-                        f"baseline ({final_stats.packing_occupancy:.1%} vs "
-                        f"{smart_candidate.stats.packing_occupancy:.1%} occupancy)"
-                    )
-            except RuntimeError as error:
-                _restore_candidate(mesh, remi_candidate)
-                seams = remi_candidate.seams
-                final_stats = remi_candidate.stats
-                packer_used = remi_candidate.packer
-                warnings.append(f"Smart UV benchmark could not run: {error}")
-
-        if not final_stats.valid:
-            # A final emergency route keeps malformed production inputs usable,
-            # while reporting that semantic Remi charting could not be retained.
-            if not fallback_used:
-                _apply_seams(mesh, locked_artist_seams, preserve_existing=False)
-                _smart_fallback(obj, texture_size, margin_px)
-                fallback_used = True
-                seams = _smart_candidate_seams(
-                    mesh,
-                    analysis,
-                    profile,
-                    locked_artist_seams,
-                )
-                _apply_seams(mesh, seams, preserve_existing=False)
-                packer_used = _pack(
-                    obj,
-                    analysis,
-                    seams,
-                    profile,
-                    texture_size,
-                    margin_px,
-                )
-                final_stats = evaluate_uv(mesh, analysis, seams, check_overlaps=True)
-                final_stats, seams = _repair_uv_overlaps(
-                    obj,
-                    mesh,
-                    analysis,
-                    seams,
-                    profile,
-                    solver_used,
-                    texture_size,
-                    margin_px,
-                    final_stats,
-                    warnings,
-                )
-
-        if final_stats.valid and not locked_artist_seams:
-            incumbent = _capture_candidate(
-                mesh,
-                "CURRENT",
-                seams,
-                final_stats,
-                packer_used,
-            )
-            best_candidate = incumbent
-            try:
-                generated_attempts = unwrap_candidates(
-                    mesh,
-                    analysis,
-                    texture_size,
-                    margin_px,
-                )
-                for attempt in generated_attempts:
+                native = unwrap_candidates(mesh, analysis, texture_size, margin_px)
+                for attempt in native:
                     apply_packing_attempt(mesh, attempt)
-                    generated_seams = _seams_from_active_uv(mesh)
-                    _apply_seams(mesh, generated_seams, preserve_existing=False)
-                    generated_stats = evaluate_uv(
-                        mesh,
-                        analysis,
-                        generated_seams,
-                        check_overlaps=True,
-                    )
-                    candidate = _capture_candidate(
-                        mesh,
-                        attempt.name,
-                        generated_seams,
-                        generated_stats,
-                        attempt.name,
-                    )
-                    if _candidate_rank(candidate) > _candidate_rank(best_candidate):
-                        best_candidate = candidate
+                    consider(("XATLAS_LARGE_MESH+" if large else "") + attempt.name,
+                             _seams_from_active_uv(mesh))
+            except (RuntimeError, ValueError) as error:
+                warnings.append(f"Native charting could not complete: {error}")
 
-                _restore_candidate(mesh, best_candidate)
-                seams = best_candidate.seams
-                final_stats = best_candidate.stats
-                packer_used = best_candidate.packer
-                if best_candidate is not incumbent:
-                    xatlas_chart_selected = True
-                    smart_baseline_selected = False
-                    warnings.append(
-                        "xatlas chart generation won the quality benchmark: "
-                        f"{final_stats.chart_count} charts at "
-                        f"{final_stats.packing_occupancy:.1%} occupancy"
-                    )
-            except RuntimeError as error:
-                _restore_candidate(mesh, incumbent)
-                seams = incumbent.seams
-                final_stats = incumbent.stats
-                packer_used = incumbent.packer
-                warnings.append(f"xatlas chart benchmark could not run: {error}")
+        if not large or not candidates:
+            _apply_seams(mesh, artist, False)
+            seams = generate_seams(mesh, analysis, profile, preserve_existing=False) | mandatory
+            for solver in dict.fromkeys((profile.solver, "ANGLE_BASED", "CONFORMAL")):
+                try:
+                    _apply_seams(mesh, seams, False)
+                    _run_unwrap(obj, solver, profile.iterations)
+                    preliminary = evaluate_uv(mesh, analysis, seams, False)
+                    # Split coherent high-stretch regions as independent proposals;
+                    # packed candidates are retained before a new unwrap is tried.
+                    consider("REMI_" + solver, seams, solver)
+                    if preliminary.conformal_p95 > profile.stretch_limit:
+                        bad = {f for f, value in preliminary.face_distortion.items() if value > profile.stretch_limit}
+                        split = seams | add_distortion_split_seams(analysis, bad, seams)
+                        if split != seams:
+                            _apply_seams(mesh, split, False)
+                            _run_unwrap(obj, solver, profile.iterations)
+                            consider("REMI_SPLIT_" + solver, split, solver)
+                    if not preliminary.collapsed_triangles and not preliminary.flipped_triangles and not preliminary.non_finite_uvs:
+                        break
+                except (RuntimeError, ValueError) as error:
+                    warnings.append(f"{solver} candidate failed: {error}")
+            if not artist:
+                try:
+                    _apply_seams(mesh, mandatory, False)
+                    _smart_fallback(obj, texture_size, margin_px)
+                    smart_seams = _smart_candidate_seams(mesh, analysis, profile, mandatory)
+                    raw = _capture_uvs(mesh)
+                    # Keep an already well-spaced native Smart layout eligible.
+                    consider("SMART_NATIVE_PACK", smart_seams, repack=False)
+                    _restore_uvs(mesh, raw)
+                    consider("SMART_XATLAS_PACK", smart_seams)
+                except (RuntimeError, ValueError) as error:
+                    warnings.append(f"Smart candidate failed: {error}")
 
-        if not final_stats.valid:
-            return UVResult(
-                False,
-                created=True,
-                profile=profile.identifier,
-                classification=analysis.classification,
-                solver="SMART_FALLBACK" if fallback_used else solver_used,
-                chart_count=final_stats.chart_count,
-                stats=final_stats,
-                warnings=warnings,
-                error=(
-                    "UV validation failed: "
-                    f"{final_stats.collapsed_triangles} collapsed, "
-                    f"{final_stats.flipped_triangles} flipped, "
-                    f"{final_stats.overlap_pairs} overlaps"
-                ),
-            )
+        if not candidates:
+            least = min(failures, key=lambda item: (item[1].collapsed_triangles, item[1].flipped_triangles, item[1].overlap_pairs)) if failures else None
+            stats = least[1] if least else None
+            detail = (
+                f"{stats.collapsed_triangles} collapsed, {stats.flipped_triangles} flipped, "
+                f"{'at least ' if not stats.overlap_pairs_complete else ''}{stats.overlap_pairs} overlaps; "
+                f"gap {'passed' if stats.gap_valid else 'failed or unverified'}"
+            ) if stats else "no parameterization candidate completed"
+            return UVResult(False, profile=profile.identifier, stats=stats, warnings=warnings,
+                            error="UV validation failed: " + detail)
 
-        if fallback_used:
-            warnings.append("Used Smart Project only after Remi UV validation failed")
-        if final_stats.conformal_p95 > profile.stretch_limit:
-            warnings.append(
-                f"Final 95th-percentile stretch is {final_stats.conformal_p95:.2f}"
-            )
-        print(
-            f"Remi UV: '{obj.name}' {analysis.classification.lower()}, "
-            f"{final_stats.chart_count} charts, p95 stretch "
-            f"{final_stats.conformal_p95:.2f}, {final_stats.packing_occupancy:.1%} occupancy"
+        # Coverage must not win by stretching an otherwise square checkerboard
+        # or changing relative texture resolution. Compare only near the best
+        # available shape and density quality before scoring coverage.
+        least_stretch = min(c.stats.conformal_p95 for c in candidates)
+        density_error = lambda stats: max(abs(1.0 - stats.density_p05), abs(stats.density_p95 - 1.0))
+        least_density_error = min(density_error(c.stats) for c in candidates)
+        qualified = [c for c in candidates if
+            c.stats.conformal_p95 <= max(1.05, least_stretch * 1.10)
+            and density_error(c.stats) <= max(0.15, least_density_error * 1.10)
+        ]
+        if qualified:
+            least_maximum = min(c.stats.conformal_max for c in qualified)
+            qualified = [c for c in qualified if c.stats.conformal_max <= max(profile.stretch_limit, least_maximum * 1.10)]
+        best = max(qualified, key=_candidate_rank) if qualified else min(
+            candidates, key=lambda c: (c.stats.conformal_p95, density_error(c.stats)),
         )
-        if xatlas_chart_selected:
-            chart_solver = "XATLAS_CHARTS"
-        elif smart_baseline_selected:
-            chart_solver = "SMART_BENCHMARK"
-        elif fallback_used:
-            chart_solver = "SMART_FALLBACK"
-        else:
-            chart_solver = solver_used
-        final_solver = f"{chart_solver}+{packer_used}"
-        _store_summary(
-            obj,
-            profile.identifier,
-            analysis.classification,
-            final_solver,
-            final_stats,
-            seams,
-            texture_size=texture_size,
-            margin_px=margin_px,
+        _restore_candidate(mesh, best)
+        warnings.extend(best.warnings)
+        refined_uvs, refined_seams, stats, trace = refine_atlas(
+            mesh, analysis, best.seams, profile, texture_size, margin_px, mandatory,
+            lambda faces: _unwrap_local_faces(obj, faces, profile.solver, profile.iterations),
         )
-        return UVResult(
-            True,
-            created=True,
-            profile=profile.identifier,
-            classification=analysis.classification,
-            solver=final_solver,
-            chart_count=final_stats.chart_count,
-            stats=final_stats,
-            warnings=warnings,
-        )
+        _restore_uvs(mesh, refined_uvs)
+        _apply_seams(mesh, refined_seams, False)
+        # Always verify the actual float32 Blender output, including large meshes.
+        stats = evaluate_uv(mesh, analysis, refined_seams, True, texture_size, margin_px)
+        if not stats.valid:
+            _restore_candidate(mesh, best)
+            refined_seams, stats = best.seams, best.stats
+            trace = []
+        warnings.extend("UV refinement: " + message for message in trace)
+        mesh.uv_layers.active.name = "RemiUV"
+        mesh.uv_layers.active.active_render = True
+        solver = best.name + "+" + best.packer + ("+REFINED" if trace else "")
+        _store_summary(obj, profile.identifier, analysis.classification, solver, stats,
+                       refined_seams - artist, texture_size, margin_px)
+        success = True
+        print(f"Remi UV: '{obj.name}' {stats.chart_count} charts, {stats.packing_occupancy:.1%} coverage, "
+              f"{stats.overlap_pairs} overlaps, minimum gap {stats.minimum_gap_px} px", flush=True)
+        return UVResult(True, created=True, profile=profile.identifier,
+                        classification=analysis.classification, solver=solver,
+                        chart_count=stats.chart_count, stats=stats, warnings=warnings)
     except (RuntimeError, ValueError) as error:
-        return UVResult(
-            False,
-            created=bool(obj.data.uv_layers),
-            profile=profile.identifier,
-            error=str(error),
-            warnings=warnings,
-        )
+        return UVResult(False, profile=profile.identifier, error=str(error), warnings=warnings)
     finally:
+        _object_mode()
+        if not success:
+            if original_uvs is not None:
+                _restore_uvs(mesh, original_uvs)
+                mesh.uv_layers.active.name = original_name
+                for layer, render in zip(mesh.uv_layers, original_render):
+                    layer.active_render = render
+            elif mesh.uv_layers.active:
+                mesh.uv_layers.remove(mesh.uv_layers.active)
+            _apply_seams(mesh, original_seams, False)
         snapshot.restore()

@@ -92,7 +92,7 @@ class BakeFeature(FeatureDefaults):
             row.prop(settings, "bake_uv_method", text="UV Method")
             if settings.bake_uv_method == "REMI":
                 row.prop(settings, "bake_uv_profile", text="Profile")
-                layout.prop(settings, "bake_uv_margin_px", text="Padding")
+                layout.prop(settings, "bake_uv_margin_px", text="Gap")
             else:
                 layout.prop(settings, "bake_uv_island_margin", text="Margin")
         row = layout.row(align=True)

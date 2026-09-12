@@ -40,7 +40,7 @@ class UVFeature(FeatureDefaults):
         layout.prop(settings, "bake_uv_profile", text="Profile")
         row = layout.row(align=True)
         row.prop(settings, "bake_texture_size", text="Texture")
-        row.prop(settings, "bake_uv_margin_px", text="Padding")
+        row.prop(settings, "bake_uv_margin_px", text="Gap")
         layout.prop(settings, "bake_uv_preserve_seams", text="Preserve Marked Seams")
         layout.separator()
         action = layout.column()

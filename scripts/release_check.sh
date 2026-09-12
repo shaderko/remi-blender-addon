@@ -18,7 +18,7 @@ TESTS=(
 
 for test_file in "${TESTS[@]}"; do
   echo "Running $test_file"
-  "$BLENDER_BIN" --background --factory-startup --python "$REPO_DIR/$test_file"
+  "$BLENDER_BIN" --background --factory-startup --python-exit-code 1 --python "$REPO_DIR/$test_file"
 done
 
 "$SCRIPT_DIR/build_extension.sh" "$BLENDER_BIN" "$OUTPUT_DIR"

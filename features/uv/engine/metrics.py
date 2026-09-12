@@ -4,6 +4,13 @@ from dataclasses import asdict, dataclass, field
 import math
 from statistics import median
 
+import numpy as np
+
+try:
+    from ._native import uv_overlaps, uv_boundaries, boundary_contacts
+except ImportError:
+    uv_overlaps = uv_boundaries = boundary_contacts = None
+
 
 _EPS = 1.0e-10
 
@@ -16,18 +23,31 @@ class UVStats:
     degenerate_3d_triangles: int = 0
     flipped_triangles: int = 0
     overlap_pairs: int = 0
+    overlaps_checked: bool = False
+    overlap_pairs_complete: bool = True
     non_finite_uvs: int = 0
     conformal_median: float = 1.0
     conformal_p95: float = 1.0
     conformal_max: float = 1.0
     packing_occupancy: float = 0.0
+    minimum_gap_px: float | None = None
+    gap_valid: bool = True
+    density_p05: float = 1.0
+    density_p50: float = 1.0
+    density_p95: float = 1.0
     uv_bounds: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
     face_distortion: dict[int, float] = field(default_factory=dict)
     flipped_faces: list[int] = field(default_factory=list)
 
     @property
     def valid(self) -> bool:
-        return not any((
+        min_u, min_v, max_u, max_v = self.uv_bounds
+        return self.overlaps_checked and self.gap_valid and (
+            self.triangle_count > self.degenerate_3d_triangles and self.packing_occupancy > 0.0
+        ) and (
+            min_u >= -1.0e-7 and min_v >= -1.0e-7
+            and max_u <= 1.0000001 and max_v <= 1.0000001
+        ) and not any((
             self.collapsed_triangles,
             self.flipped_triangles,
             self.overlap_pairs,
@@ -85,7 +105,7 @@ def _triangle_distortion(points, uvs):
     edge_2 = points[2] - points[0]
     length_1 = edge_1.length
     area_3d_twice = edge_1.cross(edge_2).length
-    if length_1 <= _EPS or area_3d_twice <= _EPS:
+    if length_1 <= 0.0 or area_3d_twice <= length_1 * edge_2.length * 1.0e-14:
         return None, 0.0
 
     axis_x = edge_1 / length_1
@@ -109,8 +129,11 @@ def _triangle_distortion(points, uvs):
     trace = a + d
     discriminant = math.sqrt(max(0.0, (a - d) * (a - d) + 4.0 * b * b))
     lambda_max = max(0.0, (trace + discriminant) * 0.5)
-    lambda_min = max(0.0, (trace - discriminant) * 0.5)
-    if lambda_min <= _EPS or not math.isfinite(lambda_max):
+    # Recover the smaller eigenvalue from the determinant to avoid cancellation
+    # on thin triangles. Distortion must not depend on absolute object size.
+    determinant = j00 * j11 - j01 * j10
+    lambda_min = determinant * determinant / lambda_max if lambda_max > 0.0 else 0.0
+    if lambda_min <= lambda_max * 1.0e-14 or not math.isfinite(lambda_max):
         return math.inf, signed_area_twice * 0.5
     return math.sqrt(lambda_max / lambda_min), signed_area_twice * 0.5
 
@@ -134,6 +157,11 @@ def _strict_triangle_overlap(a, b, epsilon=_EPS) -> bool:
 def _overlap_pairs(triangles, max_pairs: int | None = None) -> list[tuple[int, int]]:
     if len(triangles) < 2:
         return []
+    if uv_overlaps is not None:
+        coordinates = np.asarray([t[0] for t in triangles], dtype=np.float64).reshape(-1, 2)
+        indices = np.arange(len(coordinates), dtype=np.uint32).reshape(-1, 3)
+        result = uv_overlaps(coordinates, indices, max_pairs or 0)
+        return [tuple(map(int, pair)) for pair in result["pairs"]]
     min_u = min(point[0] for triangle in triangles for point in triangle[0])
     min_v = min(point[1] for triangle in triangles for point in triangle[0])
     max_u = max(point[0] for triangle in triangles for point in triangle[0])
@@ -180,8 +208,6 @@ def _overlap_pairs(triangles, max_pairs: int | None = None) -> list[tuple[int, i
                     continue
                 uvs_a, vertices_a, polygon_a = triangles[a]
                 uvs_b, vertices_b, polygon_b = triangles[b]
-                if polygon_a == polygon_b or len(set(vertices_a).intersection(vertices_b)) >= 2:
-                    continue
                 if _strict_triangle_overlap(uvs_a, uvs_b):
                     overlaps.append((a, b))
                     if max_pairs is not None and len(overlaps) >= max_pairs:
@@ -201,8 +227,6 @@ def _overlap_pairs(triangles, max_pairs: int | None = None) -> list[tuple[int, i
                 continue
             uvs_a, vertices_a, polygon_a = triangles[a]
             uvs_b, vertices_b, polygon_b = triangles[b]
-            if polygon_a == polygon_b or len(set(vertices_a).intersection(vertices_b)) >= 2:
-                continue
             if _strict_triangle_overlap(uvs_a, uvs_b):
                 overlaps.append((min(a, b), max(a, b)))
                 if max_pairs is not None and len(overlaps) >= max_pairs:
@@ -254,7 +278,10 @@ def find_uv_overlaps(mesh, max_pairs: int | None = None) -> list[dict]:
     return details
 
 
-def evaluate_uv(mesh, analysis, seams: set[int], check_overlaps: bool = True) -> UVStats:
+def evaluate_uv(
+    mesh, analysis, seams: set[int], check_overlaps: bool = True,
+    texture_size: int = 0, margin_px: int | None = None,
+) -> UVStats:
     """Measure the active UV layer and return production-oriented diagnostics."""
     uv_layer = mesh.uv_layers.active
     if uv_layer is None:
@@ -272,6 +299,8 @@ def evaluate_uv(mesh, analysis, seams: set[int], check_overlaps: bool = True) ->
     non_finite = 0
     uv_area = 0.0
     all_uvs = []
+    surface_areas = []
+    texture_areas = []
 
     for triangle in mesh.loop_triangles:
         loop_indices = tuple(triangle.loops)
@@ -286,7 +315,7 @@ def evaluate_uv(mesh, analysis, seams: set[int], check_overlaps: bool = True) ->
         if distortion is None:
             degenerate_3d += 1
             continue
-        if abs(signed_area) <= _EPS or not math.isfinite(distortion):
+        if abs(signed_area) <= 1.0e-16 or not math.isfinite(distortion):
             collapsed += 1
         else:
             distortions.append(distortion)
@@ -302,6 +331,8 @@ def evaluate_uv(mesh, analysis, seams: set[int], check_overlaps: bool = True) ->
                 polygon_index,
             ))
             uv_area += abs(signed_area)
+            surface_areas.append((points[1] - points[0]).cross(points[2] - points[0]).length * 0.5)
+            texture_areas.append(abs(signed_area))
         triangles_2d.append((tuple(uvs), vertex_indices, triangle.polygon_index))
 
     flipped = 0
@@ -312,7 +343,7 @@ def evaluate_uv(mesh, analysis, seams: set[int], check_overlaps: bool = True) ->
             for area, weight, _polygon in signed_areas
         ) >= 0.0 else -1.0
         for area, _weight, polygon in signed_areas:
-            if area * orientation < -_EPS:
+            if area * orientation < -1.0e-16:
                 flipped += 1
                 flipped_faces.add(polygon)
 
@@ -329,12 +360,32 @@ def evaluate_uv(mesh, analysis, seams: set[int], check_overlaps: bool = True) ->
         bounds = (0.0, 0.0, 0.0, 0.0)
         occupancy = 0.0
 
-    overlap_limit = None
-    if len(triangles_2d) > 10_000:
-        # Downstream routing only needs to know whether the count exceeds its
-        # large-overlap threshold. Bounding the result prevents pathological
-        # stacked UVs from allocating an O(n^2) pair set.
-        overlap_limit = max(9, len(triangles_2d) // 1000 + 1)
+    # Counts used to compare repair progress must be exact, or explicitly
+    # identified as lower bounds. A cap still protects pathological stacked UVs.
+    overlap_limit = 4096
+    overlaps_checked = check_overlaps and not collapsed and not non_finite
+    pairs = _overlap_pairs(triangles_2d, max_pairs=overlap_limit + 1) if overlaps_checked else []
+    complete = len(pairs) <= overlap_limit
+    minimum_gap = None
+    gap_valid = margin_px is None
+    if margin_px is not None and overlaps_checked and not pairs and uv_boundaries is not None:
+        uvs = np.asarray([tuple(loop.uv) for loop in uv_layer.data], dtype=np.float64)
+        indices = np.asarray([tuple(t.loops) for t in mesh.loop_triangles], dtype=np.uint32)
+        charts = np.asarray([chart_ids[t.polygon_index] for t in mesh.loop_triangles], dtype=np.uint32)
+        boundary = uv_boundaries(uvs, indices, charts)
+        measured = boundary_contacts(uvs[boundary["vertices"]], boundary["charts"], 0.0)
+        distance = float(measured["minimum_gap"]) * texture_size
+        minimum_gap = distance if math.isfinite(distance) else None
+        gap_valid = texture_size > 0 and distance + 1.0e-3 >= margin_px
+
+    density_quantiles = (1.0, 1.0, 1.0)
+    if surface_areas:
+        surface = np.asarray(surface_areas)
+        texture = np.asarray(texture_areas)
+        relative = np.sqrt((texture / surface) / (texture.sum() / surface.sum()))
+        order = np.argsort(relative)
+        weights = np.cumsum(surface[order]) / surface.sum()
+        density_quantiles = tuple(float(v) for v in np.interp((0.05, 0.5, 0.95), weights, relative[order]))
 
     return UVStats(
         triangle_count=len(mesh.loop_triangles),
@@ -342,11 +393,14 @@ def evaluate_uv(mesh, analysis, seams: set[int], check_overlaps: bool = True) ->
         collapsed_triangles=collapsed,
         degenerate_3d_triangles=degenerate_3d,
         flipped_triangles=flipped,
-        overlap_pairs=(
-            _overlap_count(triangles_2d, max_pairs=overlap_limit)
-            if check_overlaps and not collapsed and not non_finite
-            else 0
-        ),
+        overlap_pairs=min(len(pairs), overlap_limit),
+        overlaps_checked=overlaps_checked,
+        overlap_pairs_complete=complete,
+        minimum_gap_px=minimum_gap,
+        gap_valid=gap_valid,
+        density_p05=density_quantiles[0],
+        density_p50=density_quantiles[1],
+        density_p95=density_quantiles[2],
         non_finite_uvs=non_finite,
         conformal_median=median(distortions) if distortions else math.inf,
         conformal_p95=_percentile(distortions, 0.95) if distortions else math.inf,

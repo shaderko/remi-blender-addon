@@ -10,6 +10,7 @@ import bpy
 from mathutils import Vector
 
 from ..uv.engine import ensure_remi_uv
+from ..uv.engine.blender_bridge import validate_existing_uv
 
 
 def _ensure_uv(
@@ -23,11 +24,12 @@ def _ensure_uv(
     preserve_existing_seams: bool = True,
 ):
     """Ensure the target has UVs, optionally generating them automatically."""
-    # Auto Unwrap means "create UVs when missing". A target coming directly
-    # from Remi's UV stage is already ready for baking; validating the whole
-    # atlas again can take minutes on scan-scale meshes and changes no output.
     if obj.data.uv_layers:
-        return True
+        # Reuse unchanged verified maps, but never confuse layer existence with
+        # validity. This does not regenerate or alter artist UVs that pass.
+        stats = validate_existing_uv(obj)
+        if stats is not None and stats.valid:
+            return True
     if not auto_unwrap:
         return False
 

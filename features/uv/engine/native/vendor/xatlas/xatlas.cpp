@@ -8305,6 +8305,27 @@ struct Atlas
 				XA_PRINT("   Estimating texelsPerUnit as %g\n", m_texelsPerUnit);
 			}
 		}
+		// Remi: an oversized chart must reduce the scale of the complete atlas,
+		// rather than independently reducing that chart's texel density.
+		if (options.preserveChartShape && maxResolution > options.padding * 2 + 1) {
+			float largestExtent = 0.0f;
+			for (uint32_t c = 0; c < chartCount; c++) {
+				Chart *chart = m_charts[c];
+				Vector2 lower(FLT_MAX, FLT_MAX), upper(-FLT_MAX, -FLT_MAX);
+				for (uint32_t v = 0; v < chart->uniqueVertexCount(); v++) {
+					Vector2 uv = chart->uniqueVertexAt(v);
+					if (options.rotateChartsToAxis)
+						uv = Vector2(dot(uv, chart->majorAxis), dot(uv, chart->minorAxis));
+					lower = min(lower, uv);
+					upper = max(upper, uv);
+				}
+				const Vector2 extent = upper - lower;
+				const float areaScale = chart->parametricArea > 0.0f ? sqrtf(chart->surfaceArea / chart->parametricArea) : 1.0f;
+				largestExtent = max(largestExtent, max(extent.x, extent.y) * areaScale);
+			}
+			if (largestExtent > 0.0f)
+				m_texelsPerUnit = min(m_texelsPerUnit, (float(maxResolution - options.padding * 2) - 1.01f) / largestExtent);
+		}
 		Array<float> chartOrderArray;
 		chartOrderArray.resize(chartCount);
 		Array<Vector2> chartExtents;
@@ -8343,7 +8364,7 @@ struct Atlas
 			}
 			XA_DEBUG_ASSERT(extents.x >= 0 && extents.y >= 0);
 			// Scale the charts to use the entire texel area available. So, if the width is 0.1 we could scale it to 1 without increasing the lightmap usage and making a better use of it. In many cases this also improves the look of the seams, since vertices on the chart boundaries have more chances of being aligned with the texel centers.
-			if (extents.x > 0.0f && extents.y > 0.0f) {
+			if (!options.preserveChartShape && extents.x > 0.0f && extents.y > 0.0f) {
 				// Block align: align all chart extents to 4x4 blocks, but taking padding and texel center offset into account.
 				const int blockAlignSizeOffset = options.padding * 2 + 1;
 				int width = ftoi_ceil(extents.x);

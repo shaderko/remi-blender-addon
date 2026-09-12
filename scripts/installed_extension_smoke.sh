@@ -28,7 +28,7 @@ mkdir -p "$BLENDER_USER_CONFIG" "$BLENDER_USER_EXTENSIONS"
   -r user_default \
   "$ARTIFACT"
 
-"$BLENDER_BIN" --background --factory-startup --python-expr '
+"$BLENDER_BIN" --background --factory-startup --python-exit-code 1 --python-expr '
 import bpy
 import importlib
 import os
@@ -41,6 +41,19 @@ version_core = os.environ["REMI_EXPECTED_VERSION"].split("-", 1)[0].split("+", 1
 expected_version = tuple(int(part) for part in version_core.split("."))
 assert addon.bl_info["version"] == expected_version, addon.bl_info["version"]
 assert addon.__package__ == module_name, addon.__package__
+uv_engine = importlib.import_module(module_name + ".features.uv.engine")
+uv_native = importlib.import_module(module_name + ".features.uv.engine._native")
+assert os.path.realpath(uv_native.__file__).startswith(os.path.realpath(os.environ["BLENDER_USER_EXTENSIONS"]) + os.sep)
+bpy.ops.object.select_all(action="SELECT")
+bpy.ops.object.delete(use_global=False)
+bpy.ops.mesh.primitive_cube_add()
+uv_result = uv_engine.ensure_remi_uv(
+    bpy.context.object, texture_size=256, margin_px=4,
+    profile_id="HARD_SURFACE", replace_existing=True,
+)
+assert uv_result.success and uv_result.stats.valid, uv_result.error
+assert 3.999 <= uv_result.stats.minimum_gap_px < 4.1, uv_result.stats.minimum_gap_px
+print("REMI_INSTALLED_UV_GAP_SMOKE_OK")
 bpy.ops.preferences.addon_disable(module=module_name)
 print("REMI_INSTALLED_EXTENSION_SMOKE_OK")
 '

@@ -29,8 +29,8 @@ SCENE_SETTINGS = {
             default="NORMAL_BAKE",
         ),
     "bake_uv_margin_px": IntProperty(
-            name="UV Padding",
-            description="Padding between Remi UV islands in texture pixels",
+            name="UV Gap",
+            description="Minimum geometric gap between islands in texture pixels, measured edge to edge",
             default=4,
             min=0,
             max=256,

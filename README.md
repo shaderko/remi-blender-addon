@@ -129,9 +129,9 @@ the guides influence that layout rather than acting as manually drawn topology.
 ### Generate a UV map
 
 1. Open **UV** inside an active Remi session.
-2. Choose a profile and the texture resolution used to calculate padding.
-3. Keep **Padding** at `4 px` for dense general-purpose packing, or raise it for
-   more conservative mip and bake isolation.
+2. Choose a profile and the texture resolution used to measure spacing.
+3. Set **Gap** to the minimum distance between island edges. `4 px` means four
+   pixels across the gap, not four pixels of padding on each island.
 4. Enable **Preserve Marked Seams** when artist seams must remain locked.
 5. Click **Generate UV**. The result summary reports chart count,
    95th-percentile stretch, and true occupied area in the UV tile.
@@ -285,7 +285,7 @@ also shows a tooltip when you hover over a control.
 | **Texture Size** | Square output resolution for every baked map. |
 | **Generate UV Map** | Runs the standalone Remi UV analyzer, chart generator, unwrap, repair, pack, and validation pipeline on the active mesh. |
 | **UV Profile** | Selects coordinated decisions for balanced assets, texture painting, normal baking, lightmaps, hard surfaces, organic meshes, or scans/AI meshes. |
-| **UV Padding** | Sets exact xatlas island padding in texture pixels (4 px by default). |
+| **UV Gap** | Minimum edge-to-edge separation at the selected texture resolution (4 px by default). |
 | **Preserve Marked Seams** | Keeps artist-authored seam edges as hard chart boundaries during regeneration. |
 | **Auto Unwrap** | Generates target UVs when none exist or the existing map fails collapse/flip/overlap validation. Valid UV maps are retained. |
 | **UV Method** | Uses Remi UV by default; Blender Smart Project and Lightmap Pack remain explicit compatibility fallbacks. |
@@ -324,41 +324,39 @@ current automatic pipeline:
    irregular;
 3. preserves marked seams and creates angle-, material-, cylinder-, or
    PCA-directional chart boundaries as appropriate;
-4. parameterizes with Blender 5.1 Minimum Stretch, with Angle Based and
-   Conformal solver retries;
-5. measures per-triangle conformal distortion and adds local chart boundaries
-   around high-stretch regions;
-6. equalizes island scale and sends the existing charts through multiple
-   xatlas packing searches with exact texture-pixel padding, principal-axis
-   pre-rotation, free-orientation bases, and exhaustive placement on small
-   atlases up to 512 px;
-7. benchmarks Remi charts against both Blender Smart Project and xatlas' native
-   3D chart generator, scoring occupied area, fragmentation, distortion, and
-   validity instead of accepting the first successful unwrap;
-8. rejects non-finite, collapsed, locally flipped, or overlapping UV triangles,
-   retains the least-damaged Blender solver attempt, and repairs small mirrored
-   regions as face-local charts; if every Blender parameterizer remains invalid,
-   xatlas chart generation provides an independent recovery path;
-9. repairs any remaining vertex-fan foldovers by re-projecting only a minimal
-   set of conflicting faces as independent micro-charts, then repacks and
-   validates the complete atlas again.
+4. compares independent native xatlas, Blender Minimum Stretch, and Smart
+   Project chart candidates, with Angle Based and Conformal solver retries;
+5. resolves local overlaps by separating conflicting faces and repacking,
+   preserving the parameterization of unaffected regions; small sets of severely
+   stretched triangles can receive independent isometric charts;
+6. equalizes island scale and packs charts with xatlas, then uses contact-distance
+   gradients to fit their positions and one common scale to the requested gap;
+7. selects coverage improvements within shape and relative-density quality
+   limits, so stretching the texture cannot win solely by filling the tile;
+8. searches up to two rounds of local split, merge and seam-relocation proposals,
+   judging each by its final packed coverage, including the cost of added gaps;
+   only affected charts are re-flattened when a merge or seam move needs it;
+9. validates the actual final UV triangles, tile bounds and geometric gap,
+   including on large meshes. The best valid candidate is retained throughout;
+   a failed generation restores the input UVs and seams.
 
-Packing occupancy is measured from triangle area in the final UV tile. xatlas'
-padded texel utilization is also logged separately, making padding cost visible
-instead of hiding it in a fractional Blender margin. Artist-authored seams are
-treated as locked constraints; full re-charting candidates are skipped when
-those constraints are present.
+Coverage is the triangle area in a verified, non-overlapping unit tile. Initial
+xatlas raster utilization is logged separately and is not a final coverage
+measurement. The gap has a subpixel numerical tolerance; unused space between
+irregular shapes can be larger than the requested minimum. Artist, material and
+sharp-edge constraints are preserved during local search; independent full
+re-charting is skipped when artist seams are present.
 
 The standalone **Generate UV Map** button regenerates the active UV map. The
 baking pipeline first validates an existing map and keeps it when valid; a blank
 or invalid map is regenerated when Auto Unwrap is enabled. Generated seams
-remain visible and editable in Blender for artist cleanup.
+remain visible and editable in Blender for artist cleanup. Cached validation is
+tied to a fingerprint of the UV and mesh contents, so editing coordinates cannot
+silently reuse an old successful report.
 
-On the 7,381-triangle launcher reference mesh at 2048 px with 4 px padding, the
-new pipeline reduced fragmentation from 1,018 to 413 charts while increasing
-true tile occupancy from 10.7% to 61.5%. The selected result measured 1.17 p95
-conformal stretch and zero overlapping or flipped triangles. These numbers are
-a regression reference for that asset, not a guaranteed density for every mesh.
+Coverage depends on the mesh, required seams, distortion limits and gap. A
+successful generation establishes the measured validity and spacing checks;
+it does not guarantee optimal packing or a fixed percentage of texture savings.
 
 The headless regression suite covers planar, hard-surface, cylindrical,
 organic, toroidal, irregular triangulated, disconnected, and non-manifold

@@ -70,8 +70,10 @@ Voxel Remesh -> MeshLab Decimation -> UV Unwrap -> Bake All Maps
 
 The default uses Remi's property defaults: voxel size `0.01`, six MeshLab
 decimation passes keeping `50%` per pass, 2048 px textures, and a 4 px UV gap.
-These are the same world-unit settings available in manual Remi; adjust them
-for your model's scale or desired face count before saving a custom preset.
+**Recalculate Normals is disabled by default** so the UV-prepared bake target
+keeps its existing normals. Enable it explicitly only when a target needs that
+repair. These are the same settings available in manual Remi; adjust them for
+your model's scale or desired face count before saving a custom preset.
 
 - Select a mesh in Object Mode, choose a preset, and click **Run Full Flow**.
 - Use the pencil next to the preset to load it into **Current Settings**. Toggle

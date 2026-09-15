@@ -342,7 +342,7 @@ def bake_textures(
     uv_margin_px: int = 4,
     uv_preserve_seams: bool = True,
     auto_unwrap: bool = True,
-    recalc_normals: bool = True,
+    recalc_normals: bool = False,
     cage_extrusion: float = 0.1,
     max_ray_distance: float = 0.0,
     auto_cage: bool = False,

@@ -30,8 +30,8 @@ SCENE_SETTINGS = {
         ),
     "bake_recalc_normals": BoolProperty(
             name="Recalculate Normals",
-            description="Recalculate normals on the target mesh before baking (fixes SDF remesh artifacts)",
-            default=True,
+            description="Recalculate normals on the target mesh before baking. Leave disabled when the target was already unwrapped and its normals must be preserved",
+            default=False,
         ),
     "bake_half_scale": BoolProperty(
             name="Half-Scale Bake",

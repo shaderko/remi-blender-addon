@@ -67,6 +67,7 @@ def test_default_and_presets(directory):
     default = flow.selected_document(bpy.context)
     assert default['actions'] == ['REMESH', 'DECIMATE', 'UV', 'BAKE_ALL']
     assert default['settings']['remesh_backend'] == 'VOXEL'
+    assert default['settings']['bake_recalc_normals'] is False
     assert abs(default['settings']['voxel_size'] - .01) < 1e-6
     assert abs(settings.voxel_size - .08) < 1e-6, 'reading the default modified current settings'
     assert bpy.ops.remi.edit_flow_preset() == {'FINISHED'}

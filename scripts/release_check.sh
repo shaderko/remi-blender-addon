@@ -10,6 +10,7 @@ TESTS=(
   "tests/blender_architecture_regression.py"
   "tests/blender_release_regression.py"
   "tests/blender_session_regression.py"
+  "tests/blender_flow_regression.py"
   "tests/blender_edit_tools_regression.py"
   "tests/blender_instant_meshes_smoke.py"
   "tests/blender_instant_meshes_topology_regression.py"

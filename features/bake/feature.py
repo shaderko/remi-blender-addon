@@ -24,26 +24,31 @@ class BakeFeature(FeatureDefaults):
                 "Bake All Maps",
                 "Bake albedo, roughness, normal, and ambient occlusion",
                 requires_source_checkpoint=True,
+                automatic=True,
             ),
             FeatureAction(
                 "BAKE_DIFFUSE",
                 "Bake Albedo",
                 requires_source_checkpoint=True,
+                automatic=True,
             ),
             FeatureAction(
                 "BAKE_ROUGHNESS",
                 "Bake Roughness",
                 requires_source_checkpoint=True,
+                automatic=True,
             ),
             FeatureAction(
                 "BAKE_NORMAL",
                 "Bake Normal",
                 requires_source_checkpoint=True,
+                automatic=True,
             ),
             FeatureAction(
                 "BAKE_AO",
                 "Bake AO",
                 requires_source_checkpoint=True,
+                automatic=True,
             ),
         ),
     )
@@ -124,6 +129,15 @@ class BakeFeature(FeatureDefaults):
             f"{action.name} at {size}×{size}… "
             "Blender stays busy while Cycles bakes."
         )
+
+    def preflight_automatic(self, action, context):
+        import bpy
+        if not bpy.app.build_options.cycles:
+            raise RuntimeError("Texture baking requires Blender with Cycles support")
+
+    def draw_automatic_settings(self, layout, context, action):
+        for name in ("bake_texture_size", "bake_auto_cage", "bake_cage_extrusion", "bake_max_ray_distance", "bake_recalc_normals", "bake_half_scale"):
+            layout.prop(context.scene.remi_settings, name)
 
     def execute(
         self,

@@ -23,6 +23,7 @@ class RepairFeature(FeatureDefaults):
                 "REPAIR",
                 "Repair",
                 "Repair holes and fragmented surfaces",
+                automatic=True,
             ),
             FeatureAction(
                 "MANUAL_REPAIR",
@@ -141,3 +142,16 @@ class RepairFeature(FeatureDefaults):
                 )
             )
         return super().execute(action, context)
+
+    def preflight_automatic(self, action, context):
+        settings = context.scene.remi_settings
+        if settings.hole_repair_method == "ALPHA_WRAP":
+            from ...integrations.alpha_wrap import toolchain
+            error = toolchain.validate_executable(toolchain.resolve_executable(settings.alpha_wrap_executable))
+            if error:
+                raise RuntimeError(error + ". Build the helper in Repair before running this preset.")
+
+    def draw_automatic_settings(self, layout, context, action):
+        settings = context.scene.remi_settings
+        for name in ("hole_repair_method", "hole_max_sides", "hole_weld_distance", "hole_close_ratio", "hole_detail_recovery", "volume_guide_voxel_scale"):
+            layout.prop(settings, name)

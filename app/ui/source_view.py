@@ -1,5 +1,7 @@
 """Entry view shown before a Remi editing session starts."""
 
+from .flow_controls import draw_flow_controls
+
 
 def draw_source(layout, context):
     obj = context.view_layer.objects.active
@@ -22,3 +24,5 @@ def draw_source(layout, context):
     start.scale_y = 1.5
     start.operator("remi.start_session", text="Start Remi", icon="PLAY")
     layout.label(text="Locked until Finish or Cancel", icon="LOCKED")
+    layout.separator()
+    draw_flow_controls(layout, context)

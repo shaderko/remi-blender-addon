@@ -30,6 +30,7 @@ class RetopologyFeature(FeatureDefaults):
                 "AUTO_RETOPO",
                 "Auto Retopology",
                 "Run the external AutoRemesher",
+                automatic=True,
             ),
         ),
     )
@@ -128,3 +129,14 @@ class RetopologyFeature(FeatureDefaults):
     def cancel_interactive(self, action: FeatureAction) -> None:
         if action.id == "INSTANT_START":
             self._service.cancel_interactive()
+
+    def preflight_automatic(self, action, context):
+        from ...integrations import autoremesher
+        settings = context.scene.remi_settings
+        error = autoremesher.validate_executable(autoremesher.resolve_executable(settings.autoremesher_executable))
+        if error:
+            raise RuntimeError(error)
+
+    def draw_automatic_settings(self, layout, context, action):
+        for name in ("autoremesher_executable", "ar_target_quads", "ar_adaptivity", "ar_edge_scaling", "ar_sharp_edge", "ar_smooth_normal"):
+            layout.prop(context.scene.remi_settings, name)

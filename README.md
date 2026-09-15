@@ -59,6 +59,43 @@ Only the current mesh remains in the scene while the session is idle. Remi may
 hold a temporary candidate while an operation is running, but it commits that
 candidate only after the operation succeeds.
 
+### Run the whole flow with a preset
+
+The entry panel also offers **Run Full Flow**. Its **Default · Remesh to Bake**
+preset runs automatically:
+
+```text
+Voxel Remesh -> MeshLab Decimation -> UV Unwrap -> Bake All Maps
+```
+
+The default uses Remi's property defaults: voxel size `0.01`, six MeshLab
+decimation passes keeping `50%` per pass, 2048 px textures, and a 4 px UV gap.
+These are the same world-unit settings available in manual Remi; adjust them
+for your model's scale or desired face count before saving a custom preset.
+
+- Select a mesh in Object Mode, choose a preset, and click **Run Full Flow**.
+- Use the pencil next to the preset to load it into **Current Settings**. Toggle
+  the stages and use each stage's settings button to configure it.
+- **Save Current Settings as Preset** saves the enabled stages and all current
+  stage settings. It is also available during a manual session, so a successful
+  setup can become a reusable preset. Saved presets are available across blend
+  files through Blender's user configuration folder, `remi/flow-presets`.
+- To update a preset, save with the same name and explicitly enable **Replace**.
+  The trash button deletes a saved preset; the built-in default remains available.
+
+The automatic flow uses the same session transactions and services as manual
+Remi. It checks optional dependencies before editing the mesh and bakes from the
+original source checkpoint. On success it finishes automatically, keeping one
+result object. Progress is shown between stages. **Stop After Current Stage**
+or Esc leaves the last successful result in a manual session, where Back,
+Finish, or Cancel Session are available. A failed stage stops the flow without
+running later stages; Cancel Session still restores the original source.
+
+Blender can remain busy during a stage, so stopping takes effect at the next
+stage boundary. Interactive drawing and Instant Meshes guide sessions are not
+automatic preset stages. The existing **Start Remi** button retains the manual
+workflow, and the legacy `remi.full_pipeline` operator remains compatible.
+
 ### Guided retopology
 
 Use the Interactive Instant Meshes workspace when you want to see and influence

@@ -18,7 +18,7 @@ class UVFeature(FeatureDefaults):
         name="UV",
         icon="UV",
         next_feature="BAKE",
-        actions=(FeatureAction("UV", "UV", "Generate and inspect UVs"),),
+        actions=(FeatureAction("UV", "UV", "Generate and inspect UVs", automatic=True),),
     )
 
     def __init__(self, service: UVUseCases):
@@ -56,6 +56,15 @@ class UVFeature(FeatureDefaults):
             f"Generating UVs for {len(context.source.data.polygons):,} faces… "
             "Blender stays busy while the atlas is built."
         )
+
+    def preflight_automatic(self, action, context):
+        from .engine.packing import native_packer_available
+        if not native_packer_available():
+            raise RuntimeError("The bundled Remi UV backend is unavailable. Install the build matching this Blender version and platform.")
+
+    def draw_automatic_settings(self, layout, context, action):
+        for name in ("bake_uv_profile", "bake_texture_size", "bake_uv_margin_px", "bake_uv_preserve_seams"):
+            layout.prop(context.scene.remi_settings, name)
 
     def execute(
         self,

@@ -32,6 +32,15 @@ class FeatureDefaults:
     def scene_settings(self):
         return {}
 
+    def preflight_automatic(self, action, context):
+        """Check dependencies before a full flow changes any mesh."""
+        return None
+
+    def draw_automatic_settings(self, layout, context, action):
+        """Features may narrow their controls for a particular automatic action."""
+        for name in self.scene_settings():
+            layout.prop(context.scene.remi_settings, name)
+
     def blender_classes(self) -> tuple[type, ...]:
         return ()
 

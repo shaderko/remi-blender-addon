@@ -85,6 +85,9 @@ assert default_registry.action_ids == (
 )
 assert default_registry.require_action("REPAIR").next_feature == "REMESH"
 assert default_registry.require_action("MANUAL_REPAIR").next_feature == "REPAIR"
+assert all(default_registry.require_action(action).action.automatic for action in ("REMESH", "DECIMATE", "UV", "BAKE_ALL"))
+assert not default_registry.require_action("INSTANT_START").action.automatic
+assert not default_registry.require_action("MANUAL_REPAIR").action.automatic
 assert tuple(type(feature._service).__name__ for feature in default_registry) == (
     "RepairService",
     "RemeshService",

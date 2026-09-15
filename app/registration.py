@@ -1,6 +1,7 @@
 """Explicit add-on registration order and lifecycle."""
 
 from . import ui
+from . import flow
 from ..features import edit_tools
 from ..features import registration as feature_registration
 from ..features import settings
@@ -20,6 +21,7 @@ MODULES = (
     feature_registration,
     compatibility_registration,
     session,
+    flow,
     ui,
     edit_tools,
 )

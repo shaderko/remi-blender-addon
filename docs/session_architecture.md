@@ -32,6 +32,38 @@ developers can substitute one concern without monkey-patching module globals.
 `features/settings.py` and `features/registration.py` then compose the Blender
 properties and operator types contributed by those same instances.
 
+## Automatic flows and presets
+
+`app/flow.py` composes the built-in Remesh → Decimate → UV → Bake All recipe,
+the preset editor, and the `remi.run_full_flow` operator. `workflow/presets.py`
+stores versioned scalar JSON in the user configuration directory and validates
+the entire settings document before assignment. Selection persists by preset
+identifier rather than the dynamic enum's list position.
+
+`workflow/automatic.py` freezes a plan, runs all feature-owned dependency
+preflights, then calls the existing session's `execute_action` once per stage.
+Each action still owns its own candidate and the session still owns all history
+changes. Nothing routes through the legacy full-pipeline implementation.
+
+Actions explicitly opt into automatic execution with `FeatureAction.automatic`.
+Their features provide `preflight_automatic` and `draw_automatic_settings`;
+interactive actions and actions requiring gesture payloads are not eligible.
+The default recipe is four actions, but saved presets can choose other supported
+actions while maintaining feature order. The new flow settings use a separate
+`scene.remi_flow` facade, leaving `scene.remi_settings` and existing feature
+settings compatible with saved files.
+
+The operator shows a stage before executing it on the next timer tick. It ends
+the session on complete success. On failure or stop, it becomes the existing
+manual session controller so recovery buttons remain operational. The
+`automatic` flag also blocks manually queued actions during a full flow.
+
+The manual and automatic entry operators inherit shared behavior from the plain
+Python `RemiSessionController`. Neither subclasses a registered Blender operator:
+registering such a subclass can detach the original operator's RNA callbacks.
+Entry-point regressions must call `bpy.ops.*.poll()` and execute both operators,
+not only call the Python classes' `poll` methods.
+
 Feature services contain mesh-processing behavior. They receive a working copy
 from the session and return a `StageResult`; they never create recovery history
 or replace the locked object themselves.

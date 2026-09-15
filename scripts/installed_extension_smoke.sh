@@ -54,6 +54,26 @@ uv_result = uv_engine.ensure_remi_uv(
 assert uv_result.success and uv_result.stats.valid, uv_result.error
 assert 3.999 <= uv_result.stats.minimum_gap_px < 4.1, uv_result.stats.minimum_gap_px
 print("REMI_INSTALLED_UV_GAP_SMOKE_OK")
+assert bpy.ops.remi.start_session.poll(), "Installed Start Remi is disabled"
+assert bpy.ops.remi.run_full_flow.poll(), "Installed Full Flow is disabled"
+assert bpy.ops.remi.start_session() == {"FINISHED"}
+assert bpy.context.window_manager.remi_session.active
+session = importlib.import_module(module_name + ".workflow.session")
+session.runtime.cancel(bpy.context)
+assert bpy.ops.remi.start_session.poll()
+assert bpy.ops.remi.run_full_flow.poll()
+print("REMI_INSTALLED_MANUAL_START_SMOKE_OK")
+flow = importlib.import_module(module_name + ".app.flow")
+assert flow.selected_document(bpy.context)["actions"] == ["REMESH", "DECIMATE", "UV", "BAKE_ALL"]
+settings = bpy.context.scene.remi_flow
+settings.preset = "CURRENT"
+for step in settings.steps:
+    step.enabled = step.action_id == "UV"
+bpy.context.scene.remi_settings.bake_texture_size = 256
+assert bpy.ops.remi.run_full_flow() == {"FINISHED"}
+assert not bpy.context.window_manager.remi_session.active
+assert len(bpy.context.scene.objects) == 1
+print("REMI_INSTALLED_FULL_FLOW_SMOKE_OK")
 bpy.ops.preferences.addon_disable(module=module_name)
 print("REMI_INSTALLED_EXTENSION_SMOKE_OK")
 '

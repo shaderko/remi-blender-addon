@@ -37,11 +37,12 @@ def _stage_items(_operator, _context):
     ]
 
 
-class Remi_OT_StartSession(Operator):
-    bl_idname = "remi.start_session"
-    bl_label = "Start Remi"
-    bl_description = "Lock the active mesh into a recoverable single-object Remi session"
-    bl_options = {"REGISTER", "UNDO"}
+class RemiSessionController:
+    """Shared Python behavior; registered Blender operators must be siblings.
+
+    Subclassing an already registered Operator lets registration of the child
+    detach the parent's RNA Python callback, disabling the original button.
+    """
 
     _timer = None
 
@@ -172,6 +173,13 @@ class Remi_OT_StartSession(Operator):
         self._stop_timer(context)
         if runtime.state(context).active:
             runtime.cancel(context)
+
+
+class Remi_OT_StartSession(RemiSessionController, Operator):
+    bl_idname = "remi.start_session"
+    bl_label = "Start Remi"
+    bl_description = "Lock the active mesh into a recoverable single-object Remi session"
+    bl_options = {"REGISTER", "UNDO"}
 
 
 class Remi_OT_SessionCommand(Operator):

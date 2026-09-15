@@ -26,6 +26,12 @@ def draw_session(layout, context):
 
     draw_session_header(layout, state)
 
+    if state.automatic:
+        layout.label(text=f"Full Flow · {state.flow_completed}/{state.flow_total} stages complete")
+        layout.operator("remi.stop_full_flow", text="Stop After Current Stage", icon="PAUSE")
+        layout.label(text="Each stage may keep Blender busy", icon="INFO")
+        return
+
     layout.separator()
     stages = None
     for index, feature in enumerate(features):
@@ -44,6 +50,7 @@ def draw_session(layout, context):
 
     layout.separator()
     draw_history_controls(layout, state)
+    layout.operator("remi.save_flow_preset", text="Save Current Settings as Preset", icon="PRESET")
 
 
 class Remi_PT_MainPanel(Panel):

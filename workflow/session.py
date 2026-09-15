@@ -153,6 +153,8 @@ class RemiSessionRuntime:
         self.history.reset_labels()
 
         state.active = True
+        state.automatic = False
+        state.flow_stop_requested = False
         state.busy = False
         state.interactive = False
         state.session_id = session_id
@@ -182,6 +184,8 @@ class RemiSessionRuntime:
         state = self.state(context)
         if not state.active:
             raise RuntimeError("No Remi session is active")
+        if state.automatic:
+            raise RuntimeError("Stop the full flow before running manual commands")
         if state.interactive:
             raise RuntimeError("Finish or cancel the active interactive tool first")
         if state.busy or self.pending_command:
@@ -389,6 +393,10 @@ class RemiSessionRuntime:
     def _clear_state(self, context):
         state = self.state(context)
         state.active = False
+        state.automatic = False
+        state.flow_stop_requested = False
+        state.flow_total = 0
+        state.flow_completed = 0
         state.busy = False
         state.interactive = False
         state.session_id = ""

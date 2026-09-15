@@ -20,6 +20,7 @@ class FeatureAction:
     mode: ExecutionMode = ExecutionMode.ATOMIC
     requires_source_checkpoint: bool = False
     next_feature: str | None = None
+    automatic: bool = False
 
 
 @dataclass(frozen=True)
@@ -61,6 +62,12 @@ class WorkflowFeature(Protocol):
 
     def blender_classes(self) -> tuple[type, ...]:
         """Return Blender types registered for this feature."""
+
+    def preflight_automatic(self, action: FeatureAction, context: Any) -> None:
+        """Check an automatic action's dependencies before a session begins."""
+
+    def draw_automatic_settings(self, layout: Any, context: Any, action: FeatureAction) -> None:
+        """Draw action-specific settings in the full-flow preset editor."""
 
     def draw(self, layout: Any, context: FeatureUIContext) -> None:
         """Draw controls owned by this feature."""

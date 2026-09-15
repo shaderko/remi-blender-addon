@@ -19,8 +19,8 @@ class RemeshFeature(FeatureDefaults):
         icon="MOD_REMESH",
         next_feature="RETOPOLOGY",
         actions=(
-            FeatureAction("REMESH", "Remesh", "Create a clean watertight surface"),
-            FeatureAction("DECIMATE", "Decimate", "Reduce the mesh with MeshLab"),
+            FeatureAction("REMESH", "Remesh", "Create a clean watertight surface", automatic=True),
+            FeatureAction("DECIMATE", "Decimate", "Reduce the mesh with MeshLab", automatic=True),
         ),
     )
 
@@ -102,3 +102,25 @@ class RemeshFeature(FeatureDefaults):
                 )
             )
         return super().execute(action, context)
+
+    def preflight_automatic(self, action, context):
+        if action.id == "DECIMATE":
+            from ...integrations import meshlab
+            if not meshlab.ensure_pymeshlab():
+                raise RuntimeError(meshlab.pymeshlab_unavailable_message())
+        elif context.scene.remi_settings.use_hole_repair and context.scene.remi_settings.hole_repair_method == "ALPHA_WRAP":
+            from ...integrations.alpha_wrap import toolchain
+            error = toolchain.validate_executable(toolchain.resolve_executable(context.scene.remi_settings.alpha_wrap_executable))
+            if error:
+                raise RuntimeError(error + ". Build the helper in Repair before running this preset.")
+
+    def draw_automatic_settings(self, layout, context, action):
+        settings = context.scene.remi_settings
+        if action.id == "DECIMATE":
+            names = ("decimation_passes", "target_percentage", "decimation_preserve_detail", "decimation_with_texture")
+        else:
+            names = ("remesh_backend", "voxel_size", "use_sdf_fillet", "fillet_radius", "use_sdf_smoothing", "smoothing_iterations")
+            if settings.remesh_backend == "VOLUME":
+                names = ("remesh_backend", "voxel_size", "hole_close_ratio", "volume_guide_voxel_scale", "volume_surface_fit_ratio", "volume_preserve_features", "volume_feature_angle", "volume_feature_reach")
+        for name in names:
+            layout.prop(settings, name)

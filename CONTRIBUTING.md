@@ -20,6 +20,8 @@ workflow action.
 | SDF Geometry Nodes mechanism | `features/remesh/geometry_nodes.py` |
 | Bake images, materials, or Cycles execution | `features/bake/engine.py` |
 | Back, Redo, Reset, checkpoint promotion | `workflow/history.py` |
+| Automatic plan execution and preset persistence | `workflow/automatic.py`, `workflow/presets.py` |
+| Default flow recipe, preset editor, automatic run operator | `app/flow.py` |
 | Session action and interactive transactions | `workflow/session.py` |
 | Temporary files and crash cleanup | `workflow/disk.py` |
 | Blender object copying/loading/cleanup | `blender/session_objects.py` |
@@ -55,6 +57,11 @@ For an atomic action:
 
 Interactive actions use the same boundary and must finish through
 `commit_interactive_step` or `abandon_interactive_step`.
+
+To expose an action to full-flow presets, mark it `automatic=True` and provide
+feature-owned `preflight_automatic` and `draw_automatic_settings` methods. It
+must be atomic and runnable without gesture payloads. Automatic execution calls
+the same feature service through the same session transaction as manual use.
 
 ## Adding a workflow feature
 
@@ -96,3 +103,8 @@ The release gate exercises registration, transactions, manual repair,
 Back/Redo, UV, baking, edit tools, Instant Meshes, archive construction, and a
 real extension installation. A passing build proves those automated paths; it
 does not replace interactive viewport testing for UX changes.
+
+The automatic-flow regression also executes real voxel remeshing, MeshLab
+decimation, UV generation and all-map baking. It requires PyMeshLab in Blender's
+Python environment; missing dependencies are tested separately as an expected
+preflight failure before any scene changes.

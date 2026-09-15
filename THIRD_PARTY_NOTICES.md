@@ -8,6 +8,21 @@ them.
 The release includes the corresponding retained source code and license texts,
 including the source used to build the bundled macOS Apple Silicon binary.
 
+## PyMeshLab and MeshLab
+
+- Project: [cnr-isti-vclab/PyMeshLab](https://github.com/cnr-isti-vclab/PyMeshLab)
+- Version: `2025.7.post1`
+- Wheel: `pymeshlab-2025.7.post1-cp313-cp313-macosx_11_0_arm64.whl`
+- Wheel SHA-256: `841b1fa15fc76ab73e594f4bbfcbe339782b36be67d9387ff5aa5f4ca422e180`
+- License: GPL-3.0
+- Corresponding source: <https://github.com/cnr-isti-vclab/PyMeshLab/tree/v2025.7.post1>
+
+Remi distributes the unmodified wheel from PyPI. Blender installs it into the
+extension-managed Python environment; Remi does not download or install Python
+packages at runtime. The wheel includes the MeshLab filters and runtime
+libraries supplied by the upstream PyMeshLab release, including the decimation
+and Alpha Wrap filters used by Remi. Its license is retained inside the wheel.
+
 ## xatlas
 
 - Project: [jpcy/xatlas](https://github.com/jpcy/xatlas)

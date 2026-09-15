@@ -109,10 +109,9 @@ class RemeshFeature(FeatureDefaults):
             if not meshlab.ensure_pymeshlab():
                 raise RuntimeError(meshlab.pymeshlab_unavailable_message())
         elif context.scene.remi_settings.use_hole_repair and context.scene.remi_settings.hole_repair_method == "ALPHA_WRAP":
-            from ...integrations.alpha_wrap import toolchain
-            error = toolchain.validate_executable(toolchain.resolve_executable(context.scene.remi_settings.alpha_wrap_executable))
-            if error:
-                raise RuntimeError(error + ". Build the helper in Repair before running this preset.")
+            from ...integrations import meshlab
+            if not meshlab.ensure_pymeshlab():
+                raise RuntimeError(meshlab.pymeshlab_unavailable_message())
 
     def draw_automatic_settings(self, layout, context, action):
         settings = context.scene.remi_settings

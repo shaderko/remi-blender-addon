@@ -5,7 +5,6 @@ from bpy.props import (
     EnumProperty,
     FloatProperty,
     IntProperty,
-    StringProperty,
 )
 
 
@@ -19,7 +18,7 @@ SCENE_SETTINGS = {
             name="Repair Method",
             description="Choose how damaged open geometry is repaired before remeshing",
             items=[
-                ("ALPHA_WRAP", "Alpha-Guided Patches", "Recommended: use CGAL Alpha Wrapping only as a hidden guide, copy its hole-spanning patches onto the original triangles, then continue through SDF remeshing"),
+                ("ALPHA_WRAP", "Alpha-Guided Patches", "Use bundled MeshLab Alpha Wrapping as a hidden guide, copy its hole-spanning patches onto the original triangles, then continue through SDF remeshing"),
                 ("HYBRID", "Hybrid", "Fill boundary loops, then close spatial cracks with an SDF volume"),
                 ("BOUNDARY", "Boundary Only", "Triangulate explicit boundary loops without volumetric closing"),
                 ("VOLUME", "Volume-Guided Patches", "Recommended: build a high-resolution closing volume as a temporary guide, retain only faces spanning holes, then continue through the normal SDF flow"),
@@ -97,17 +96,6 @@ SCENE_SETTINGS = {
             default=6,
             min=0,
             max=30,
-        ),
-    "alpha_wrap_executable": StringProperty(
-            name="Alpha Wrap Helper",
-            description="Optional path to the compiled Remi CGAL Alpha Wrap helper",
-            default="",
-            subtype="FILE_PATH",
-        ),
-    "alpha_wrap_auto_build": BoolProperty(
-            name="Build Helper Automatically",
-            description="Run CMake automatically when the bundled Alpha Wrap helper has not been built yet",
-            default=True,
         ),
     "hole_max_sides": IntProperty(
             name="Max Boundary Edges",

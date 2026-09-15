@@ -3,13 +3,6 @@
 import json
 import sys
 
-# Add user site-packages for pymeshlab
-import site
-
-sp = site.getusersitepackages()
-if sp and sp not in sys.path:
-    sys.path.insert(0, sp)
-
 import pymeshlab
 
 # Args: input_path output_path target_percentage passes preserve_detail

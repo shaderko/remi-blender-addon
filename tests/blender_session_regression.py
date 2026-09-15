@@ -572,16 +572,14 @@ def test_repair_ui_keeps_manual_and_advanced_controls():
     draw_feature("REPAIR", alpha_layout, state)
     alpha_events = set(alpha_layout.events)
     assert ("operator", "remi.draw_hole_patch") in alpha_events
-    assert ("operator", "remi.build_alpha_wrap") in alpha_events
     assert {
         ("prop", "targeted_ray_spacing"),
         ("prop", "targeted_ray_depth_ratio"),
         ("prop", "alpha_wrap_patch_resolution"),
         ("prop", "alpha_wrap_patch_relax_iterations"),
         ("prop", "alpha_wrap_offset_ratio"),
-        ("prop", "alpha_wrap_executable"),
-        ("prop", "alpha_wrap_auto_build"),
     }.issubset(alpha_events)
+    assert ("operator", "remi.build_alpha_wrap") not in alpha_events
 
     settings.hole_repair_method = "HYBRID"
     settings.hole_detail_recovery = True
@@ -859,7 +857,7 @@ def test_bake_auto_cage_sizes_the_search_to_the_gap():
 
 def test_transactional_decimation_when_available():
     if not meshlab.ensure_pymeshlab():
-        print("SKIP transactional Decimate: PyMeshLab is not installed")
+        print("SKIP source Decimate: bundled wheel is exercised after extension installation")
         return
     _clean_scene()
     bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=2, radius=1.0)

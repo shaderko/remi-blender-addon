@@ -105,7 +105,15 @@ def _restore_source_materials(source: bpy.types.Object, result: bpy.types.Object
 
 
 def _run_textured_worker(input_path: str, output_path: str, settings) -> list[dict]:
+    import pymeshlab
+
     worker = Path(__file__).resolve().parents[2] / "integrations" / "meshlab" / "worker.py"
+    environment = os.environ.copy()
+    private_site = str(Path(pymeshlab.__file__).resolve().parent.parent)
+    existing_pythonpath = environment.get("PYTHONPATH", "")
+    environment["PYTHONPATH"] = os.pathsep.join(
+        path for path in (private_site, existing_pythonpath) if path
+    )
     process = subprocess.run(
         [
             sys.executable,
@@ -119,6 +127,7 @@ def _run_textured_worker(input_path: str, output_path: str, settings) -> list[di
         ],
         capture_output=True,
         text=True,
+        env=environment,
     )
     results = []
     for line in process.stdout.splitlines():

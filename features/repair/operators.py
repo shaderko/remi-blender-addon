@@ -3,7 +3,6 @@
 import bpy
 from bpy.types import Operator
 
-from ...integrations import alpha_wrap as aw
 from ...blender.mesh_objects import (
     world_bounds_diagonal as _world_bounds_diagonal,
 )
@@ -316,21 +315,4 @@ class Remi_OT_RepairHoles(Operator):
             f"Patched '{repaired.name}': {report['new_faces']} boundary patches, "
             f"close distance {report['close_distance']:.5g}",
         )
-        return {"FINISHED"}
-
-
-class Remi_OT_BuildAlphaWrap(Operator):
-    """Configure and compile the bundled CGAL Alpha Wrap helper."""
-
-    bl_idname = "remi.build_alpha_wrap"
-    bl_label = "Build Alpha Wrap Helper"
-    bl_description = "Compile the bundled C++ helper with CMake and the installed CGAL development package"
-
-    def execute(self, context):
-        result = aw.build_helper()
-        if not result.get("success"):
-            self.report({"ERROR"}, result.get("error", "Could not build Alpha Wrap helper"))
-            return {"CANCELLED"}
-        context.scene.remi_settings.alpha_wrap_executable = result["executable"]
-        self.report({"INFO"}, "Alpha Wrap helper built successfully")
         return {"FINISHED"}

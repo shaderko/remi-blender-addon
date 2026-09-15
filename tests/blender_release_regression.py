@@ -207,7 +207,7 @@ def test_full_pipeline_dependency_preflight():
         try:
             outcome = bpy.ops.remi.full_pipeline()
         except RuntimeError as exc:
-            assert "PyMeshLab is required for decimation" in str(exc)
+            assert "bundled PyMeshLab" in str(exc)
         else:
             assert outcome == {"CANCELLED"}
     finally:
@@ -219,7 +219,7 @@ def test_full_pipeline_dependency_preflight():
 
 def test_standalone_decimation_preserves_source():
     if not meshlab.ensure_pymeshlab():
-        print("SKIP standalone decimation: PyMeshLab is not installed")
+        print("SKIP source decimation: bundled wheel is exercised after extension installation")
         return
 
     _clean_scene()
@@ -241,14 +241,12 @@ def test_standalone_decimation_preserves_source():
     print("PASS standalone decimation source preservation")
 
 
-def test_dependency_message_is_explicit():
-    command = meshlab.pymeshlab_install_command()
+def test_dependency_message_is_actionable():
     message = meshlab.pymeshlab_unavailable_message()
-    assert sys.executable in command
-    assert "pip install" in command
-    assert command in message
-    assert "auto-install" not in message
-    print("PASS explicit PyMeshLab dependency guidance")
+    assert "bundled PyMeshLab" in message
+    assert "Reinstall" in message
+    assert "pip install" not in message
+    print("PASS bundled PyMeshLab recovery guidance")
 
 
 remi.register()
@@ -260,7 +258,7 @@ try:
     test_hybrid_repair_preserves_source()
     test_full_pipeline_dependency_preflight()
     test_standalone_decimation_preserves_source()
-    test_dependency_message_is_explicit()
+    test_dependency_message_is_actionable()
 finally:
     _clean_scene()
     remi.unregister()

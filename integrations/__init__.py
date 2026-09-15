@@ -1,1 +1,1 @@
-"""External executable and optional Python dependency integrations."""
+"""Packaged and external tool integrations."""

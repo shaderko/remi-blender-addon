@@ -44,12 +44,11 @@ class RepairFeature(FeatureDefaults):
 
     def blender_classes(self) -> tuple[type, ...]:
         from .operators import (
-            Remi_OT_BuildAlphaWrap,
             Remi_OT_DrawHolePatch,
             Remi_OT_RepairHoles,
         )
 
-        return Remi_OT_DrawHolePatch, Remi_OT_RepairHoles, Remi_OT_BuildAlphaWrap
+        return Remi_OT_DrawHolePatch, Remi_OT_RepairHoles
 
     def draw(self, layout, context) -> None:
         settings = context.blender_context.scene.remi_settings
@@ -91,9 +90,6 @@ class RepairFeature(FeatureDefaults):
             row.prop(settings, "alpha_wrap_patch_ratio", text="Detection")
             row.prop(settings, "alpha_wrap_patch_rings", text="Overlap")
             layout.prop(settings, "alpha_wrap_offset_ratio", text="Surface Offset")
-            layout.prop(settings, "alpha_wrap_executable", text="Helper")
-            layout.prop(settings, "alpha_wrap_auto_build", text="Build Automatically")
-            layout.operator("remi.build_alpha_wrap", text="Build Helper", icon="TOOL_SETTINGS")
         elif settings.hole_repair_method in {"HYBRID", "BOUNDARY"}:
             row = layout.row(align=True)
             row.prop(settings, "hole_max_sides", text="Max Loop")
@@ -144,14 +140,32 @@ class RepairFeature(FeatureDefaults):
         return super().execute(action, context)
 
     def preflight_automatic(self, action, context):
-        settings = context.scene.remi_settings
-        if settings.hole_repair_method == "ALPHA_WRAP":
-            from ...integrations.alpha_wrap import toolchain
-            error = toolchain.validate_executable(toolchain.resolve_executable(settings.alpha_wrap_executable))
-            if error:
-                raise RuntimeError(error + ". Build the helper in Repair before running this preset.")
+        if context.scene.remi_settings.hole_repair_method == "ALPHA_WRAP":
+            from ...integrations import meshlab
+            if not meshlab.ensure_pymeshlab():
+                raise RuntimeError(meshlab.pymeshlab_unavailable_message())
 
     def draw_automatic_settings(self, layout, context, action):
         settings = context.scene.remi_settings
-        for name in ("hole_repair_method", "hole_max_sides", "hole_weld_distance", "hole_close_ratio", "hole_detail_recovery", "volume_guide_voxel_scale"):
+        names = ("hole_repair_method",)
+        if settings.hole_repair_method == "ALPHA_WRAP":
+            names += (
+                "alpha_wrap_alpha_ratio",
+                "alpha_wrap_auto_scale",
+                "alpha_wrap_max_ratio",
+                "alpha_wrap_coverage_target",
+                "alpha_wrap_patch_ratio",
+                "alpha_wrap_patch_rings",
+                "alpha_wrap_offset_ratio",
+            )
+        elif settings.hole_repair_method in {"HYBRID", "BOUNDARY"}:
+            names += ("hole_max_sides", "hole_weld_distance")
+        else:
+            names += (
+                "hole_close_ratio",
+                "volume_guide_voxel_scale",
+                "volume_surface_fit_ratio",
+                "hole_detail_recovery",
+            )
+        for name in names:
             layout.prop(settings, name)

@@ -21,6 +21,8 @@ mkdir -p "$OUTPUT_DIR"
 ARTIFACT="$OUTPUT_DIR/remi-$VERSION-macos-arm64.zip"
 rm -f "$ARTIFACT"
 
+"$SCRIPT_DIR/fetch_wheels.sh"
+
 "$BLENDER_BIN" --command extension build \
   --source-dir "$REPO_DIR" \
   --output-filepath "$ARTIFACT"

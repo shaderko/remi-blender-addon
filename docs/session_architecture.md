@@ -129,7 +129,7 @@ the geometry service itself still executes inside a normal session transaction.
 - `app/application.py` and `app/registration.py`: explicit dependency
   composition and Blender lifecycle order.
 - `blender`: reusable object lifecycle and OBJ/PLY/GLB adapters.
-- `integrations`: CGAL Alpha Wrap, AutoRemesher, and optional PyMeshLab clients;
+- `integrations`: the bundled PyMeshLab client and optional AutoRemesher client;
   the MeshLab subprocess worker lives with its client rather than at add-on root.
 - `compat`: operator IDs retained for older scripts and Blender files. The old
   multi-object full pipeline lives here and is not part of the primary UI.

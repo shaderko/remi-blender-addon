@@ -26,7 +26,7 @@ workflow action.
 | Temporary files and crash cleanup | `workflow/disk.py` |
 | Blender object copying/loading/cleanup | `blender/session_objects.py` |
 | Mesh file import/export | `blender/mesh_exchange.py` |
-| External programs and optional dependencies | `integrations/<tool>/` |
+| Packaged and external tool integrations | `integrations/<tool>/` |
 | Application assembly and registration | `app/` |
 | Generic panel shell | `app/ui/` |
 | Interactive Instant Meshes implementation | `features/retopology/instant_meshes/` |
@@ -104,7 +104,7 @@ Back/Redo, UV, baking, edit tools, Instant Meshes, archive construction, and a
 real extension installation. A passing build proves those automated paths; it
 does not replace interactive viewport testing for UX changes.
 
-The automatic-flow regression also executes real voxel remeshing, MeshLab
-decimation, UV generation and all-map baking. It requires PyMeshLab in Blender's
-Python environment; missing dependencies are tested separately as an expected
-preflight failure before any scene changes.
+The installed-extension regression executes real voxel remeshing, bundled
+MeshLab decimation, UV generation, and all-map baking with user site-packages
+disabled. Missing or damaged packaged dependencies are tested separately as an
+expected preflight failure before any scene changes.

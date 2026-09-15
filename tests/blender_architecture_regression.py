@@ -102,7 +102,6 @@ assert tuple(
 ) == (
     "remi.draw_hole_patch",
     "remi.repair_holes",
-    "remi.build_alpha_wrap",
     "remi.sdf_remesh",
     "remi.apply_remesh",
     "remi.decimate",
@@ -115,7 +114,7 @@ assert tuple(
     "remi.bake_ao",
 )
 scene_settings = compose_scene_settings(default_registry)
-assert len(scene_settings) == 59
+assert len(scene_settings) == 57
 assert "hole_repair_method" in scene_settings
 assert "voxel_size" in scene_settings
 assert "ar_target_quads" in scene_settings
@@ -158,7 +157,6 @@ canonical_paths = (
     "features/retopology/instant_meshes/runtime.py",
     "features/uv/engine/blender_bridge.py",
     "features/bake/engine.py",
-    "integrations/alpha_wrap/helper/CMakeLists.txt",
     "integrations/meshlab/worker.py",
 )
 for relative_path in canonical_paths:
@@ -179,6 +177,7 @@ legacy_paths = (
     "settings.py",
     "workflow/session_runtime.py",
     "alpha_wrap_helper",
+    "integrations/alpha_wrap",
     "instant_meshes",
     "selection_tools",
     "storage",

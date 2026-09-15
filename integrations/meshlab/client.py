@@ -1,67 +1,27 @@
-"""
-PyMeshLab integration for Remi.
-Checks for pymeshlab in Blender's Python environment and runs quadric edge
-collapse decimation. Dependency installation is an explicit user action.
-"""
+"""Bundled PyMeshLab integration for Remi."""
 
 import os
-import shlex
-import sys
 
 # ---------------------------------------------------------------------------
 # PyMeshLab Availability
 # ---------------------------------------------------------------------------
 
 
-def _try_add_user_site_packages():
-    """Try adding the user site-packages directory to sys.path.
-    This helps when pymeshlab was pip-installed globally but Blender
-    only looks at its bundled site-packages."""
-    import site
-    try:
-        user_sp = site.getusersitepackages()
-        if user_sp and user_sp not in sys.path:
-            sys.path.insert(0, user_sp)
-            return True
-    except Exception:
-        pass
-    return False
-
-
-def pymeshlab_install_command() -> str:
-    """Return the exact opt-in command for Blender's current Python."""
-    return shlex.join(
-        [sys.executable, "-m", "pip", "install", "--user", "pymeshlab"]
-    )
-
-
 def pymeshlab_unavailable_message() -> str:
-    """Return an actionable error without silently changing Blender."""
+    """Explain a damaged or platform-incompatible Remi installation."""
     return (
-        "PyMeshLab is required for decimation. Close Blender, run this in "
-        f"Terminal, then reopen Blender: {pymeshlab_install_command()}"
+        "Remi's bundled PyMeshLab component is unavailable. Reinstall the Remi "
+        "package built for this Blender version and platform."
     )
 
 
 def ensure_pymeshlab() -> bool:
-    """Ensure PyMeshLab is importable in Blender's Python environment.
-    This check never downloads or installs software."""
-    # Attempt 1: Direct import
+    """Return whether the extension-managed PyMeshLab wheel is importable."""
     try:
         import pymeshlab  # noqa: F401
         return True
-    except ImportError:
-        pass
-
-    # Attempt 2: Add user site-packages and retry
-    _try_add_user_site_packages()
-    try:
-        import pymeshlab  # noqa: F401
-        return True
-    except ImportError:
-        pass
-
-    return False
+    except Exception:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +66,7 @@ def run_quadric_decimation(
     try:
         import pymeshlab
     except ImportError:
-        return {"success": False, "error": "PyMeshLab not installed"}
+        return {"success": False, "error": pymeshlab_unavailable_message()}
 
     result = {"success": True, "error": None}
 

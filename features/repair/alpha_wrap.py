@@ -1,9 +1,4 @@
-"""CGAL Alpha Wrap guide construction and selective patch extraction."""
-
-import json
-import os
-from pathlib import Path
-import subprocess
+"""MeshLab Alpha Wrap guide construction and selective patch extraction."""
 
 import bpy
 
@@ -14,7 +9,7 @@ from ...blender.mesh_objects import (
     remove_mesh_object,
     world_bounds_diagonal,
 )
-from ...integrations import alpha_wrap
+from ...integrations import meshlab
 from ...workflow.disk import SessionDiskService
 from .guided import (
     _compose_source_with_guide_patches as compose_source_with_guide_patches,
@@ -24,25 +19,6 @@ from .guided import (
 )
 
 
-def resolve_alpha_wrap(settings) -> tuple[Path, str]:
-    """Find the CGAL helper, optionally building it once on demand."""
-    executable = alpha_wrap.resolve_executable(settings.alpha_wrap_executable)
-    error = alpha_wrap.validate_executable(executable)
-    if error and settings.alpha_wrap_auto_build:
-        result = alpha_wrap.build_helper()
-        if result.get("success"):
-            executable = Path(result["executable"])
-            error = alpha_wrap.validate_executable(executable)
-        else:
-            error = result.get("error", error)
-    if error:
-        error = (
-            f"{error}. Install CGAL and CMake (macOS: brew install cgal cmake; "
-            "Ubuntu: apt install libcgal-dev cmake), then click Build Helper."
-        )
-    return executable, error
-
-
 def create_alpha_wrap_guide(
     source: bpy.types.Object,
     settings,
@@ -50,20 +26,19 @@ def create_alpha_wrap_guide(
     alpha_ratio: float = None,
     disk=None,
 ) -> tuple:
-    """Run compiled Alpha Wrapping and import its temporary watertight guide."""
-    executable, error = resolve_alpha_wrap(settings)
-    if error:
-        return None, error, {}
+    """Run the bundled MeshLab Alpha Wrap and import its watertight guide."""
+    if not meshlab.ensure_pymeshlab():
+        return None, meshlab.pymeshlab_unavailable_message(), {}
 
     diagonal = world_bounds_diagonal(source)
     if diagonal <= 0.0:
         return None, "The source mesh has zero-size bounds", {}
-    alpha = diagonal * float(
+    alpha_ratio = float(
         settings.alpha_wrap_alpha_ratio if alpha_ratio is None else alpha_ratio
     )
-    offset = min(
-        diagonal * float(settings.alpha_wrap_offset_ratio),
-        alpha * 0.95,
+    offset_ratio = min(
+        float(settings.alpha_wrap_offset_ratio),
+        alpha_ratio * 0.95,
     )
 
     try:
@@ -72,36 +47,25 @@ def create_alpha_wrap_guide(
             output_path = str(workspace / "wrapped.ply")
             if not export_ply(source, input_path):
                 return None, "Could not export the source mesh for Alpha Wrap", {}
-            command = alpha_wrap.build_command(
-                executable,
-                input_path,
-                output_path,
-                alpha,
-                offset,
+            import pymeshlab
+
+            mesh_set = pymeshlab.MeshSet()
+            mesh_set.load_new_mesh(input_path)
+            mesh_set.generate_alpha_wrap(
+                alpha=pymeshlab.PercentageValue(alpha_ratio * 100.0),
+                offset=pymeshlab.PercentageValue(offset_ratio * 100.0),
             )
-            process = subprocess.run(
-                command,
-                cwd=str(executable.parent),
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if process.returncode != 0:
-                message = process.stderr.strip() or process.stdout.strip() or "Alpha Wrap failed"
-                return None, message, {}
-            if not os.path.isfile(output_path):
-                return None, "Alpha Wrap completed without producing an output mesh", {}
+            report = {
+                "vertices": mesh_set.current_mesh().vertex_number(),
+                "faces": mesh_set.current_mesh().face_number(),
+            }
+            mesh_set.save_current_mesh(output_path, binary=True)
             wrapped = import_ply(output_path)
             if not wrapped:
                 return None, "Blender could not import the Alpha Wrap result", {}
             wrapped.name = source.name + suffix
-            report = {}
-            try:
-                report = json.loads(process.stdout.strip().splitlines()[-1])
-            except (json.JSONDecodeError, IndexError):
-                pass
-    except OSError as exc:
-        return None, str(exc), {}
+    except Exception as exc:
+        return None, f"MeshLab Alpha Wrap failed: {exc}", {}
 
     bpy.ops.object.select_all(action="DESELECT")
     wrapped.select_set(True)
@@ -232,6 +196,5 @@ def alpha_wrap_hole_patches(
     )
 
 
-_resolve_alpha_wrap = resolve_alpha_wrap
 _create_alpha_wrap_guide = create_alpha_wrap_guide
 _alpha_wrap_hole_patches = alpha_wrap_hole_patches

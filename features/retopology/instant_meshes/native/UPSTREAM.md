@@ -11,7 +11,7 @@ algorithms. See `vendor/instant_meshes/LICENSE.txt` for the upstream BSD-style
 license and attribution requirements.
 
 The dependency trees are curated too. Eigen and TBB contain only the
-compiler-verified Apple Silicon include/source closure used by this module;
+Apple Silicon and Windows x64 include/source closure used by this module;
 legacy build systems, tests, allocators, unused numerical modules, and unused
 platform backends are excluded. The only retained Instant Meshes source edit is
 that `src/common.h` names the TBB facilities the solver uses instead of loading

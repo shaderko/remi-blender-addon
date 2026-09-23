@@ -62,6 +62,28 @@ class SessionDiskService:
     def _pid_is_alive(pid: int) -> bool:
         if pid <= 0:
             return False
+        if os.name == "nt":
+            # os.kill(pid, 0) terminates processes on Windows. Query a handle
+            # with SYNCHRONIZE access instead, without sending any signal.
+            import ctypes
+            from ctypes import wintypes
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+            kernel32.OpenProcess.restype = wintypes.HANDLE
+            kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+            kernel32.WaitForSingleObject.restype = wintypes.DWORD
+            kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+            kernel32.CloseHandle.restype = wintypes.BOOL
+            handle = kernel32.OpenProcess(0x00100000, False, pid)
+            if not handle:
+                # Only ERROR_INVALID_PARAMETER proves the PID is absent.
+                # Access-denied and unexpected errors must preserve its files.
+                return ctypes.get_last_error() != 87
+            try:
+                return kernel32.WaitForSingleObject(handle, 0) != 0
+            finally:
+                kernel32.CloseHandle(handle)
         try:
             os.kill(pid, 0)
         except ProcessLookupError:

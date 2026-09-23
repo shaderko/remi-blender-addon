@@ -6,18 +6,20 @@ their original copyright and license terms; this notice does not relicense
 them.
 
 The release includes the corresponding retained source code and license texts,
-including the source used to build the bundled macOS Apple Silicon binary.
+including the source used to build the platform-specific native binaries.
 
 ## PyMeshLab and MeshLab
 
 - Project: [cnr-isti-vclab/PyMeshLab](https://github.com/cnr-isti-vclab/PyMeshLab)
 - Version: `2025.7.post1`
-- Wheel: `pymeshlab-2025.7.post1-cp313-cp313-macosx_11_0_arm64.whl`
-- Wheel SHA-256: `841b1fa15fc76ab73e594f4bbfcbe339782b36be67d9387ff5aa5f4ca422e180`
+- macOS wheel: `pymeshlab-2025.7.post1-cp313-cp313-macosx_11_0_arm64.whl`
+- macOS wheel SHA-256: `841b1fa15fc76ab73e594f4bbfcbe339782b36be67d9387ff5aa5f4ca422e180`
+- Windows wheel: `pymeshlab-2025.7.post1-cp313-cp313-win_amd64.whl`
+- Windows wheel SHA-256: `25eb2578dd6c4d1b2e0253fb3b4f8f7895e8bb4f3f1236832db0ab58e6a44998`
 - License: GPL-3.0
 - Corresponding source: <https://github.com/cnr-isti-vclab/PyMeshLab/tree/v2025.7.post1>
 
-Remi distributes the unmodified wheel from PyPI. Blender installs it into the
+Remi distributes the matching unmodified platform wheel from PyPI. Blender installs it into the
 extension-managed Python environment; Remi does not download or install Python
 packages at runtime. The wheel includes the MeshLab filters and runtime
 libraries supplied by the upstream PyMeshLab release, including the decimation
@@ -59,8 +61,8 @@ unchanged.
 - License texts: `features/retopology/instant_meshes/native/vendor/instant_meshes/ext/eigen/COPYING.MPL2`,
   `COPYING.BSD`, and `COPYING.README`
 
-Only the compiler-verified dense linear algebra and geometry include closure is
-retained. The native target defines `EIGEN_MPL2_ONLY`; a clean build fails if an
+The retained dense linear algebra and geometry headers include the Apple
+Silicon and x86 SSE backends from the same pinned revision. The native target defines `EIGEN_MPL2_ONLY`; a clean build fails if an
 LGPL-only Eigen header is introduced. The retained Eigen source is provided
 under MPL-2.0 and, as part of the GPL larger work, is additionally distributed
 under GPL-3.0-or-later as permitted by MPL-2.0 section 3.3.
@@ -73,8 +75,8 @@ under GPL-3.0-or-later as permitted by MPL-2.0 section 3.3.
 - License: Apache-2.0
 - License text: `features/retopology/instant_meshes/native/vendor/instant_meshes/ext/tbb/LICENSE`
 
-Remi retains the classic task scheduler source and its compiler-verified header
-closure. The standalone TBB build system, tests, allocator, allocator proxy,
+Remi retains the classic task scheduler source and its header closure, including
+the Windows x64 machine headers and MASM routines from the same pinned revision. The standalone TBB build system, tests, allocator, allocator proxy,
 documentation payload, packaging, and unused platform code are omitted. The
 retained upstream TBB source files are unmodified and are built by Remi's CMake
 target. The upstream snapshot contains no `NOTICE` file.

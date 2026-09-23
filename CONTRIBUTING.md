@@ -108,3 +108,38 @@ The installed-extension regression executes real voxel remeshing, bundled
 MeshLab decimation, UV generation, and all-map baking with user site-packages
 disabled. Missing or damaged packaged dependencies are tested separately as an
 expected preflight failure before any scene changes.
+
+
+## Windows builds
+
+Build on Windows x64 with CPython 3.13 x64, CMake, and Visual Studio 2022
+Build Tools with **Desktop development with C++** (including the Windows SDK).
+Use the official Blender 5.1 or 5.2 Windows x64 ZIP. Python is needed only on
+the build machine; users install the finished extension ZIP in Blender.
+
+From the repository root in PowerShell:
+
+```powershell
+py -3.13 -m pip install pybind11==2.13.6
+py -3.13 scripts/release.py native
+py -3.13 scripts/release.py check --blender "C:\Blender\blender.exe"
+```
+
+The release gate runs the source regressions, fetches the checksum-pinned
+Windows PyMeshLab wheel, builds `dist/remi-<version>-windows-x64.zip`, validates
+its contents, and installs it into a temporary Blender profile with user
+site-packages disabled. It then exercises Alpha Wrap, the full remesh-to-bake
+flow, textured decimation, and the packaged native modules. No runtime pip
+installation is required. Windows ARM64 is not a build target.
+
+The **Release check** GitHub Actions workflow builds both native modules and
+runs the same gate on Windows x64 and macOS arm64, against both Blender versions.
+Successful Blender 5.2 jobs upload platform-specific ZIP artifacts. Download
+the Windows artifact only after both Windows jobs pass, then attach its inner
+ZIP to the new release. CI does not publish or overwrite GitHub Releases.
+
+The Python release tool also runs on macOS; existing shell commands delegate
+to it and require Python 3.11+. Use Python 3.13 for `native`. Builds stage only
+the selected platform's native modules and wheel, leaving the source manifest
+and other platform binaries intact. Native compiler output is installed into
+the corresponding `_native` directories. Missing native modules stop packaging.

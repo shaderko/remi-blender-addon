@@ -28,6 +28,17 @@ file(GLOB TBB_CORE_SOURCES CONFIGURE_DEPENDS
 list(FILTER TBB_CORE_SOURCES EXCLUDE REGEX "/test[^/]*\\.cpp$")
 list(APPEND TBB_CORE_SOURCES ${IM_TBB}/src/rml/client/rml_tbb.cpp)
 
+if(WIN32)
+  if(NOT MSVC OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+    message(FATAL_ERROR "The Windows build requires MSVC x64")
+  endif()
+  enable_language(ASM_MASM)
+  list(APPEND TBB_CORE_SOURCES
+    ${IM_TBB}/src/tbb/intel64-masm/atomic_support.asm
+    ${IM_TBB}/src/tbb/intel64-masm/itsx.asm
+    ${IM_TBB}/src/tbb/intel64-masm/intel64_misc.asm)
+endif()
+
 # TBB's version source expects this generated include. Keep it deterministic
 # instead of embedding the developer machine, compiler command, and timestamp.
 file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/version_string.ver [=[
@@ -42,8 +53,21 @@ target_include_directories(remi_tbb PRIVATE
   ${IM_TBB}/src
   ${IM_TBB}/src/rml/include
 )
-target_compile_definitions(remi_tbb PRIVATE USE_PTHREAD __TBB_BUILD=1)
-target_compile_options(remi_tbb PRIVATE -frtti -fexceptions)
+target_compile_definitions(remi_tbb PRIVATE __TBB_BUILD=1)
+if(MSVC)
+  target_compile_definitions(remi_tbb PRIVATE
+    USE_WINTHREAD _WIN32_WINNT=0x0600 _CRT_SECURE_NO_WARNINGS)
+  target_compile_options(remi_tbb PRIVATE
+    "$<$<COMPILE_LANGUAGE:CXX>:/GR;/EHsc;/volatile:iso>")
+  set_source_files_properties(
+    ${IM_TBB}/src/tbb/intel64-masm/atomic_support.asm
+    ${IM_TBB}/src/tbb/intel64-masm/itsx.asm
+    ${IM_TBB}/src/tbb/intel64-masm/intel64_misc.asm
+    PROPERTIES COMPILE_OPTIONS /DEM64T=1)
+else()
+  target_compile_definitions(remi_tbb PRIVATE USE_PTHREAD)
+  target_compile_options(remi_tbb PRIVATE -frtti -fexceptions)
+endif()
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   set_source_files_properties(${IM_TBB}/src/tbb/itt_notify.cpp
     PROPERTIES COMPILE_OPTIONS -Wno-varargs)
@@ -87,6 +111,11 @@ target_include_directories(_remi_instant_meshes PRIVATE
 )
 
 target_compile_definitions(_remi_instant_meshes PRIVATE EIGEN_MPL2_ONLY)
+if(MSVC)
+  target_compile_definitions(_remi_instant_meshes PRIVATE
+    __TBB_NO_IMPLICIT_LINKAGE=1 _USE_MATH_DEFINES _CRT_SECURE_NO_WARNINGS)
+  target_compile_options(_remi_instant_meshes PRIVATE /bigobj)
+endif()
 target_link_libraries(_remi_instant_meshes PRIVATE remi_tbb)
 if(APPLE AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   target_compile_options(_remi_instant_meshes PRIVATE

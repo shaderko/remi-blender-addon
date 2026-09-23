@@ -9,7 +9,7 @@ on:
 
 jobs:
   blender:
-    name: Blender ${{ matrix.blender.version }}
+    name: macOS / Blender ${{ matrix.blender.version }}
     runs-on: macos-15
     strategy:
       fail-fast: false
@@ -22,11 +22,24 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: remi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install native build tools
+        run: python -m pip install pybind11==2.13.6
+
+      - name: Build native modules
+        working-directory: remi
+        run: python scripts/release.py native
 
       - name: Cache release wheels
         uses: actions/cache@v4
         with:
-          path: wheels/*.whl
+          path: remi/wheels/*.whl
           key: remi-wheels-pymeshlab-2025.7.post1-cp313-macos-arm64
 
       - name: Cache Blender download
@@ -57,12 +70,74 @@ jobs:
 
       - name: Test and validate extension
         run: |
-          ./scripts/release_check.sh "$BLENDER_BIN" "$RUNNER_TEMP/dist"
+          python remi/scripts/release.py check --blender "$BLENDER_BIN" --output-dir "$RUNNER_TEMP/dist"
 
       - name: Upload release artifact
         if: matrix.blender.version == '5.2.1'
         uses: actions/upload-artifact@v4
         with:
-          name: remi-2.0.0-beta.2-macos-arm64
-          path: ${{ runner.temp }}/dist/remi-2.0.0-beta.2-macos-arm64.zip
+          name: remi-macos-arm64
+          path: ${{ runner.temp }}/dist/remi-*-macos-arm64.zip
+          if-no-files-found: error
+
+  windows:
+    name: Windows x64 / Blender ${{ matrix.blender.version }}
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        blender:
+          - version: "5.1.2"
+            release_dir: "Blender5.1"
+          - version: "5.2.1"
+            release_dir: "Blender5.2"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: remi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          architecture: x64
+
+      - name: Install native build tools
+        run: python -m pip install pybind11==2.13.6
+
+      - name: Build native modules
+        working-directory: remi
+        run: python scripts/release.py native
+
+      - name: Cache release wheels
+        uses: actions/cache@v4
+        with:
+          path: remi/wheels/*.whl
+          key: remi-wheels-pymeshlab-2025.7.post1-cp313-windows-x64
+
+      - name: Cache Blender download
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/blender-${{ matrix.blender.version }}-windows-x64.zip
+          key: blender-${{ matrix.blender.version }}-windows-x64
+
+      - name: Download and extract Blender
+        shell: pwsh
+        run: |
+          $archive = "$env:RUNNER_TEMP/blender-${{ matrix.blender.version }}-windows-x64.zip"
+          if (!(Test-Path $archive)) {
+            curl.exe --fail --location --retry 3 "https://download.blender.org/release/${{ matrix.blender.release_dir }}/blender-${{ matrix.blender.version }}-windows-x64.zip" --output $archive
+            if ($LASTEXITCODE -ne 0) { throw "Blender download failed" }
+          }
+          Expand-Archive -Path $archive -DestinationPath "$env:RUNNER_TEMP/blender"
+          "BLENDER_BIN=$env:RUNNER_TEMP/blender/blender-${{ matrix.blender.version }}-windows-x64/blender.exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Test and validate extension
+        run: python remi/scripts/release.py check --blender "$env:BLENDER_BIN" --output-dir "$env:RUNNER_TEMP/dist"
+
+      - name: Upload release artifact
+        if: matrix.blender.version == '5.2.1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: remi-windows-x64
+          path: ${{ runner.temp }}/dist/remi-*-windows-x64.zip
           if-no-files-found: error

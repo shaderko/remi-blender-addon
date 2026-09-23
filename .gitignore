@@ -8,3 +8,5 @@ features/retopology/instant_meshes/native/build/
 features/uv/engine/native/build/
 features/retopology/instant_meshes/native/dist/
 features/retopology/instant_meshes/native/*.egg-info/
+features/retopology/instant_meshes/_native/*.pyd
+features/uv/engine/_native/*.pyd

@@ -26,3 +26,10 @@ cp build/_remi_uv_packer.cpython-313-darwin.so ../_native/_remi_uv_packer.rebuil
 codesign --force --sign - ../_native/_remi_uv_packer.rebuilt.so
 mv ../_native/_remi_uv_packer.rebuilt.so ../_native/_remi_uv_packer.cpython-313-darwin.so
 ```
+
+## Windows x64
+
+Use CPython 3.13 x64, Visual Studio 2022 C++ Build Tools, and CMake. From the
+repository root, `py -3.13 scripts/release.py native` builds both native modules
+and installs their `.pyd` files into the corresponding `_native` directories.
+See the repository's `CONTRIBUTING.md` for the complete build and release gate.

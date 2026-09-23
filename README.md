@@ -36,7 +36,12 @@
 
 ## Install
 
-**Supported package:** Blender 5.1 or 5.2 on macOS Apple Silicon.
+**Published package:** Blender 5.1 or 5.2 on macOS Apple Silicon.
+
+Windows x64 packaging is available in the source build workflow. A Windows
+release must pass the Windows CI build and clean-install checks before
+publication; the existing Beta 2 ZIP is for macOS only. See
+[Windows builds](CONTRIBUTING.md#windows-builds).
 
 1. Download the newest ZIP from [GitHub Releases](https://github.com/shaderko/remi-blender-addon/releases).
 2. In Blender, open **Edit → Preferences → Get Extensions**.

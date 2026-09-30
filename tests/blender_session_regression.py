@@ -670,6 +670,51 @@ def test_transactional_bake_uses_source_checkpoint():
     print("PASS transactional Bake uses the source checkpoint and cleans history data")
 
 
+def test_transactional_ao_excludes_locked_mesh_and_restores_visibility():
+    """A closed locked mesh must not occlude the source during candidate AO."""
+    import numpy as np
+    from unittest.mock import patch
+    from remi.features.bake.service import BakeService
+    _clean_scene()
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=24, ring_count=12, radius=.4)
+    source = bpy.context.object
+    source.name = "SessionAO"
+    settings = bpy.context.scene.remi_settings
+    settings.bake_texture_size = 256
+    settings.bake_auto_unwrap = True
+    settings.bake_half_scale = False
+    settings.bake_auto_cage = True
+    settings.bake_recalc_normals = False
+    session.runtime.begin(bpy.context, source)
+    # Enclose the immutable source inside the current surface, as voxel remesh
+    # can do. The old implementation bakes this entirely black.
+    for vertex in source.data.vertices:
+        vertex.co *= 1.04
+    session.runtime.execute_action(bpy.context, action_for_command("UV"))
+    session.runtime.execute_action(bpy.context, action_for_command("BAKE_AO"))
+    current = session.runtime.object(bpy.context)
+    assert not current.hide_render
+    image = current.data.materials[0].node_tree.nodes["bake_ao"].image
+    pixels = np.array(image.pixels[:]).reshape(-1, 4)
+    assert np.mean(pixels[:, :3]) > .5, "Locked current mesh blacked out source AO"
+    # Failure must restore both initially visible and initially hidden objects.
+    for hidden in (False, True):
+        current.hide_render = hidden
+        def fail_bake(*args, **kwargs):
+            assert current.hide_render
+            raise RuntimeError("controlled bake failure")
+        with patch.object(baking, "bake_textures", side_effect=fail_bake):
+            try:
+                BakeService().bake(current, current, settings, passes=("ao",), name_prefix="FailureAO")
+                raise AssertionError("Controlled failure did not propagate")
+            except RuntimeError as exc:
+                assert str(exc) == "controlled bake failure"
+        assert current.hide_render is hidden
+    current.hide_render = False
+    session.runtime.cancel(bpy.context)
+    print("PASS session AO excludes locked mesh and restores visibility on failure")
+
+
 def test_bake_half_scale_ignores_the_targets_own_scale():
     """Half-scale bake must shrink source and target by the same factor.
 
@@ -948,6 +993,7 @@ try:
     test_manual_hole_repair_is_a_session_step()
     test_repair_ui_keeps_manual_and_advanced_controls()
     test_transactional_bake_uses_source_checkpoint()
+    test_transactional_ao_excludes_locked_mesh_and_restores_visibility()
     test_bake_half_scale_ignores_the_targets_own_scale()
     test_bake_auto_cage_sizes_the_search_to_the_gap()
     test_transactional_decimation_when_available()

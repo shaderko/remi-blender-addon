@@ -19,6 +19,12 @@ def _build_candidate(
     """Bake from a disposable source checkpoint onto an isolated candidate."""
     if candidate is None:
         candidate = duplicate_object(current, suffix)
+    # The locked session mesh overlaps the bake candidate but is not a bake
+    # participant. Leaving it render-visible makes it an occluder for source
+    # AO rays (a closed remesh can black out the whole map).
+    current_hide_render = current.hide_render
+    if current != candidate:
+        current.hide_render = True
     try:
         result = engine.bake_textures(
             source_checkpoint,
@@ -42,6 +48,8 @@ def _build_candidate(
     except Exception:
         remove_mesh_object(candidate)
         raise
+    finally:
+        current.hide_render = current_hide_render
     if not result["success"]:
         remove_mesh_object(candidate)
         return None, result.get("error", "Baking failed"), result

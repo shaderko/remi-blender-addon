@@ -143,3 +143,22 @@ to it and require Python 3.11+. Use Python 3.13 for `native`. Builds stage only
 the selected platform's native modules and wheel, leaving the source manifest
 and other platform binaries intact. Native compiler output is installed into
 the corresponding `_native` directories. Missing native modules stop packaging.
+
+## Linux worker builds
+
+Linux x86-64 packaging uses a CPython 3.13 development installation with headers,
+CMake, a C++ compiler, and the pinned manylinux_2_35 PyMeshLab wheel. Linux
+ARM64 is not a target. Blender's bundled Python lacks development headers;
+use a separate ABI-compatible CPython 3.13 to compile the modules. Install
+`pybind11==2.13.6` in that isolated build environment. `REMI_BUILD_JOBS=2`
+bounds compiler parallelism on small workers (default: four).
+
+```bash
+REMI_BUILD_JOBS=2 python3.13 scripts/release.py native
+python3 scripts/release.py check --blender /opt/blender/blender
+```
+
+The host must provide Blender's Linux system libraries, including X11/GL
+loader dependencies even for background mode. The sibling Remi Cloud project
+owns its Linux container recipe and provider adapters. A Linux worker test
+does not publish a new add-on release or establish support for every desktop.

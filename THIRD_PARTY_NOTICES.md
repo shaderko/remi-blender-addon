@@ -76,7 +76,9 @@ under GPL-3.0-or-later as permitted by MPL-2.0 section 3.3.
 - License text: `features/retopology/instant_meshes/native/vendor/instant_meshes/ext/tbb/LICENSE`
 
 Remi retains the classic task scheduler source and its header closure, including
-the Windows x64 machine headers and MASM routines from the same pinned revision. The standalone TBB build system, tests, allocator, allocator proxy,
+the Windows x64 machine headers and MASM routines, and the Linux x64
+`linux_intel64.h`, `linux_common.h`, `gcc_ia32_common.h`, and `gcc_itsx.h` headers from the
+same pinned revision. The standalone TBB build system, tests, allocator, allocator proxy,
 documentation payload, packaging, and unused platform code are omitted. The
 retained upstream TBB source files are unmodified and are built by Remi's CMake
 target. The upstream snapshot contains no `NOTICE` file.

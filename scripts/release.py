@@ -40,6 +40,8 @@ def host_platform():
         return "macos-arm64"
     if system == "Windows" and machine in {"amd64", "x86_64"}:
         return "windows-x64"
+    if system == "Linux" and machine == "x86_64":
+        return "linux-x64"
     raise RuntimeError(f"Unsupported release host: {system} {machine}")
 
 
@@ -103,7 +105,10 @@ def build_native(target):
                 f"-DPython_EXECUTABLE={sys.executable}",
                 f"-Dpybind11_DIR={pybind11.get_cmake_dir()}",
                 "-DCMAKE_BUILD_TYPE=Release", *options)
-            run("cmake", "--build", build, "--config", "Release", "--parallel", "4")
+            jobs = int(os.environ.get("REMI_BUILD_JOBS", "4"))
+            if not 1 <= jobs <= 64:
+                raise RuntimeError("REMI_BUILD_JOBS must be between 1 and 64")
+            run("cmake", "--build", build, "--config", "Release", "--parallel", str(jobs))
             run("cmake", "--install", build, "--config", "Release", "--prefix", install)
         for directory, module in NATIVE_MODULES.items():
             source = native_file(install, directory, module, target)
@@ -116,7 +121,9 @@ def build_native(target):
 
 
 def native_file(root, directory, module, target):
-    suffix = ".cp313-win_amd64.pyd" if target == "windows-x64" else ".cpython-313-darwin.so"
+    suffix = {"windows-x64": ".cp313-win_amd64.pyd",
+              "macos-arm64": ".cpython-313-darwin.so",
+              "linux-x64": ".cpython-313-x86_64-linux-gnu.so"}[target]
     path = root / directory / "_native" / (module + suffix)
     if not path.is_file():
         raise RuntimeError(f"Missing {target} native module: {path}. Run the native command first.")

@@ -117,6 +117,24 @@ if(MSVC)
   target_compile_options(_remi_instant_meshes PRIVATE /bigobj)
 endif()
 target_link_libraries(_remi_instant_meshes PRIVATE remi_tbb)
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  # Classic TBB zeroes scheduler storage before placement-new. Modern GCC's
+  # lifetime DSE otherwise removes that initialization, leaving task free-list
+  # pointers uninitialized when the scheduler constructor first allocates.
+  target_compile_options(remi_tbb PRIVATE -fno-lifetime-dse)
+  target_compile_options(_remi_instant_meshes PRIVATE -fno-lifetime-dse)
+endif()
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 13)
+  # Classic TBB 2017 names task_prefix::task() after tbb::task. GCC 13 made
+  # this legacy name collision an error; keep the pinned upstream code intact
+  # and suppress only that diagnostic, not general C++ conformance checks.
+  target_compile_options(remi_tbb PRIVATE -Wno-changes-meaning)
+  target_compile_options(_remi_instant_meshes PRIVATE -Wno-changes-meaning)
+endif()
+if(UNIX AND NOT APPLE)
+  find_package(Threads REQUIRED)
+  target_link_libraries(_remi_instant_meshes PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+endif()
 if(APPLE AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   target_compile_options(_remi_instant_meshes PRIVATE
     -Wno-deprecated-declarations)

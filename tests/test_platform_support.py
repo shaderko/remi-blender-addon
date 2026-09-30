@@ -60,7 +60,8 @@ class ProcessTests(unittest.TestCase):
 class PackagingTests(unittest.TestCase):
     def test_each_archive_stages_only_its_platform(self):
         for target, suffix in (("windows-x64", ".cp313-win_amd64.pyd"),
-                               ("macos-arm64", ".cpython-313-darwin.so")):
+                               ("macos-arm64", ".cpython-313-darwin.so"),
+                               ("linux-x64", ".cpython-313-x86_64-linux-gnu.so")):
             with self.subTest(target=target), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary) / "source"
                 root.mkdir()
@@ -99,6 +100,14 @@ class PackagingTests(unittest.TestCase):
              mock.patch.object(release.platform, "machine", return_value="ARM64"):
             with self.assertRaisesRegex(RuntimeError, "Unsupported"):
                 release.host_platform()
+
+    def test_linux_architecture_is_explicit(self):
+        with mock.patch.object(release.platform, "system", return_value="Linux"):
+            with mock.patch.object(release.platform, "machine", return_value="x86_64"):
+                self.assertEqual(release.host_platform(), "linux-x64")
+            with mock.patch.object(release.platform, "machine", return_value="aarch64"):
+                with self.assertRaisesRegex(RuntimeError, "Unsupported"):
+                    release.host_platform()
 
 
 if __name__ == "__main__":

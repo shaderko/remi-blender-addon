@@ -199,6 +199,7 @@ def create_candidate(obj, settings, disk=None):
                 input_path=input_path,
                 output_path=output_path,
                 passes=settings.decimation_passes,
+                target_faces=settings.decimation_target_faces,
                 target_percentage=settings.target_percentage,
                 preserve_detail=settings.decimation_preserve_detail,
             )

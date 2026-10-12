@@ -91,6 +91,7 @@ class BakeFeature(FeatureDefaults):
         layout.label(text="Bake", icon="RENDER_STILL")
         layout.label(text="Uses original source checkpoint", icon="LOCKED")
         layout.prop(settings, "bake_texture_size", text="Texture Size")
+        layout.prop(settings, "bake_include_metallic")
         layout.prop(settings, "bake_auto_unwrap", text="Auto Unwrap")
         if settings.bake_auto_unwrap:
             row = layout.row(align=True)
@@ -136,7 +137,7 @@ class BakeFeature(FeatureDefaults):
             raise RuntimeError("Texture baking requires Blender with Cycles support")
 
     def draw_automatic_settings(self, layout, context, action):
-        for name in ("bake_texture_size", "bake_auto_cage", "bake_cage_extrusion", "bake_max_ray_distance", "bake_recalc_normals", "bake_half_scale"):
+        for name in ("bake_texture_size", "bake_include_metallic", "bake_auto_cage", "bake_cage_extrusion", "bake_max_ray_distance", "bake_recalc_normals", "bake_half_scale"):
             layout.prop(context.scene.remi_settings, name)
 
     def execute(
@@ -147,6 +148,8 @@ class BakeFeature(FeatureDefaults):
         passes = self._PASSES.get(action.id)
         if passes is None:
             return super().execute(action, context)
+        if action.id == "BAKE_ALL" and context.blender_context.scene.remi_settings.bake_include_metallic:
+            passes += ("metallic",)
         return stage_result(
             self._service.bake(
                 context.source_checkpoint,

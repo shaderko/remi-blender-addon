@@ -1,6 +1,7 @@
 """Pixel-aware UV island packing backed by the vendored xatlas library."""
 
 from dataclasses import dataclass
+import math
 import time
 
 import numpy as np
@@ -29,6 +30,32 @@ class PackingAttempt:
 
 def native_packer_available() -> bool:
     return _native_pack_uvs is not None and _native_unwrap_mesh is not None
+
+
+def _condition_coordinates(coordinates, triangles):
+    """Keep valid small faces above xatlas' absolute FLT_EPSILON area cutoff.
+
+    Only the temporary native input is scaled. One power-of-two factor preserves
+    relative chart sizes and float32 coordinates; mesh geometry and UV data in
+    Blender are untouched. xatlas returns atlas-normalized UVs either way.
+    """
+    values = np.asarray(coordinates, dtype=np.float64)
+    extent = float(np.ptp(values, axis=0).max())
+    if not math.isfinite(extent) or extent <= 0:
+        raise ValueError("UV backend needs finite, nonempty coordinates")
+    points = values[np.asarray(triangles)]
+    a, b = points[:, 1] - points[:, 0], points[:, 2] - points[:, 0]
+    if values.shape[1] == 2:
+        areas = np.abs(a[:, 0] * b[:, 1] - a[:, 1] * b[:, 0]) * .5
+    else:
+        areas = np.linalg.norm(np.cross(a, b), axis=1) * .5
+    positive = areas[areas > 0]
+    scale = max(1024.0 / extent, math.sqrt(.001 / float(positive.min())) if len(positive) else 1.0)
+    scale = math.ldexp(1.0, math.ceil(math.log2(scale)))
+    scaled = values * scale
+    if not np.isfinite(scaled).all() or np.abs(scaled).max() > np.finfo(np.float32).max:
+        raise ValueError("UV backend coordinate range cannot be represented")
+    return np.ascontiguousarray(scaled, dtype=np.float32)
 
 
 def _input_arrays(mesh, analysis, seams: set[int]):
@@ -69,6 +96,7 @@ def pack_candidates(
     if _native_pack_uvs is None:
         return []
     uvs, triangles, chart_ids, chart_count = _input_arrays(mesh, analysis, seams)
+    native_uvs = _condition_coordinates(uvs, triangles)
     resolution = max(16, int(texture_size))
     padding = max(0, int(margin_px))
 
@@ -85,7 +113,7 @@ def pack_candidates(
     for name, brute_force, rotate, rotate_to_axis, block_align in configurations:
         started = time.perf_counter()
         result = _native_pack_uvs(
-            uvs,
+            native_uvs,
             triangles,
             chart_ids,
             resolution,
@@ -100,6 +128,7 @@ def pack_candidates(
         output = np.asarray(result["uvs"], dtype=np.float32)
         atlas_indices = np.asarray(result["atlas_indices"])
         if int(result["atlas_count"]) != 1 or np.any(atlas_indices != 0):
+            print(f"Remi UV: {name} left {int(np.count_nonzero(atlas_indices != 0))} UV corners unpacked; candidate rejected")
             continue
         if not np.isfinite(output).all():
             continue
@@ -140,6 +169,7 @@ def unwrap_candidates(
         [tuple(triangle.vertices) for triangle in mesh.loop_triangles],
         dtype=np.uint32,
     )
+    positions = _condition_coordinates(positions, vertex_triangles)
     loop_triangles = np.asarray(
         [tuple(triangle.loops) for triangle in mesh.loop_triangles],
         dtype=np.uint32,

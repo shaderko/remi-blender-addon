@@ -82,9 +82,10 @@ def _scale_obj(obj: bpy.types.Object, factor: float):
 def _prepare_world_space_object(obj: bpy.types.Object, name: str) -> bpy.types.Object:
     """Make a disposable object safe for baking and apply its world transform."""
     source_materials = list(obj.data.materials)
-    obj.data.materials.clear()
-    for material in source_materials:
-        obj.data.materials.append(material.copy() if material else None)
+    # Clearing slots resets polygon material indices. Replace in place so a
+    # joined/scanned mesh keeps the correct shader on every source face.
+    for index, material in enumerate(source_materials):
+        obj.data.materials[index] = material.copy() if material else None
     bpy.ops.object.select_all(action="DESELECT")
     bpy.context.view_layer.objects.active = obj
     obj.select_set(True)
@@ -198,6 +199,7 @@ def _create_bake_images(
     for key, suffix, color, cs in [
         ("diffuse", "_diffuse", (0.5, 0.5, 0.5, 1.0), "sRGB"),
         ("roughness", "_roughness", (0.5, 0.5, 0.5, 1.0), "Non-Color"),
+        ("metallic", "_metallic", (0.0, 0.0, 0.0, 1.0), "Non-Color"),
         ("normal", "_normal", (0.5, 0.5, 1.0, 1.0), "Non-Color"),
         ("ao", "_ao", (1.0, 1.0, 1.0, 1.0), "Non-Color"),
     ]:
@@ -271,6 +273,10 @@ def _build_bake_material(
         n = existing_or_new("bake_roughness", images["roughness"], -200, 150)
         links.new(n.outputs["Color"], bsdf.inputs["Roughness"])
         channels["roughness"] = n
+    if "metallic" in images:
+        n = existing_or_new("bake_metallic", images["metallic"], -200, -600)
+        links.new(n.outputs["Color"], bsdf.inputs["Metallic"])
+        channels["metallic"] = n
     if "normal" in images:
         tex_n = existing_or_new("bake_normal", images["normal"], -200, -100)
         nmap = nodes.get("bake_normal_map")
@@ -296,12 +302,13 @@ def _build_bake_material(
     return channels, mat
 
 
-def _prepare_albedo_emission(obj: bpy.types.Object):
-    """Turn private source materials into base-color emission materials.
+def _prepare_albedo_emission(obj: bpy.types.Object, input_name="Base Color"):
+    """Route base color or a scalar shader input through unlit emission.
 
     A DIFFUSE closure bake is affected by Metallic and other BSDF behavior.
     For a true albedo map, Remi bakes the Principled Base Color through
     emission on disposable source copies. Texture-node links are preserved.
+    Metallic uses the same route into a Non-Color image, before albedo runs.
     """
     for slot in obj.data.materials:
         if not slot or not slot.node_tree:
@@ -312,7 +319,7 @@ def _prepare_albedo_emission(obj: bpy.types.Object):
         output = next((node for node in nodes if node.type == "OUTPUT_MATERIAL"), None)
         if bsdf is None or output is None:
             continue
-        base_color = bsdf.inputs.get("Base Color")
+        base_color = bsdf.inputs.get(input_name)
         if base_color is None:
             continue
         emission = nodes.get("_remi_albedo_emission")
@@ -322,10 +329,15 @@ def _prepare_albedo_emission(obj: bpy.types.Object):
             emission.label = "Remi Albedo Bake"
             emission.location = (bsdf.location.x + 250, bsdf.location.y)
         emission.inputs["Strength"].default_value = 1.0
+        # A preceding scalar bake may have linked a texture into this input.
+        # Clear it before applying a constant base color for the albedo pass.
+        for link in list(emission.inputs["Color"].links):
+            links.remove(link)
         if base_color.is_linked:
             links.new(base_color.links[0].from_socket, emission.inputs["Color"])
         else:
-            emission.inputs["Color"].default_value = base_color.default_value
+            value = base_color.default_value
+            emission.inputs["Color"].default_value = (value, value, value, 1) if isinstance(value, (int, float)) else value
         for link in list(output.inputs["Surface"].links):
             links.remove(link)
         links.new(emission.outputs["Emission"], output.inputs["Surface"])
@@ -367,7 +379,7 @@ def bake_textures(
     # Use final_name for image naming if provided
     img_base = final_name or target_result.name
 
-    valid_passes = ("diffuse", "roughness", "normal", "ao")
+    valid_passes = ("diffuse", "roughness", "normal", "ao", "metallic")
     passes = tuple(channel for channel in passes if channel in valid_passes)
     if not passes:
         return {"success": False, "images": [], "error": "No valid bake passes selected"}
@@ -477,6 +489,7 @@ def bake_textures(
         ("roughness", "ROUGHNESS"),
         ("normal", "NORMAL"),
         ("ao", "AO"),
+        ("metallic", "EMIT"),
         # Albedo is last because this pass temporarily replaces the source
         # surface shader with emission to bypass Metallic.
         ("diffuse", "EMIT"),
@@ -504,9 +517,9 @@ def bake_textures(
         for channel, bake_type in bake_configs:
             if channel not in passes:
                 continue
-            if channel == "diffuse":
+            if channel in {"diffuse", "metallic"}:
                 for temp_source in temp_sources:
-                    _prepare_albedo_emission(temp_source)
+                    _prepare_albedo_emission(temp_source, "Metallic" if channel == "metallic" else "Base Color")
             node = channels[channel]
             bake_mat.node_tree.nodes.active = node
             node.select = True

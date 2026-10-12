@@ -114,13 +114,16 @@ assert tuple(
     "remi.bake_ao",
 )
 scene_settings = compose_scene_settings(default_registry)
-assert len(scene_settings) == 57
+assert len(scene_settings) == 60
 assert "hole_repair_method" in scene_settings
 assert "voxel_size" in scene_settings
+assert "voxel_surface_offset" in scene_settings
+assert "decimation_target_faces" in scene_settings
 assert "ar_target_quads" in scene_settings
 assert "bake_uv_profile" in scene_settings
 assert "bake_texture_size" in scene_settings
 assert "bake_auto_cage" in scene_settings
+assert "bake_include_metallic" in scene_settings
 
 feature_root = ADDON_PARENT / "remi" / "features"
 service_paths = tuple(feature_root.glob("*/service.py")) + (

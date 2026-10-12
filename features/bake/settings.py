@@ -10,6 +10,11 @@ from bpy.props import (
 
 
 SCENE_SETTINGS = {
+    "bake_include_metallic": BoolProperty(
+            name="Include Metallic",
+            description="Include the source metallic factor/map when baking all maps",
+            default=False,
+        ),
     "use_baking": BoolProperty(
             name="Bake Textures",
             description="Bake diffuse/roughness/normal textures from original to result",

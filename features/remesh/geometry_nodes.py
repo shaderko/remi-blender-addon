@@ -59,7 +59,11 @@ def ensure_remi_node_group() -> bpy.types.GeometryNodeTree:
     tree_name = "Remi_SDF_Remesh_v4"
 
     if tree_name in bpy.data.node_groups:
-        return bpy.data.node_groups[tree_name]
+        group=bpy.data.node_groups[tree_name]
+        for item in group.interface.items_tree:
+            if item.name=="Voxel Size" and hasattr(item,"min_value"):
+                item.min_value=0.00001
+        return group
 
     group = bpy.data.node_groups.new(name=tree_name, type="GeometryNodeTree")
 
@@ -74,7 +78,7 @@ def ensure_remi_node_group() -> bpy.types.GeometryNodeTree:
         name="Voxel Size", socket_type="NodeSocketFloat", in_out="INPUT"
     )
     voxel.default_value = 0.02
-    voxel.min_value = 0.001
+    voxel.min_value = 0.00001
     voxel.max_value = 1.0
     voxel.subtype = "DISTANCE"
     voxel.description = "Voxel size for Mesh to SDF Grid"
@@ -276,11 +280,12 @@ def apply_remi_modifier(
     detail_recovery_distance: float = 0.0,
     fillet_radius: float = 0.0,
     smooth_iterations: int = 0,
+    surface_offset_voxels: float = 1.0,
 ) -> bpy.types.Modifier:
     """Apply the Remi geometry nodes modifier to an object.
 
-    ``voxel_size`` controls sampling resolution and restores Remi's original
-    one-voxel Grid to Mesh threshold, which consolidates thin/open geometry.
+    ``voxel_size`` controls sampling resolution. The legacy one-voxel outward
+    offset consolidates thin/open geometry; zero extracts the original surface.
     """
     group = ensure_remi_node_group()
 
@@ -291,10 +296,9 @@ def apply_remi_modifier(
     mod = obj.modifiers.new(name="Remi_SDF_Remesh", type="NODES")
     mod.node_group = group
 
-    # Shared value for both parameters
     param_map = {
         "Voxel Size": voxel_size,
-        "Grid Threshold": voxel_size,
+        "Grid Threshold": voxel_size * surface_offset_voxels,
         "Hole Close Distance": hole_close_distance,
         "Detail Recovery Distance": detail_recovery_distance,
         "Fillet Radius": fillet_radius,

@@ -30,6 +30,9 @@ class Remi_BakeOperatorMixin:
             return {"CANCELLED"}
 
         s = context.scene.remi_settings
+        passes = self.bake_passes
+        if passes == ("diffuse", "roughness", "normal", "ao") and s.bake_include_metallic:
+            passes += ("metallic",)
         result = engine.bake_textures(
             sources, target,
             texture_size=s.bake_texture_size,
@@ -43,10 +46,10 @@ class Remi_BakeOperatorMixin:
             cage_extrusion=s.bake_cage_extrusion,
             max_ray_distance=s.bake_max_ray_distance,
             auto_cage=s.bake_auto_cage,
-            passes=self.bake_passes,
+            passes=passes,
         )
         if result["success"]:
-            self.report({"INFO"}, f"Baked {', '.join(self.bake_passes)} → {target.name}")
+            self.report({"INFO"}, f"Baked {', '.join(passes)} → {target.name}")
         else:
             self.report({"ERROR"}, result.get("error", "Baking failed"))
             return {"CANCELLED"}

@@ -124,6 +124,7 @@ def run_multi_pass_decimation(
     input_path: str,
     output_path: str,
     passes: int = 1,
+    target_faces: int = 0,
     target_percentage: float = 0.5,
     preserve_boundary: bool = False,
     preserve_normal: bool = False,
@@ -163,6 +164,19 @@ def run_multi_pass_decimation(
 
     results = []
     current_input = input_path
+    current_faces = None
+    if target_faces:
+        import pymeshlab
+        if not isinstance(target_faces, int) or target_faces < 4:
+            raise ValueError("Triangle target must be at least four")
+        initial = pymeshlab.MeshSet()
+        initial.load_new_mesh(input_path)
+        current_faces = initial.current_mesh().face_number()
+        del initial
+        if current_faces <= target_faces + max(2, target_faces * .01):
+            import shutil
+            shutil.copyfile(input_path, output_path)
+            return []
 
     for i in range(passes):
         if i == passes - 1:
@@ -176,7 +190,7 @@ def run_multi_pass_decimation(
         pass_result = run_quadric_decimation(
             input_path=current_input,
             output_path=current_output,
-            target_percentage=target_percentage,
+            target_percentage=max(.5, min(.99, target_faces / current_faces)) if target_faces else target_percentage,
             preserve_boundary=preserve_boundary,
             preserve_normal=preserve_normal,
             preserve_detail=preserve_detail,
@@ -206,6 +220,17 @@ def run_multi_pass_decimation(
                 except OSError:
                     pass
 
+        # Absolute targets use measured counts; a constrained pass must not loop.
+        if target_faces:
+            previous_faces = current_faces
+            current_faces = pass_result["output_faces"]
+            if current_faces <= target_faces + max(2, target_faces * .01) or current_faces >= previous_faces:
+                if current_output != output_path:
+                    import shutil
+                    shutil.copyfile(current_output, output_path)
+                pass_result["target_faces"] = target_faces
+                pass_result["target_reached"] = current_faces <= target_faces + max(2, target_faces * .01)
+                break
         # Next input = this pass's output
         current_input = current_output
 

@@ -42,6 +42,8 @@ class RemeshFeature(FeatureDefaults):
         layout.label(text="Remesh", icon="MOD_NORMALEDIT")
         layout.prop(settings, "remesh_backend", text="Method")
         layout.prop(settings, "voxel_size", text="Voxel Size")
+        if settings.remesh_backend == "VOXEL":
+            layout.prop(settings, "voxel_surface_offset")
         if settings.remesh_backend == "VOLUME":
             layout.label(text="Closes gaps and fits back to the surface", icon="INFO")
             row = layout.row(align=True)
@@ -85,6 +87,17 @@ class RemeshFeature(FeatureDefaults):
     ) -> StageResult:
         settings = context.blender_context.scene.remi_settings
         if action.id == "REMESH":
+            cached=context.payload.get("cached_remesh_mesh")
+            if cached is not None:
+                # Internal API: restore a validated mesh through the same session
+                # checkpoint transaction. No filesystem path is accepted here.
+                import bpy
+                if not isinstance(cached,bpy.types.Mesh) or not cached.polygons:
+                    raise RuntimeError("Invalid cached remesh geometry")
+                previous=context.working_copy.data
+                context.working_copy.data=cached.copy()
+                if previous.users==0:bpy.data.meshes.remove(previous)
+                return stage_result((context.working_copy,"",context.payload.get("cached_remesh_report",{})))
             return stage_result(
                 self._service.remesh(
                     context.source,
@@ -116,9 +129,9 @@ class RemeshFeature(FeatureDefaults):
     def draw_automatic_settings(self, layout, context, action):
         settings = context.scene.remi_settings
         if action.id == "DECIMATE":
-            names = ("decimation_passes", "target_percentage", "decimation_preserve_detail", "decimation_with_texture")
+            names = ("decimation_target_faces", "decimation_passes", "target_percentage", "decimation_preserve_detail", "decimation_with_texture")
         else:
-            names = ("remesh_backend", "voxel_size", "use_sdf_fillet", "fillet_radius", "use_sdf_smoothing", "smoothing_iterations")
+            names = ("remesh_backend", "voxel_size", "voxel_surface_offset", "use_sdf_fillet", "fillet_radius", "use_sdf_smoothing", "smoothing_iterations")
             if settings.remesh_backend == "VOLUME":
                 names = ("remesh_backend", "voxel_size", "hole_close_ratio", "volume_guide_voxel_scale", "volume_surface_fit_ratio", "volume_preserve_features", "volume_feature_angle", "volume_feature_reach")
         for name in names:

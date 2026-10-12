@@ -24,11 +24,18 @@ SCENE_SETTINGS = {
             description="Enable the SDF remesh stage and its optional hole-preparation step",
             default=True,
         ),
+    "voxel_surface_offset": FloatProperty(
+            name="Surface Offset",
+            description="Outward surface offset in voxels; zero follows the original surface, one thickens thin/open meshes",
+            default=1.0,
+            min=0.0,
+            max=1.0,
+        ),
     "voxel_size": FloatProperty(
             name="Voxel Size",
             description="SDF sampling resolution. Smaller values preserve more surface detail",
             default=0.01,
-            min=0.001,
+            min=0.00001,
             max=0.1,
             precision=4,
             subtype="DISTANCE",
@@ -62,6 +69,11 @@ SCENE_SETTINGS = {
             name="Decimation",
             description="Enable MeshLab decimation step in the pipeline",
             default=True,
+        ),
+    "decimation_target_faces": IntProperty(
+            name="Target Triangles",
+            description="Absolute triangle target; zero uses the per-pass percentage",
+            default=0, min=0, max=2000000000,
         ),
     "decimation_passes": IntProperty(
             name="Decimation Passes",

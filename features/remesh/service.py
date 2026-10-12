@@ -39,7 +39,8 @@ def create_candidate(
             report["backend"] = "VOLUME"
         return result, error, report
 
-    report = {"backend": "VOXEL"}
+    report = {"backend": "VOXEL", "voxel_size": settings.voxel_size,
+              "surface_offset_voxels": settings.voxel_surface_offset}
     if settings.use_hole_repair and settings.hole_repair_method in {"ALPHA_WRAP", "VOLUME"}:
         result, error, patch_report = _guided_hole_patches(
             source,
@@ -60,6 +61,7 @@ def create_candidate(
         geometry_nodes.apply_remi_modifier(
             obj=result,
             voxel_size=settings.voxel_size,
+            surface_offset_voxels=settings.voxel_surface_offset,
             hole_close_distance=_hole_close_distance(result, settings),
             detail_recovery_distance=_detail_recovery_distance(result, settings),
             fillet_radius=settings.fillet_radius if settings.use_sdf_fillet else 0.0,

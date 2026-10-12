@@ -1,13 +1,13 @@
 schema_version = "1.0.0"
 
 id = "remi"
-version = "1.14.0"
+version = "2.0.0"
 name = "Remi"
 tagline = "Repair, optimize, retopologize, and bake difficult meshes"
 maintainer = "Remi"
 type = "add-on"
 
-website = "https://github.com/shaderko/remi-blender-addon"
+website = "https://remi3d.app"
 
 blender_version_min = "5.1.0"
 
@@ -15,9 +15,21 @@ license = [
   "SPDX:GPL-3.0-or-later",
 ]
 
-# The bundled native Instant Meshes and xatlas modules currently target
-# CPython 3.13 on macOS Apple Silicon.
-platforms = ["macos-arm64"]
+copyright = [
+  "2020 Visual Computing Lab, ISTI - Italian National Research Council",
+  "2018-2020 Jonathan Young",
+  "2015 Wenzel Jakob, Daniele Panozzo, Marco Tarini, Olga Sorkine-Hornung",
+]
+
+# scripts/release.py selects matching CPython 3.13 binaries and one wheel
+# for each platform-specific archive.
+platforms = ["macos-arm64", "windows-x64", "linux-x64"]
+
+wheels = [
+  "./wheels/pymeshlab-2025.7.post1-cp313-cp313-macosx_11_0_arm64.whl",
+  "./wheels/pymeshlab-2025.7.post1-cp313-cp313-win_amd64.whl",
+  "./wheels/pymeshlab-2025.7.post1-cp313-cp313-manylinux_2_35_x86_64.whl",
+]
 
 [permissions]
 files = "Import, export, compile, and process mesh and texture files"
@@ -27,14 +39,10 @@ paths_exclude_pattern = [
   "__pycache__/",
   ".*",
   "*.zip",
-  "/install_blender_addon.py",
   "/dist/",
   "/scripts/",
   "/tests/",
   "/weppy-project-sync/",
-  "/instant_meshes/tests/",
-  "/instant_meshes/native/",
-  "/uv_mapping/tests/",
-  "/uv_mapping/native/",
-  "/alpha_wrap_helper/build/",
+  "/features/retopology/instant_meshes/native/",
+  "/features/uv/engine/native/",
 ]

@@ -18,9 +18,10 @@ if str(ADDON_PARENT) not in sys.path:
     sys.path.insert(0, str(ADDON_PARENT))
 
 import remi
-from remi import gn_setup
-from remi import meshlab_wrapper
-from remi import operators
+from remi.features.remesh import geometry_nodes
+from remi.features.repair.manual import create_surface_ring_patch
+from remi.integrations import meshlab
+from remi.blender.mesh_objects import duplicate_object
 
 
 def _clean_scene():
@@ -66,7 +67,7 @@ def test_modifier_input_compatibility():
         pass
 
     legacy = LegacyModifier()
-    assert gn_setup._set_modifier_input(legacy, "Socket_7", 0.125)
+    assert geometry_nodes._set_modifier_input(legacy, "Socket_7", 0.125)
     assert legacy["Socket_7"] == 0.125
 
     modern_value = SimpleNamespace(value=None)
@@ -75,12 +76,12 @@ def test_modifier_input_compatibility():
             inputs=SimpleNamespace(Socket_7=modern_value),
         )
     )
-    assert gn_setup._set_modifier_input(modern, "Socket_7", 0.25)
+    assert geometry_nodes._set_modifier_input(modern, "Socket_7", 0.25)
     assert modern_value.value == 0.25
 
     _clean_scene()
     obj = _cube("ModifierCompatibility")
-    modifier = gn_setup.apply_remi_modifier(obj, voxel_size=0.125)
+    modifier = geometry_nodes.apply_remi_modifier(obj, voxel_size=0.125)
     node_group = modifier.node_group
     voxel_identifier = next(
         item.identifier
@@ -102,7 +103,7 @@ def test_duplicate_isolation():
     source.select_set(True)
     other.select_set(True)
     before = len(bpy.context.scene.objects)
-    duplicate = operators._duplicate_object(source, "_copy")
+    duplicate = duplicate_object(source, "_copy")
     assert len(bpy.context.scene.objects) == before + 1
     assert duplicate.name.startswith("OnlyThisObject_copy")
     assert not source.select_get()
@@ -127,7 +128,7 @@ def test_targeted_patch_preserves_source():
         Vector((-0.5, 0.5, 1.0)),
     ]
     normals = [Vector((0.0, 0.0, 1.0)) for _point in ring]
-    result, error, report = operators._create_surface_ring_patch(
+    result, error, report = create_surface_ring_patch(
         source,
         settings,
         ring,
@@ -200,25 +201,25 @@ def test_full_pipeline_dependency_preflight():
     settings.use_decimation = True
     settings.use_autoremesher = False
     settings.use_baking = False
-    original_check = meshlab_wrapper.ensure_pymeshlab
+    original_check = meshlab.ensure_pymeshlab
     try:
-        meshlab_wrapper.ensure_pymeshlab = lambda: False
+        meshlab.ensure_pymeshlab = lambda: False
         try:
             outcome = bpy.ops.remi.full_pipeline()
         except RuntimeError as exc:
-            assert "PyMeshLab is required for decimation" in str(exc)
+            assert "bundled PyMeshLab" in str(exc)
         else:
             assert outcome == {"CANCELLED"}
     finally:
-        meshlab_wrapper.ensure_pymeshlab = original_check
+        meshlab.ensure_pymeshlab = original_check
     assert _source_state(source) == before
     assert tuple(obj.as_pointer() for obj in bpy.context.scene.objects) == before_objects
     print("PASS dependency preflight runs before mesh changes")
 
 
 def test_standalone_decimation_preserves_source():
-    if not meshlab_wrapper.ensure_pymeshlab():
-        print("SKIP standalone decimation: PyMeshLab is not installed")
+    if not meshlab.ensure_pymeshlab():
+        print("SKIP source decimation: bundled wheel is exercised after extension installation")
         return
 
     _clean_scene()
@@ -240,14 +241,12 @@ def test_standalone_decimation_preserves_source():
     print("PASS standalone decimation source preservation")
 
 
-def test_dependency_message_is_explicit():
-    command = meshlab_wrapper.pymeshlab_install_command()
-    message = meshlab_wrapper.pymeshlab_unavailable_message()
-    assert sys.executable in command
-    assert "pip install" in command
-    assert command in message
-    assert "auto-install" not in message
-    print("PASS explicit PyMeshLab dependency guidance")
+def test_dependency_message_is_actionable():
+    message = meshlab.pymeshlab_unavailable_message()
+    assert "bundled PyMeshLab" in message
+    assert "Reinstall" in message
+    assert "pip install" not in message
+    print("PASS bundled PyMeshLab recovery guidance")
 
 
 remi.register()
@@ -259,7 +258,7 @@ try:
     test_hybrid_repair_preserves_source()
     test_full_pipeline_dependency_preflight()
     test_standalone_decimation_preserves_source()
-    test_dependency_message_is_explicit()
+    test_dependency_message_is_actionable()
 finally:
     _clean_scene()
     remi.unregister()

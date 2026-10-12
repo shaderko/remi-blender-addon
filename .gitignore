@@ -3,8 +3,12 @@ __pycache__/
 *.zip
 .DS_Store
 dist/
-alpha_wrap_helper/build/
-instant_meshes/native/build/
-uv_mapping/native/build/
-instant_meshes/native/dist/
-instant_meshes/native/*.egg-info/
+wheels/*.whl
+features/retopology/instant_meshes/native/build/
+features/uv/engine/native/build/
+features/retopology/instant_meshes/native/dist/
+features/retopology/instant_meshes/native/*.egg-info/
+features/retopology/instant_meshes/_native/*.pyd
+features/uv/engine/_native/*.pyd
+features/retopology/instant_meshes/_native/*-linux-gnu.so
+features/uv/engine/_native/*-linux-gnu.so

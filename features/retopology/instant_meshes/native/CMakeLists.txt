@@ -1,0 +1,143 @@
+cmake_minimum_required(VERSION 3.15...3.27)
+project(remi_instant_meshes LANGUAGES C CXX)
+
+set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+  set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version" FORCE)
+endif()
+
+find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
+find_package(pybind11 CONFIG REQUIRED)
+
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
+set(IM_VENDOR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/instant_meshes)
+set(IM_TBB ${IM_VENDOR}/ext/tbb)
+
+# Instant Meshes uses the classic TBB task scheduler. Build only that library's
+# sources directly instead of retaining the legacy standalone TBB build,
+# allocator, proxy, tests, and platform packaging machinery.
+file(GLOB TBB_CORE_SOURCES CONFIGURE_DEPENDS
+  ${IM_TBB}/src/tbb/*.cpp
+  ${IM_TBB}/src/old/*.cpp
+)
+list(FILTER TBB_CORE_SOURCES EXCLUDE REGEX "/test[^/]*\\.cpp$")
+list(APPEND TBB_CORE_SOURCES ${IM_TBB}/src/rml/client/rml_tbb.cpp)
+
+if(WIN32)
+  if(NOT MSVC OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+    message(FATAL_ERROR "The Windows build requires MSVC x64")
+  endif()
+  enable_language(ASM_MASM)
+  list(APPEND TBB_CORE_SOURCES
+    ${IM_TBB}/src/tbb/intel64-masm/atomic_support.asm
+    ${IM_TBB}/src/tbb/intel64-masm/itsx.asm
+    ${IM_TBB}/src/tbb/intel64-masm/intel64_misc.asm)
+endif()
+
+# TBB's version source expects this generated include. Keep it deterministic
+# instead of embedding the developer machine, compiler command, and timestamp.
+file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/version_string.ver [=[
+#define __TBB_VERSION_STRINGS(N) #N ": BUILD_HOST\tRemi" ENDL
+#define __TBB_DATETIME "Reproducible build"
+]=])
+
+add_library(remi_tbb STATIC ${TBB_CORE_SOURCES})
+target_include_directories(remi_tbb PRIVATE
+  ${CMAKE_CURRENT_BINARY_DIR}
+  ${IM_TBB}/include
+  ${IM_TBB}/src
+  ${IM_TBB}/src/rml/include
+)
+target_compile_definitions(remi_tbb PRIVATE __TBB_BUILD=1)
+if(MSVC)
+  target_compile_definitions(remi_tbb PRIVATE
+    USE_WINTHREAD _WIN32_WINNT=0x0600 _CRT_SECURE_NO_WARNINGS)
+  target_compile_options(remi_tbb PRIVATE
+    "$<$<COMPILE_LANGUAGE:CXX>:/GR;/EHsc;/volatile:iso>")
+  set_source_files_properties(
+    ${IM_TBB}/src/tbb/intel64-masm/atomic_support.asm
+    ${IM_TBB}/src/tbb/intel64-masm/itsx.asm
+    ${IM_TBB}/src/tbb/intel64-masm/intel64_misc.asm
+    PROPERTIES COMPILE_OPTIONS /DEM64T=1)
+else()
+  target_compile_definitions(remi_tbb PRIVATE USE_PTHREAD)
+  target_compile_options(remi_tbb PRIVATE -frtti -fexceptions)
+endif()
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  set_source_files_properties(${IM_TBB}/src/tbb/itt_notify.cpp
+    PROPERTIES COMPILE_OPTIONS -Wno-varargs)
+  if(APPLE)
+    target_compile_options(remi_tbb PRIVATE -Wno-deprecated-declarations)
+  endif()
+endif()
+
+set(IM_CORE_SOURCES
+  ${IM_VENDOR}/src/normal.cpp
+  ${IM_VENDOR}/src/adjacency.cpp
+  ${IM_VENDOR}/src/meshstats.cpp
+  ${IM_VENDOR}/src/hierarchy.cpp
+  ${IM_VENDOR}/src/extract.cpp
+  ${IM_VENDOR}/src/field.cpp
+  ${IM_VENDOR}/src/bvh.cpp
+  ${IM_VENDOR}/src/subdivide.cpp
+  ${IM_VENDOR}/src/reorder.cpp
+  ${IM_VENDOR}/src/serializer.cpp
+  ${IM_VENDOR}/src/smoothcurve.cpp
+  ${IM_VENDOR}/src/cleanup.cpp
+  ${IM_VENDOR}/src/dedge.cpp
+  ${IM_VENDOR}/ext/rply/rply.c
+)
+
+pybind11_add_module(_remi_instant_meshes
+  bindings.cpp
+  session.cpp
+  ${IM_CORE_SOURCES}
+)
+
+target_include_directories(_remi_instant_meshes PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${IM_VENDOR}/src
+  ${IM_VENDOR}/ext/eigen
+  ${IM_VENDOR}/ext/tbb/include
+  ${IM_VENDOR}/ext/dset
+  ${IM_VENDOR}/ext/pss
+  ${IM_VENDOR}/ext/pcg32
+  ${IM_VENDOR}/ext/rply
+)
+
+target_compile_definitions(_remi_instant_meshes PRIVATE EIGEN_MPL2_ONLY)
+if(MSVC)
+  target_compile_definitions(_remi_instant_meshes PRIVATE
+    __TBB_NO_IMPLICIT_LINKAGE=1 _USE_MATH_DEFINES _CRT_SECURE_NO_WARNINGS)
+  target_compile_options(_remi_instant_meshes PRIVATE /bigobj)
+endif()
+target_link_libraries(_remi_instant_meshes PRIVATE remi_tbb)
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  # Classic TBB zeroes scheduler storage before placement-new. Modern GCC's
+  # lifetime DSE otherwise removes that initialization, leaving task free-list
+  # pointers uninitialized when the scheduler constructor first allocates.
+  target_compile_options(remi_tbb PRIVATE -fno-lifetime-dse)
+  target_compile_options(_remi_instant_meshes PRIVATE -fno-lifetime-dse)
+endif()
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 13)
+  # Classic TBB 2017 names task_prefix::task() after tbb::task. GCC 13 made
+  # this legacy name collision an error; keep the pinned upstream code intact
+  # and suppress only that diagnostic, not general C++ conformance checks.
+  target_compile_options(remi_tbb PRIVATE -Wno-changes-meaning)
+  target_compile_options(_remi_instant_meshes PRIVATE -Wno-changes-meaning)
+endif()
+if(UNIX AND NOT APPLE)
+  find_package(Threads REQUIRED)
+  target_link_libraries(_remi_instant_meshes PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+endif()
+if(APPLE AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  target_compile_options(_remi_instant_meshes PRIVATE
+    -Wno-deprecated-declarations)
+endif()
+set_target_properties(_remi_instant_meshes PROPERTIES CXX_VISIBILITY_PRESET default)
+install(TARGETS _remi_instant_meshes DESTINATION features/retopology/instant_meshes/_native)

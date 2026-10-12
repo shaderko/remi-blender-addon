@@ -1,0 +1,54 @@
+"""Explicit add-on registration order and lifecycle."""
+
+from . import ui
+from . import flow
+from ..features import edit_tools
+from ..features import registration as feature_registration
+from ..features import settings
+from ..features.retopology import instant_meshes
+from ..compat import registration as compatibility_registration
+from ..workflow import session
+from .application import (
+    clear_application,
+    configure_application,
+    create_default_application,
+)
+
+
+MODULES = (
+    settings,
+    instant_meshes,
+    feature_registration,
+    compatibility_registration,
+    session,
+    flow,
+    ui,
+    edit_tools,
+)
+
+
+def register():
+    application = create_default_application()
+    configure_application(application)
+    registered = []
+    try:
+        for module in MODULES:
+            module.register()
+            registered.append(module)
+    except Exception:
+        for module in reversed(registered):
+            module.unregister()
+        application.session.configure_features(None)
+        clear_application()
+        raise
+    print("Remi: Registered")
+
+
+def unregister():
+    try:
+        for module in reversed(MODULES):
+            module.unregister()
+    finally:
+        session.runtime.configure_features(None)
+        clear_application()
+    print("Remi: Unregistered")

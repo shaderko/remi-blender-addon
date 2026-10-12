@@ -1,0 +1,171 @@
+"""Repair workflow feature."""
+
+from __future__ import annotations
+
+from ..base import FeatureDefaults, session_command, stage_result
+from ..contracts import RepairUseCases
+from ...workflow.contracts import (
+    FeatureAction,
+    FeatureDescriptor,
+    FeatureExecutionContext,
+    StageResult,
+)
+
+
+class RepairFeature(FeatureDefaults):
+    descriptor = FeatureDescriptor(
+        id="REPAIR",
+        name="Repair",
+        icon="TOOL_SETTINGS",
+        next_feature="REMESH",
+        actions=(
+            FeatureAction(
+                "REPAIR",
+                "Repair",
+                "Repair holes and fragmented surfaces",
+                automatic=True,
+            ),
+            FeatureAction(
+                "MANUAL_REPAIR",
+                "Manual Repair",
+                "Patch a user-selected surface region",
+                next_feature="REPAIR",
+            ),
+        ),
+    )
+
+    def __init__(self, service: RepairUseCases):
+        self._service = service
+
+    def scene_settings(self):
+        from .settings import SCENE_SETTINGS
+
+        return SCENE_SETTINGS
+
+    def blender_classes(self) -> tuple[type, ...]:
+        from .operators import (
+            Remi_OT_DrawHolePatch,
+            Remi_OT_RepairHoles,
+        )
+
+        return Remi_OT_DrawHolePatch, Remi_OT_RepairHoles
+
+    def draw(self, layout, context) -> None:
+        settings = context.blender_context.scene.remi_settings
+        state = context.state
+        layout.label(text="Repair", icon="MOD_REMESH")
+
+        if state.interactive:
+            notice = layout.box()
+            notice.label(text="Manual repair active", icon="BRUSH_DATA")
+            notice.label(text="Draw on the surface around one hole")
+            notice.label(text="Release to apply · Esc or right-click to cancel")
+            return
+
+        manual = layout.box()
+        manual.label(text="Manual · One Hole", icon="BRUSH_DATA")
+        manual.label(text="Draw on the intact surface around the rim")
+        row = manual.row(align=True)
+        row.prop(settings, "targeted_ray_spacing", text="Ray px")
+        row.prop(settings, "targeted_ray_depth_ratio", text="Depth")
+        row = manual.row(align=True)
+        row.prop(settings, "alpha_wrap_patch_resolution", text="Resolution")
+        row.prop(settings, "alpha_wrap_patch_relax_iterations", text="Relax")
+        action = manual.column()
+        action.scale_y = 1.35
+        action.operator("remi.draw_hole_patch", text="Draw Around Hole", icon="BRUSH_DATA")
+
+        layout.separator()
+        layout.label(text="Automatic Repair")
+        layout.prop(settings, "hole_repair_method", text="Method")
+
+        if settings.hole_repair_method == "ALPHA_WRAP":
+            layout.prop(settings, "alpha_wrap_alpha_ratio", text="Hole Scale")
+            layout.prop(settings, "alpha_wrap_auto_scale", text="Find Scale Automatically")
+            if settings.alpha_wrap_auto_scale:
+                row = layout.row(align=True)
+                row.prop(settings, "alpha_wrap_max_ratio", text="Maximum")
+                row.prop(settings, "alpha_wrap_coverage_target", text="Coverage")
+            row = layout.row(align=True)
+            row.prop(settings, "alpha_wrap_patch_ratio", text="Detection")
+            row.prop(settings, "alpha_wrap_patch_rings", text="Overlap")
+            layout.prop(settings, "alpha_wrap_offset_ratio", text="Surface Offset")
+        elif settings.hole_repair_method in {"HYBRID", "BOUNDARY"}:
+            row = layout.row(align=True)
+            row.prop(settings, "hole_max_sides", text="Max Loop")
+            row.prop(settings, "hole_weld_distance", text="Weld")
+        elif settings.hole_repair_method == "VOLUME":
+            layout.prop(settings, "hole_close_ratio", text="Crack Size")
+            layout.prop(settings, "volume_guide_voxel_scale", text="Resolution")
+            layout.prop(settings, "volume_surface_fit_ratio", text="Surface Fit Reach")
+            row = layout.row(align=True)
+            row.prop(settings, "alpha_wrap_patch_ratio", text="Detection")
+            row.prop(settings, "alpha_wrap_patch_rings", text="Overlap")
+
+        if settings.hole_repair_method in {"HYBRID", "VOLUME"}:
+            layout.prop(settings, "hole_detail_recovery", text="Recover Surface Detail")
+            if settings.hole_detail_recovery and settings.hole_repair_method == "HYBRID":
+                layout.prop(settings, "hole_detail_ratio", text="Detail Reach")
+
+        layout.separator()
+        action = layout.column()
+        action.scale_y = 1.35
+        session_command(action, "REPAIR", "Run Repair", "MOD_REMESH")
+
+    def execute(
+        self,
+        action: FeatureAction,
+        context: FeatureExecutionContext,
+    ) -> StageResult:
+        settings = context.blender_context.scene.remi_settings
+        if action.id == "REPAIR":
+            return stage_result(
+                self._service.repair(
+                    context.source,
+                    settings,
+                    candidate=context.working_copy,
+                    disk=context.disk,
+                )
+            )
+        if action.id == "MANUAL_REPAIR":
+            return stage_result(
+                self._service.manual_patch(
+                    context.source,
+                    settings,
+                    context.payload["ring_world"],
+                    ring_normals=context.payload.get("ring_normals"),
+                    candidate=context.working_copy,
+                )
+            )
+        return super().execute(action, context)
+
+    def preflight_automatic(self, action, context):
+        if context.scene.remi_settings.hole_repair_method == "ALPHA_WRAP":
+            from ...integrations import meshlab
+            if not meshlab.ensure_pymeshlab():
+                raise RuntimeError(meshlab.pymeshlab_unavailable_message())
+
+    def draw_automatic_settings(self, layout, context, action):
+        settings = context.scene.remi_settings
+        names = ("hole_repair_method",)
+        if settings.hole_repair_method == "ALPHA_WRAP":
+            names += (
+                "alpha_wrap_alpha_ratio",
+                "alpha_wrap_auto_scale",
+                "alpha_wrap_max_ratio",
+                "alpha_wrap_coverage_target",
+                "alpha_wrap_patch_ratio",
+                "alpha_wrap_patch_rings",
+                "alpha_wrap_offset_ratio",
+            )
+        elif settings.hole_repair_method in {"HYBRID", "BOUNDARY"}:
+            names += ("hole_max_sides", "hole_weld_distance")
+        else:
+            names += (
+                "hole_close_ratio",
+                "volume_guide_voxel_scale",
+                "volume_surface_fit_ratio",
+                "hole_detail_recovery",
+            )
+        for name in names:
+            layout.prop(settings, name)

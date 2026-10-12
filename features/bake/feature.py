@@ -1,0 +1,162 @@
+"""Texture bake workflow feature."""
+
+from __future__ import annotations
+
+from ..base import FeatureDefaults, session_command, stage_result
+from ..contracts import BakeUseCases
+from ...workflow.contracts import (
+    FeatureAction,
+    FeatureDescriptor,
+    FeatureExecutionContext,
+    StageResult,
+)
+
+
+class BakeFeature(FeatureDefaults):
+    descriptor = FeatureDescriptor(
+        id="BAKE",
+        name="Bake",
+        icon="RENDER_STILL",
+        next_feature="BAKE",
+        actions=(
+            FeatureAction(
+                "BAKE_ALL",
+                "Bake All Maps",
+                "Bake albedo, roughness, normal, and ambient occlusion",
+                requires_source_checkpoint=True,
+                automatic=True,
+            ),
+            FeatureAction(
+                "BAKE_DIFFUSE",
+                "Bake Albedo",
+                requires_source_checkpoint=True,
+                automatic=True,
+            ),
+            FeatureAction(
+                "BAKE_ROUGHNESS",
+                "Bake Roughness",
+                requires_source_checkpoint=True,
+                automatic=True,
+            ),
+            FeatureAction(
+                "BAKE_NORMAL",
+                "Bake Normal",
+                requires_source_checkpoint=True,
+                automatic=True,
+            ),
+            FeatureAction(
+                "BAKE_AO",
+                "Bake AO",
+                requires_source_checkpoint=True,
+                automatic=True,
+            ),
+        ),
+    )
+
+    _PASSES = {
+        "BAKE_ALL": ("diffuse", "roughness", "normal", "ao"),
+        "BAKE_DIFFUSE": ("diffuse",),
+        "BAKE_ROUGHNESS": ("roughness",),
+        "BAKE_NORMAL": ("normal",),
+        "BAKE_AO": ("ao",),
+    }
+
+    def __init__(self, service: BakeUseCases):
+        self._service = service
+
+    def scene_settings(self):
+        from .settings import SCENE_SETTINGS
+
+        return SCENE_SETTINGS
+
+    def blender_classes(self) -> tuple[type, ...]:
+        from .operators import (
+            Remi_OT_BakeAO,
+            Remi_OT_BakeAllMaps,
+            Remi_OT_BakeDiffuse,
+            Remi_OT_BakeNormal,
+            Remi_OT_BakeRoughness,
+        )
+
+        return (
+            Remi_OT_BakeAllMaps,
+            Remi_OT_BakeDiffuse,
+            Remi_OT_BakeRoughness,
+            Remi_OT_BakeNormal,
+            Remi_OT_BakeAO,
+        )
+
+    def draw(self, layout, context) -> None:
+        settings = context.blender_context.scene.remi_settings
+        layout.label(text="Bake", icon="RENDER_STILL")
+        layout.label(text="Uses original source checkpoint", icon="LOCKED")
+        layout.prop(settings, "bake_texture_size", text="Texture Size")
+        layout.prop(settings, "bake_include_metallic")
+        layout.prop(settings, "bake_auto_unwrap", text="Auto Unwrap")
+        if settings.bake_auto_unwrap:
+            row = layout.row(align=True)
+            row.prop(settings, "bake_uv_method", text="UV Method")
+            if settings.bake_uv_method == "REMI":
+                row.prop(settings, "bake_uv_profile", text="Profile")
+                layout.prop(settings, "bake_uv_margin_px", text="Gap")
+            else:
+                layout.prop(settings, "bake_uv_island_margin", text="Margin")
+        row = layout.row(align=True)
+        row.prop(settings, "bake_recalc_normals", text="Recalc Normals")
+        row.prop(settings, "bake_half_scale", text="Half Scale")
+        layout.prop(settings, "bake_auto_cage", text="Auto Cage && Ray")
+        distances = layout.row(align=True)
+        distances.enabled = not settings.bake_auto_cage
+        distances.prop(settings, "bake_cage_extrusion", text="Cage")
+        distances.prop(settings, "bake_max_ray_distance", text="Max Ray")
+        layout.separator()
+        action = layout.column(align=True)
+        action.scale_y = 1.3
+        session_command(action, "BAKE_ALL", "Bake All Maps", "RENDER_STILL")
+        row = action.row(align=True)
+        session_command(row, "BAKE_DIFFUSE", "Albedo")
+        session_command(row, "BAKE_ROUGHNESS", "Roughness")
+        row = action.row(align=True)
+        session_command(row, "BAKE_NORMAL", "Normal")
+        session_command(row, "BAKE_AO", "AO")
+
+    def queued_message(
+        self,
+        action: FeatureAction,
+        context: FeatureExecutionContext,
+    ) -> str:
+        size = context.blender_context.scene.remi_settings.bake_texture_size
+        return (
+            f"{action.name} at {size}×{size}… "
+            "Blender stays busy while Cycles bakes."
+        )
+
+    def preflight_automatic(self, action, context):
+        import bpy
+        if not bpy.app.build_options.cycles:
+            raise RuntimeError("Texture baking requires Blender with Cycles support")
+
+    def draw_automatic_settings(self, layout, context, action):
+        for name in ("bake_texture_size", "bake_include_metallic", "bake_auto_cage", "bake_cage_extrusion", "bake_max_ray_distance", "bake_recalc_normals", "bake_half_scale"):
+            layout.prop(context.scene.remi_settings, name)
+
+    def execute(
+        self,
+        action: FeatureAction,
+        context: FeatureExecutionContext,
+    ) -> StageResult:
+        passes = self._PASSES.get(action.id)
+        if passes is None:
+            return super().execute(action, context)
+        if action.id == "BAKE_ALL" and context.blender_context.scene.remi_settings.bake_include_metallic:
+            passes += ("metallic",)
+        return stage_result(
+            self._service.bake(
+                context.source_checkpoint,
+                context.source,
+                context.blender_context.scene.remi_settings,
+                passes=passes,
+                name_prefix=context.source.name,
+                candidate=context.working_copy,
+            )
+        )

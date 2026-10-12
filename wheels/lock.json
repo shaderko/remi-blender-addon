@@ -1,0 +1,17 @@
+{
+  "macos-arm64": {
+    "filename": "pymeshlab-2025.7.post1-cp313-cp313-macosx_11_0_arm64.whl",
+    "sha256": "841b1fa15fc76ab73e594f4bbfcbe339782b36be67d9387ff5aa5f4ca422e180",
+    "url": "https://files.pythonhosted.org/packages/a7/06/ef68bf08d23f44118ab846b93dd30eaf87ad85cc44b4f3e5ac8764e9bc9f/pymeshlab-2025.7.post1-cp313-cp313-macosx_11_0_arm64.whl"
+  },
+  "linux-x64": {
+    "filename": "pymeshlab-2025.7.post1-cp313-cp313-manylinux_2_35_x86_64.whl",
+    "sha256": "99bb0f83ad20c61bdc63beb8d7f0c9ed3af6912a4770da170ce8d4bd02a7ecb0",
+    "url": "https://files.pythonhosted.org/packages/7f/af/3f7597d43813e8918bc2798aeed9b3be123a62e8a5be7de032cce03db8ed/pymeshlab-2025.7.post1-cp313-cp313-manylinux_2_35_x86_64.whl"
+  },
+  "windows-x64": {
+    "filename": "pymeshlab-2025.7.post1-cp313-cp313-win_amd64.whl",
+    "sha256": "25eb2578dd6c4d1b2e0253fb3b4f8f7895e8bb4f3f1236832db0ab58e6a44998",
+    "url": "https://files.pythonhosted.org/packages/a2/69/1732c3222ce63758c32746841099ac82059907cc3ff6bd77499da78abcbc/pymeshlab-2025.7.post1-cp313-cp313-win_amd64.whl"
+  }
+}

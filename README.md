@@ -1,419 +1,255 @@
 <p align="center">
-  <img src="remi_logo.png" alt="Remi Logo" width="180"/>
+  <img src="assets/remi_logo.png" alt="Remi" width="150">
 </p>
 
-# Remi
-
-**Repair, simplify, retopologize, and rebake difficult meshes without leaving Blender.**
-
-Remi is a Blender 5.1/5.2 add-on for turning dense, damaged, or fragmented source
-geometry into a cleaner working mesh. It can close holes and cracks, rebuild a
-surface, reduce triangle count, create guided quad topology with Instant Meshes,
-and bake the source appearance onto the result.
-
-Repair, remesh, decimation, and retopology create separate results. The source
-mesh stays untouched; standalone baking writes only to the target you select.
-
-The Interactive Instant Meshes workspace uses the **actual native Instant Meshes
-field solver and quad extraction code** inside Blender. It is not a slow Python
-rewrite and it does not launch the old standalone application. The native C++
-core does the heavy processing; Blender provides the UI, viewport preview, and
-surface-drawing tools.
+<h1 align="center">Remi</h1>
 
 <p align="center">
-  <a href="https://youtu.be/eR4afAdbMeU">
-    <img src="https://img.youtube.com/vi/eR4afAdbMeU/0.jpg" alt="Remi Demo" width="560" height="315">
-  </a>
-  <br>
-  <a href="https://youtu.be/eR4afAdbMeU">Watch the Remi demo →</a>
+  Turn scanned and AI-generated meshes into lighter, textured assets—in Blender or in the cloud.
 </p>
+
+<p align="center">
+  <a href="https://remi3d.app"><strong>Try Remi Cloud</strong></a>
+  · <a href="https://github.com/shaderko/remi-blender-addon/releases/latest"><strong>Download Blender add-on</strong></a>
+  · <a href="#quick-start">Quick start</a>
+  · <a href="#tool-guide">Tool guide</a>
+  · <a href="https://github.com/shaderko/remi-blender-addon/issues">Report an issue</a>
+</p>
+
+## Remi Cloud
+
+[**Open remi3d.app →**](https://remi3d.app)
+
+Optimize a GLB in your browser, or queue a batch and come back for the results.
+Remi Cloud remeshes, simplifies, unwraps, and rebakes your models on cloud workers,
+with a 3D preview, processing progress, and downloadable outputs. No Blender
+installation is needed.
+
+1. Create an account and verify your email. You get **10 free credits**.
+2. Upload a GLB or add several models to a batch. Choose the detail, triangle
+   target, and texture size, then start optimization.
+3. Follow the progress or return later to preview and download your results.
+
+**One full optimization costs one credit.** Monthly plans add more credits;
+uploaded models and results remain available for 30 days after processing.
+The Blender add-on remains free and open source for local work and manual tools.
 
 ## What Remi does
 
-| Goal | Remi tool |
-|------|-----------|
-| Repair holes, cracks, and fragmented geometry | Voxel Remesh, Closing Volume, or targeted hole patches |
-| Make a dense mesh lighter | Multi-pass PyMeshLab decimation |
-| Create and guide a quad layout | Interactive Instant Meshes inside the Blender viewport |
-| Run automatic external quad remeshing | Optional AutoRemesher integration |
-| Generate validated production UVs | Remi UV charting, repair, and xatlas packing |
-| Transfer the original appearance | Albedo, roughness, normal, and AO baking |
-| Work with fused parts or doubled shells | Edit Mode selection and separation tools |
+| Need | Tool |
+|---|---|
+| Process a model end to end | Preset-driven **Run Full Flow** |
+| Recover without scene duplicates | Single-mesh sessions with **Back**, **Redo**, and **Start** |
+| Close holes, cracks, or fragmented surfaces | Manual patches, Boundary, Hybrid, Alpha-Guided, or Closing Volume repair |
+| Rebuild a surface | Voxel Remesh or Closing Volume |
+| Reduce triangles | Multi-pass MeshLab decimation |
+| Create guided quads | Native Interactive Instant Meshes |
+| Run automatic quad retopology | Optional AutoRemesher integration |
+| Build production UVs | Validated charting, repair, and xatlas packing |
+| Transfer source appearance | Albedo, roughness, normal, and AO baking |
+| Separate fused parts or doubled shells | Edit Mode selection tools |
 
-## Two ways to work
+## Install
 
-### Automated optimization
+**Supported packages:** Blender 5.1 or 5.2 on **Windows x64** and **macOS Apple Silicon**.
 
-Use **Run Full Remi** to chain the enabled non-interactive stages:
+1. Download the ZIP matching your computer (`windows-x64` or `macos-arm64`) from [GitHub Releases](https://github.com/shaderko/remi-blender-addon/releases).
+2. In Blender, open **Edit → Preferences → Get Extensions**.
+3. Open the top-right menu, choose **Install from Disk**, and select the ZIP.
+4. In the 3D Viewport, press `N` and open **Remi**.
 
-```text
-Source mesh -> Repair / Remesh -> Decimate -> [AutoRemesher] -> [Bake textures]
-```
-
-Each stage can also run on its own. AutoRemesher and texture baking are optional.
-
-### Guided quad retopology
-
-Use the Interactive Instant Meshes workspace when you want to see and influence
-the quad flow:
-
-```text
-Source mesh -> Solve fields -> Draw surface guides -> Preview quads -> Accept
-```
-
-This is a hands-on workspace, not a stage in **Run Full Remi**. Draw an
-**Orientation Comb** to steer nearby quad directions, or an **Output Edge** guide
-when the extracted topology should follow a particular path with an edge.
-
-## Download and install
-
-[**Download the latest release**](https://github.com/shaderko/remi-blender-addon/releases/latest)
-
-1. In Blender, open **Edit -> Preferences -> Get Extensions**.
-2. Open the top-right menu, choose **Install from Disk**, and select the downloaded zip.
-3. If Remi is disabled, enable it under **Preferences -> Add-ons**.
-4. In the 3D Viewport, press `N` and open the **Remi** tab.
-
-For development or a manual installation from this repository:
-
-```bash
-python3 install_blender_addon.py --blender-version 5.2
-```
-
-Restart Blender after a manual installation.
-
-Maintainers can run the complete headless regression suite and build a
-validator-checked extension archive with:
-
-```bash
-./scripts/release_check.sh "/Applications/Blender.app/Contents/MacOS/Blender"
-```
-
-The release archive is written to `dist/`.
+The package includes MeshLab, Alpha Wrap, native Instant Meshes, and the UV
+backend. Do not unzip it or install a second copy in Blender's legacy
+`scripts/addons` directory.
 
 ## Quick start
 
-### Create guided quad topology with Instant Meshes
+### Automatic: remesh to baked asset
 
-1. Select a mesh in **Object Mode**.
-2. Open **N-panel -> Remi -> Instant Meshes (Interactive)**.
-3. Choose the approximate **Target** face count and click **Start Interactive Retopology**.
-4. Wait for the native solve and initial quad preview to finish.
-5. Use **Orientation Comb** or **Output Edge**, then drag with the left mouse button on the visible mesh surface. Release to re-solve the fields; with auto-update enabled, Remi also rebuilds the quad preview.
-6. Use **Dim Original**, **Retopo Offset**, and **Face Fill** to make the cage easier to read. Enable **X-Ray Retopo** only when you deliberately want to see the back side.
-7. Click **Accept Retopology** to create a new Blender mesh.
+1. Select one mesh in **Object Mode**.
+2. Open **N-panel → Remi**.
+3. Choose **Default · Remesh to Bake**.
+4. Click **Run Full Flow**.
 
-The target count is approximate. Instant Meshes generates a field-aligned layout;
-the guides influence that layout rather than acting as manually drawn topology.
-
-### Run the automated pipeline
-
-1. Select a mesh in **Object Mode**.
-2. Open the **Remi** tab in the 3D Viewport sidebar.
-3. Enable the stages you need and expand them to adjust their settings.
-4. Start with **Voxel Remesh** for speed. Use **Closing Volume** when filling gaps is more important than runtime and memory use.
-5. Click **Run Full Remi** and follow the progress shown in Blender.
-
-Press `Esc` to cancel between stages or while an external decimation/remeshing
-process is running. A Blender-native SDF or baking operation must finish its
-current operation before Blender can receive the key press.
-
-When baking is enabled, Remi validates the target UV map first. A missing,
-blank, folded, or overlapping map is regenerated with the selected Remi UV
-profile before any texture pass starts.
-
-### Generate a UV map
-
-1. Select the target mesh in **Object Mode** or **Edit Mode**.
-2. Open **N-panel -> Remi -> Remi UV**.
-3. Choose a profile and the texture resolution used to calculate padding.
-4. Keep **Padding** at `4 px` for dense general-purpose packing, or raise it for
-   more conservative mip and bake isolation.
-5. Enable **Preserve Marked Seams** when artist seams must remain locked.
-6. Click **Generate UV Map**. The result summary reports chart count,
-   95th-percentile stretch, and true occupied area in the UV tile.
-
-Remi UV can run directly on an accepted Instant Meshes result. Small local
-foldovers produced by a Blender unwrap solver are isolated and repaired without
-discarding the rest of the valid chart layout.
-
-### Patch one visible hole
-
-1. Select **Voxel Remesh** and frame the hole in the viewport.
-2. Click **Draw Around Hole** under **Targeted Hole Patching**.
-3. Draw on the intact visible surface around the rim, not through the empty hole.
-4. Release to create a separate `_targeted_patch` preparation mesh.
-5. Run **Remesh Copy** on that prepared copy.
-
-## Choosing a repair method
-
-| Method | Best for | Trade-off |
-|--------|----------|-----------|
-| **Voxel Remesh** | Fast general cleanup and surface consolidation | Rebuilds the whole surface and can soften fine detail |
-| **Closing Volume** | Fragmented meshes, cracks, and holes that must be closed automatically | Slow and memory intensive; fits the result back to source surfaces and sharp creases |
-| **Targeted Hole Patching** | One visible, ambiguous hole | Requires drawing around each hole, but changes only the local preparation mesh |
-| **Alpha-Guided Patches** | Heavily fragmented or AI-generated geometry | Requires the optional CGAL helper; uses the wrap only to find donor patches |
-| **Boundary Only** | Clear, bounded topology holes | Does not bridge spatial cracks or disconnected fragments |
-| **Hybrid** | A mix of boundary holes and narrow cracks | More aggressive than boundary filling alone |
-| **Volume-Guided Patches** | Filling gaps while retaining most source triangles before remeshing | Uses a finer temporary volume and therefore costs more memory |
-
-## Requirements and optional dependencies
-
-### Core
-
-- **Blender 5.1 or Blender 5.2 LTS**.
-- The current release bundles native CPython 3.13/arm64 modules for Interactive
-  Instant Meshes and xatlas-backed UV charting/packing on **macOS on Apple
-  Silicon**. No standalone Instant Meshes app, xatlas installation, Homebrew,
-  CMake, or compiler is needed for these bundled modules.
-
-### Optional features
-
-- **PyMeshLab** is required only for MeshLab Decimation. Remi never downloads
-  it silently. In Blender's Python Console, run `import sys; print(sys.executable)`,
-  close Blender, then install it from Terminal with:
-
-  ```bash
-  "/path/printed/by/blender/python3.13" -m pip install --user pymeshlab
-  ```
-
-  Reopen Blender afterward. If you do not need decimation, disable that stage;
-  repair, remeshing, Instant Meshes, UVs, and baking do not require PyMeshLab.
-- **Alpha-Guided Patches** requires CGAL and CMake. On macOS, run
-  `brew install cgal cmake`; on Ubuntu/Debian, run
-  `sudo apt install libcgal-dev cmake`. Remi can build its small helper
-  automatically, or you can click **Build Helper**.
-- **AutoRemesher** requires a separate executable from the
-  [AutoRemesher releases page](https://github.com/huxingyi/autoremesher/releases).
-  Set its path in the Remi panel or with the `AUTOREMESHER_PATH` environment
-  variable.
-
-## Pipeline behavior
-
-| Stage | What happens | Full pipeline default |
-|-------|--------------|-----------------------|
-| **Repair / Remesh** | Creates a rebuilt copy with Voxel Remesh or Closing Volume | On |
-| **MeshLab Decimation** | Reduces faces through one or more quadric-collapse passes | On |
-| **Interactive Instant Meshes** | Opens the guided viewport workspace and extracts a quad result | Separate manual workflow |
-| **AutoRemesher** | Sends a mesh to the optional external automatic quad remesher | Off |
-| **Bake Textures** | Bakes albedo, roughness, tangent-space normal, and AO maps to the result | On |
-
-## UI reference
-
-The short descriptions below are a reference for less common settings. Blender
-also shows a tooltip when you hover over a control.
-
-<details>
-<summary><strong>Repair and remesh controls</strong></summary>
-
-| Control | Meaning |
-|---------|---------|
-| **Voxel Size** | SDF sampling resolution. Lower values preserve more detail but use more memory. |
-| **Volume Resolution** | Closing-volume voxel size relative to Voxel Size. `0.5` is twice as fine and substantially more expensive. |
-| **Crack Size** | Largest volumetric gap to close relative to the object bounds. Start low and increase only until the intended gaps close. |
-| **Surface Fit Reach** | Distance around retained volume patches that is projected back onto the source. |
-| **Preserve Sharp Creases** | Fits nearby reconstructed vertices toward detected source feature edges. |
-| **Feature / Reach** | Minimum crease angle and the width of crease fitting measured in final voxels. |
-| **Fillet / Smooth** | Optional post-remesh SDF refinement. |
-| **Remesh Copy** | Creates a remeshed object while keeping the source. |
-| **Apply Modifier** | Applies the Voxel Remesh Geometry Nodes modifier permanently to the copy. |
-| **Ray px** | Pixel spacing between samples for a targeted hole stroke. Lower values follow the stroke more densely. |
-| **Depth** | Rejects ray hits whose visible-surface depth changes too much, helping avoid the back surface through a hole. |
-| **Patch Resolution / Relax** | Controls targeted or guide-derived patch tessellation and interior smoothing. Patch borders remain locked. |
-| **Pre-Repair Holes** | Runs a selected hole-preparation method before normal Voxel Remesh. |
-| **Start / Maximum Hole Scale** | Initial and maximum opening scale used by Alpha-Guided Patches. |
-| **Auto Find Hole Scale** | Increases the hidden guide scale until enough open boundaries are covered. |
-| **Boundary Coverage** | Required fraction of sampled open edges that must meet generated patches. |
-| **Surface Offset** | How tightly the hidden Alpha Wrap guide follows the source near hole borders. |
-| **Hole Detection** | Minimum guide-to-source distance treated as missing surface. Lower values fill smaller gaps. |
-| **Border Overlap** | Extra guide-face rings retained around each patch so the following voxel stage can fuse it. |
-| **Max Loop Edges** | Largest explicit boundary loop that Boundary Only or Hybrid may cap. |
-| **Weld Distance** | Merges nearly coincident vertices before boundary analysis. Zero disables welding. |
-| **Recover Detail / Detail Reach** | Projects reconstructed vertices toward nearby source surfaces without moving the centers of newly filled gaps. |
-| **Helper / Auto Build / Build Helper** | Select, automatically compile, or explicitly compile the CGAL Alpha Wrap helper. |
-
-</details>
-
-<details>
-<summary><strong>Interactive Instant Meshes controls</strong></summary>
-
-| Control | Meaning |
-|---------|---------|
-| **Target** | Approximate output face count. Pure-quad subdivision is accounted for automatically. |
-| **Pure Quads** | Regularly subdivides the extracted field mesh into quads only. |
-| **Creases / Angle** | Aligns the field to source edges sharper than the selected angle. |
-| **Align Open Boundaries** | Constrains the field and output grid to open mesh boundaries. |
-| **Extrinsic** | Optimizes directions in 3D instead of relying only on intrinsic surface transport. |
-| **Deterministic** | Prefers reproducible hierarchy operations at a small performance cost. |
-| **Projection Steps** | Number of output smoothing and source-surface reprojection passes. |
-| **Start Interactive Retopology** | Creates a persistent native session and starts the orientation and position solves. Auto-update then builds the first preview. |
-| **Orientation Comb** | Draws a surface guide that steers nearby quad directions. |
-| **Output Edge** | Guides direction and asks extraction to place an output edge along the stroke. |
-| **Dim Original** | Darkens the source while preserving normal depth occlusion. |
-| **Retopo Offset** | Lifts the cage along its normals to prevent z-fighting with the source. |
-| **Face Fill** | Adds translucent faces beneath the bright preview edges. |
-| **X-Ray Retopo** | Shows the entire cage through the source, including its back side. |
-| **Orientation / Position** | Shows the native fields in the viewport. |
-| **Singularities** | Shows orientation and position field singularities. |
-| **Auto-update After Guides** | Automatically re-extracts the preview after guide-driven field solves. |
-| **Rebuild Both Fields** | Rebuilds orientation and position while retaining guides. Auto-update also rebuilds the preview. |
-| **Re-solve Position** | Rebuilds the position field without discarding the orientation result. |
-| **Update Quad Preview** | Re-extracts the quad result from the current fields. |
-| **Accept Retopology** | Creates a new Blender object from the current preview. |
-| **Cancel Session** | Releases the native session and removes its overlays. |
-
-</details>
-
-<details>
-<summary><strong>Decimation, AutoRemesher, and baking controls</strong></summary>
-
-| Control | Meaning |
-|---------|---------|
-| **Decimation Passes** | Number of sequential PyMeshLab decimation passes. |
-| **Keep** | Fraction of faces retained per pass. For example, six `50%` passes retain roughly `1.56%` before topology limits. |
-| **Preserve Detail** | Enables normal preservation and planar quadrics during decimation. |
-| **Keep Texture (standalone only)** | Uses MeshLab's texture-aware decimation to preserve the object's UVs and image texture. The full pipeline ignores it because textures are baked at its final stage. |
-| **AutoRemesher Target / Adaptive** | Requested quad count and curvature-adaptive density. |
-| **Edge Scale / Sharp / Smooth** | External AutoRemesher edge scaling, sharp-angle threshold, and normal smoothing angle. |
-| **Texture Size** | Square output resolution for every baked map. |
-| **Generate UV Map** | Runs the standalone Remi UV analyzer, chart generator, unwrap, repair, pack, and validation pipeline on the active mesh. |
-| **UV Profile** | Selects coordinated decisions for balanced assets, texture painting, normal baking, lightmaps, hard surfaces, organic meshes, or scans/AI meshes. |
-| **UV Padding** | Sets exact xatlas island padding in texture pixels (4 px by default). |
-| **Preserve Marked Seams** | Keeps artist-authored seam edges as hard chart boundaries during regeneration. |
-| **Auto Unwrap** | Generates target UVs when none exist or the existing map fails collapse/flip/overlap validation. Valid UV maps are retained. |
-| **UV Method** | Uses Remi UV by default; Blender Smart Project and Lightmap Pack remain explicit compatibility fallbacks. |
-| **Recalc Normals** | Recalculates target normals before baking. |
-| **Half Scale** | Temporarily scales both meshes to `0.5x` during baking, then restores them. |
-| **Cage / Max Ray** | Cage extrusion and maximum source-ray distance. |
-
-For standalone baking, select the source mesh or meshes first and the target last,
-so the target is active. Use **Bake All Maps** or bake albedo, roughness, normal,
-and AO independently.
-
-</details>
-
-<details>
-<summary><strong>Edit Mode tools</strong></summary>
-
-| Tool | Meaning |
-|------|---------|
-| **Smart Select Object** | Selects the complete connected island from a picked face, edge, or vertex. |
-| **Detect Volume Bridges** | Finds narrow connectors between meaningful spatial volumes. |
-| **Preview Fused Part** | Selects one side of the proposed volume-aware separation. |
-| **Separate Fused Volumes** | Separates fused parts across all detected connector edges. |
-| **Select Inner Shell** | Previews the likely inner duplicate layer from nearby opposite-facing surfaces. |
-| **Remove Inner Shell** | Deletes the detected inner layer and optional direct connector faces. Preview first. |
-
-</details>
-
-## Remi UV
-
-Remi UV is a first-class UV stage rather than a single projection call. The
-current automatic pipeline:
-
-1. analyzes connected components, manifold boundaries, materials, sharp edges,
-   local angles, face topology, and principal object axes;
-2. classifies the input as planar, hard-surface, organic, cylindrical, or
-   irregular;
-3. preserves marked seams and creates angle-, material-, cylinder-, or
-   PCA-directional chart boundaries as appropriate;
-4. parameterizes with Blender 5.1 Minimum Stretch, with Angle Based and
-   Conformal solver retries;
-5. measures per-triangle conformal distortion and adds local chart boundaries
-   around high-stretch regions;
-6. equalizes island scale and sends the existing charts through multiple
-   xatlas packing searches with exact texture-pixel padding, principal-axis
-   pre-rotation, free-orientation bases, and exhaustive placement on small
-   atlases up to 512 px;
-7. benchmarks Remi charts against both Blender Smart Project and xatlas' native
-   3D chart generator, scoring occupied area, fragmentation, distortion, and
-   validity instead of accepting the first successful unwrap;
-8. rejects non-finite, collapsed, locally flipped, or overlapping UV triangles,
-   retains the least-damaged Blender solver attempt, and repairs small mirrored
-   regions as face-local charts; if every Blender parameterizer remains invalid,
-   xatlas chart generation provides an independent recovery path;
-9. repairs any remaining vertex-fan foldovers by re-projecting only a minimal
-   set of conflicting faces as independent micro-charts, then repacks and
-   validates the complete atlas again.
-
-Packing occupancy is measured from triangle area in the final UV tile. xatlas'
-padded texel utilization is also logged separately, making padding cost visible
-instead of hiding it in a fractional Blender margin. Artist-authored seams are
-treated as locked constraints; full re-charting candidates are skipped when
-those constraints are present.
-
-The standalone **Generate UV Map** button regenerates the active UV map. The
-baking pipeline first validates an existing map and keeps it when valid; a blank
-or invalid map is regenerated when Auto Unwrap is enabled. Generated seams
-remain visible and editable in Blender for artist cleanup.
-
-On the 7,381-triangle launcher reference mesh at 2048 px with 4 px padding, the
-new pipeline reduced fragmentation from 1,018 to 413 charts while increasing
-true tile occupancy from 10.7% to 61.5%. The selected result measured 1.17 p95
-conformal stretch and zero overlapping or flipped triangles. These numbers are
-a regression reference for that asset, not a guaranteed density for every mesh.
-
-The headless regression suite covers planar, hard-surface, cylindrical,
-organic, toroidal, irregular triangulated, disconnected, and non-manifold
-fixtures, as well as deterministic output and Edit Mode state restoration:
-
-```bash
-/Applications/Blender.app/Contents/MacOS/Blender \
-  --background --factory-startup \
-  --python uv_mapping/tests/blender_uv_regression.py
+```text
+Voxel Remesh → MeshLab Decimation → UV Unwrap → Bake All Maps
 ```
 
-The Instant Meshes integration smoke test also accepts a generated quad mesh
-and immediately validates it through Remi UV:
+Remi checks dependencies before changing the mesh. Success leaves one finished
+result. Failure stops before later stages and opens the last valid result as a
+manual session; use **Back**, **Finish**, or **Cancel Session** from there.
+
+### Manual: use only what the mesh needs
+
+1. Select one mesh in **Object Mode** and click **Start Remi**.
+2. Choose **Repair**, **Remesh**, **Retopology**, **UV**, or **Bake**.
+3. Run an operation. Remi commits it only after success.
+4. Click **Finish** to keep the result or **Cancel Session** to restore the source.
+
+## Choose the right tool
+
+| Problem | Start with | Key trade-off |
+|---|---|---|
+| General cleanup | **Voxel Remesh** | Fast; rebuilds the surface and may soften detail |
+| Cracks and fragmented geometry | **Closing Volume** | More complete; slower and memory-heavy |
+| One visible hole | **Draw Around Hole** | Precise local repair; requires a short surface stroke |
+| Clear topology holes | **Boundary** | Preserves more geometry; does not bridge spatial gaps |
+| Holes plus narrow cracks | **Hybrid** | More aggressive than Boundary |
+| Difficult scan or AI fragments | **Alpha-Guided Patches** | Uses bundled MeshLab Alpha Wrap |
+| Fewer triangles | **MeshLab Decimation** | Included in Remi |
+| Artist-guided quads | **Interactive Retopology** | Target count is approximate |
+| Automatic quads | **AutoRemesher** | Requires an external executable |
+| UVs only | **Generate UV** | Existing marked seams can be preserved |
+| Source textures on a new mesh | **Bake All Maps** | Uses Cycles and the original source checkpoint |
+
+## Session safety
+
+Remi locks one visible mesh for the active session. Operations run on temporary
+candidates; a failed operation does not replace the current mesh.
+
+| Control | Result |
+|---|---|
+| **Back** | Previous committed mesh |
+| **Redo** | Reverted mesh |
+| **Start** | Original source |
+| **Finish** | Keep the current result and leave Remi |
+| **Cancel Session** | Restore the source and leave Remi |
+
+Recovery checkpoints are temporary session data, not crash-persistent project
+history. Save the `.blend` file normally and keep source assets until the result
+has been reviewed.
+
+## Tool guide
+
+<details>
+<summary><strong>Full Flow and presets</strong></summary>
+
+The built-in flow uses a `0.01` voxel size, six `50%` decimation passes (about
+`1.56%` retained before topology limits), 2048 px textures, and a 4 px UV gap.
+These are starting points, not universal settings.
+
+- Click the pencil beside a preset to load it into **Current Settings**.
+- Enable only the stages you need; use each stage's settings button to edit it.
+- Save the current stages and settings as a reusable preset.
+- Saving an existing name requires **Replace**. The built-in default cannot be deleted.
+- **Stop After Current Stage** or `Esc` stops at the next stage boundary.
+
+Interactive drawing and guided Instant Meshes are manual-only. Custom automatic
+flows may include Repair or external AutoRemesher when their dependencies exist.
+
+</details>
+
+<details>
+<summary><strong>Repair and remesh</strong></summary>
+
+- **Draw Around Hole:** draw on intact visible surface around one hole; release to apply.
+- **Boundary:** caps bounded topology loops.
+- **Hybrid:** combines boundary filling with narrow-crack repair.
+- **Alpha-Guided Patches:** uses bundled MeshLab Alpha Wrap as a guide for missing regions.
+- **Volume-Guided Patches:** borrows only gap-spanning faces from a fine closing-volume guide.
+- **Closing Volume:** closes spatial gaps, then fits the result toward source surfaces and creases.
+- **Voxel Remesh:** fast, general surface consolidation.
+- **Surface Offset:** use `0` to follow the sampled surface, or `1` to expand it
+  by one voxel and consolidate thin or open geometry.
+
+Lower voxel sizes retain more detail and consume more memory. Start coarse, then
+reduce the value only when the silhouette needs it.
+
+For decimation, set **Target Triangles** for an absolute target, or leave it at
+`0` to use the per-pass percentage. Absolute targets use measured triangle
+counts and multiple passes, reducing by at most 50% per pass; topology
+constraints can prevent reaching the target.
+
+</details>
+
+<details>
+<summary><strong>Interactive Instant Meshes</strong></summary>
+
+1. Open **Retopology**, set an approximate target, and click **Start Interactive Retopology**.
+2. Draw an **Orientation Comb** to steer flow or an **Output Edge** to guide an extracted edge.
+3. Change **Target Faces** to re-solve without restarting the workspace.
+4. Use **Dim Original**, **Retopo Offset**, and **Face Fill** to read the preview.
+5. Click **Accept Retopology** or **Cancel Retopology**.
+
+The preview can report topology warnings and remain acceptable. Treat warnings
+as review prompts: inspect holes, components, and shading before accepting.
+
+</details>
+
+<details>
+<summary><strong>UV</strong></summary>
+
+Remi classifies the mesh, builds several chart candidates, repairs local invalid
+regions, packs with xatlas, and keeps the best valid result within its distortion
+and density limits.
+
+- Choose a profile and the texture size used to measure spacing.
+- **Gap** is edge-to-edge distance: `4 px` means four pixels across the gap.
+- **Preserve Marked Seams** keeps artist seams as chart boundaries.
+- The result reports chart count, 95th-percentile stretch, occupied area, overlaps, and gap.
+- A failed UV operation restores the previous UVs and seams.
+
+Validation establishes the measured checks; it does not guarantee optimal
+packing or a fixed occupancy percentage for every mesh.
+
+</details>
+
+<details>
+<summary><strong>Baking</strong></summary>
+
+Remi bakes from the original source checkpoint onto the current result. Use
+**Bake All Maps** or bake albedo, roughness, tangent-space normal, and AO separately.
+
+- **Auto Unwrap** keeps a valid UV map and regenerates a missing or invalid one.
+- **Auto Cage & Ray** derives distances from the source-to-target gap.
+- **Half Scale** temporarily scales both bake meshes together, then restores them.
+- **Recalc Normals** is off by default to preserve the UV-prepared target's normals.
+- Baked images are Blender data; pack or save them before closing the file.
+- Enable **Include Metallic** when the source uses a metallic factor or map.
+
+</details>
+
+<details>
+<summary><strong>Edit Mode cleanup</strong></summary>
+
+The Remi tab adds two focused tool groups in Mesh Edit Mode:
+
+- **Fused Parts:** smart-select a region, detect a narrow bridge, preview one side, and separate it.
+- **Double Shell:** preview or remove a nearby, oppositely oriented inner layer and optional connectors.
+
+Preview destructive selections before applying them.
+
+</details>
+
+## Optional dependency
+
+Automatic quad retopology requires the optional
+[AutoRemesher](https://github.com/huxingyi/autoremesher/releases) executable.
+MeshLab decimation and Alpha-Guided repair are included in Remi.
+
+## Limits
+
+- A complex stage can keep Blender busy until it finishes; stopping occurs between stages.
+- Geometry algorithms are input-sensitive. A successful run still needs visual inspection.
+- Session recovery is not yet durable across a Blender crash or restart.
+- Desktop packages target Windows x64 and macOS Apple Silicon with Blender's CPython 3.13.
+- Report reproducible failures with the mesh, failing stage, settings, and Blender version.
+
+## Development
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for code ownership and
+[session_architecture.md](docs/session_architecture.md) for workflow contracts.
 
 ```bash
-/Applications/Blender.app/Contents/MacOS/Blender \
-  --background --factory-startup \
-  --python instant_meshes/tests/blender_smoke.py
+# Build the installable extension
+./scripts/build_extension.sh "/Applications/Blender.app/Contents/MacOS/Blender"
+
+# Run regressions, build, install, and smoke-test the archive
+./scripts/release_check.sh "/Applications/Blender.app/Contents/MacOS/Blender"
 ```
 
-## Baking notes
+## Credits and license
 
-- Baking uses Cycles with 128 samples.
-- Albedo is baked from Principled **Base Color** through emission so metallic
-  source materials do not wash it out.
-- Normal maps are tangent-space; AO is stored as non-color data.
-- Source materials are deep-copied before temporary bake changes.
-- Images are reused by name, so rebaking updates existing maps.
-
-## Project structure
-
-- Blender UI and orchestration are written in Python.
-- [`uv_mapping/`](uv_mapping/) contains Remi UV profiles, mesh analysis,
-  chart/seam generation, Blender solver orchestration, xatlas candidate search,
-  and UV validation.
-- [`uv_mapping/native/`](uv_mapping/native/) contains the small pybind11 bridge
-  and vendored two-file xatlas source used for chart generation and packing.
-- [`instant_meshes/`](instant_meshes/) contains the isolated Blender-facing
-  Interactive Instant Meshes implementation.
-- [`instant_meshes/native/`](instant_meshes/native/) contains the headless C++
-  field solver, pybind11 bridge, build files, and retained upstream source.
-- The standalone Instant Meshes GUI, NanoGUI, GLFW, OpenGL renderer, and CLI are
-  intentionally not included because Blender supplies those responsibilities.
-- PyMeshLab, CGAL, and AutoRemesher integrations remain separate from the
-  Instant Meshes module.
-
-## Credits
-
-- **Remi** by [shaderko](https://github.com/shaderko).
-- **Instant Meshes** by Wenzel Jakob and contributors —
-  [wjakob/instant-meshes](https://github.com/wjakob/instant-meshes).
-- **AutoRemesher integration** adapted from
-  [autoremesher-blender-bridge](https://github.com/adriflex/autoremesher-blender-bridge)
-  by [Adriflex](https://adriflex.github.io/).
-- **AutoRemesher** by [huxingyi](https://github.com/huxingyi/autoremesher).
-- **PyMeshLab** and **MeshLab** by CNR-ISTI's Visual Computing Lab.
-- **CGAL 3D Alpha Wrapping**, based on Portaneri et al., *Alpha Wrapping with an
-  Offset* (SIGGRAPH 2022).
-
-## License
-
-[GPL-3.0-or-later](LICENSE). The native Interactive Instant Meshes module
-contains compatible third-party components. See
-[Third-party notices](THIRD_PARTY_NOTICES.md) for exact revisions, licenses,
-and retained-source details.
+Remi is free and open source under [GPL-3.0-or-later](LICENSE). See
+[Third-party notices](THIRD_PARTY_NOTICES.md) for Instant Meshes, xatlas, Eigen,
+TBB, and other bundled components.

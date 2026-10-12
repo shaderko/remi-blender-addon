@@ -1,13 +1,13 @@
 schema_version = "1.0.0"
 
 id = "remi"
-version = "2.0.0-beta.3"
+version = "2.0.0"
 name = "Remi"
 tagline = "Repair, optimize, retopologize, and bake difficult meshes"
 maintainer = "Remi"
 type = "add-on"
 
-website = "https://github.com/shaderko/remi-blender-addon"
+website = "https://remi3d.app"
 
 blender_version_min = "5.1.0"
 

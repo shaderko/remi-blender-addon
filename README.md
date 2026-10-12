@@ -5,19 +5,34 @@
 <h1 align="center">Remi</h1>
 
 <p align="center">
-  Repair, remesh, retopologize, unwrap, and rebake difficult meshes in Blender.
+  Turn scanned and AI-generated meshes into lighter, textured assets—in Blender or in the cloud.
 </p>
 
 <p align="center">
-  <a href="https://github.com/shaderko/remi-blender-addon/releases"><strong>Download latest beta</strong></a>
+  <a href="https://remi3d.app"><strong>Try Remi Cloud</strong></a>
+  · <a href="https://github.com/shaderko/remi-blender-addon/releases/latest"><strong>Download Blender add-on</strong></a>
   · <a href="#quick-start">Quick start</a>
   · <a href="#tool-guide">Tool guide</a>
   · <a href="https://github.com/shaderko/remi-blender-addon/issues">Report an issue</a>
 </p>
 
-> [!WARNING]
-> Remi 2.0 is beta software. Keep the original file and inspect every result.
-> A stage may fail or produce unsuitable geometry on difficult meshes.
+## Remi Cloud
+
+[**Open remi3d.app →**](https://remi3d.app)
+
+Optimize a GLB in your browser, or queue a batch and come back for the results.
+Remi Cloud remeshes, simplifies, unwraps, and rebakes your models on cloud workers,
+with a 3D preview, processing progress, and downloadable outputs. No Blender
+installation is needed.
+
+1. Create an account and verify your email. You get **10 free credits**.
+2. Upload a GLB or add several models to a batch. Choose the detail, triangle
+   target, and texture size, then start optimization.
+3. Follow the progress or return later to preview and download your results.
+
+**One full optimization costs one credit.** Monthly plans add more credits;
+uploaded models and results remain available for 30 days after processing.
+The Blender add-on remains free and open source for local work and manual tools.
 
 ## What Remi does
 
@@ -134,9 +149,16 @@ flows may include Repair or external AutoRemesher when their dependencies exist.
 - **Volume-Guided Patches:** borrows only gap-spanning faces from a fine closing-volume guide.
 - **Closing Volume:** closes spatial gaps, then fits the result toward source surfaces and creases.
 - **Voxel Remesh:** fast, general surface consolidation.
+- **Surface Offset:** use `0` to follow the sampled surface, or `1` to expand it
+  by one voxel and consolidate thin or open geometry.
 
 Lower voxel sizes retain more detail and consume more memory. Start coarse, then
 reduce the value only when the silhouette needs it.
+
+For decimation, set **Target Triangles** for an absolute target, or leave it at
+`0` to use the per-pass percentage. Absolute targets use measured triangle
+counts and multiple passes, reducing by at most 50% per pass; topology
+constraints can prevent reaching the target.
 
 </details>
 
@@ -183,6 +205,7 @@ Remi bakes from the original source checkpoint onto the current result. Use
 - **Half Scale** temporarily scales both bake meshes together, then restores them.
 - **Recalc Normals** is off by default to preserve the UV-prepared target's normals.
 - Baked images are Blender data; pack or save them before closing the file.
+- Enable **Include Metallic** when the source uses a metallic factor or map.
 
 </details>
 
@@ -204,12 +227,12 @@ Automatic quad retopology requires the optional
 [AutoRemesher](https://github.com/huxingyi/autoremesher/releases) executable.
 MeshLab decimation and Alpha-Guided repair are included in Remi.
 
-## Beta limits
+## Limits
 
 - A complex stage can keep Blender busy until it finishes; stopping occurs between stages.
 - Geometry algorithms are input-sensitive. A successful run still needs visual inspection.
 - Session recovery is not yet durable across a Blender crash or restart.
-- Bundled native binaries currently target macOS Apple Silicon and Blender's CPython 3.13.
+- Desktop packages target Windows x64 and macOS Apple Silicon with Blender's CPython 3.13.
 - Report reproducible failures with the mesh, failing stage, settings, and Blender version.
 
 ## Development

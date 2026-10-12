@@ -31,6 +31,10 @@ TESTS = (
     "blender_instant_meshes_smoke.py",
     "blender_instant_meshes_topology_regression.py",
     "blender_uv_regression.py",
+    "blender_bake_material_slots_regression.py",
+    "blender_target_decimation_regression.py",
+    "blender_uv_small_faces_regression.py",
+    "blender_voxel_surface_regression.py",
 )
 
 
@@ -223,8 +227,19 @@ def main():
             run(sys.executable, "-m", "unittest", "discover", "-s", ROOT / "tests",
                 "-p", "test_platform_support.py")
             for test in TESTS:
-                run(args.blender, "--background", "--factory-startup", "--python-exit-code", "1",
-                    "--python", ROOT / "tests" / test)
+                if test == "blender_target_decimation_regression.py":
+                    # Exercise the actual target reducer with the same pinned
+                    # dependency shipped to users, without a runtime pip install.
+                    with tempfile.TemporaryDirectory(prefix="remi-test-wheel-") as temporary:
+                        with zipfile.ZipFile(fetch_wheel(target)) as archive:
+                            archive.extractall(temporary)
+                        environment = os.environ.copy()
+                        environment["REMI_TEST_DEPENDENCIES"] = temporary
+                        run(args.blender, "--background", "--factory-startup", "--python-exit-code", "1",
+                            "--python", ROOT / "tests" / test, env=environment)
+                else:
+                    run(args.blender, "--background", "--factory-startup", "--python-exit-code", "1",
+                        "--python", ROOT / "tests" / test)
         artifact = build_extension(args.blender, args.output_dir.resolve(), target)
         if args.command == "check":
             installed_smoke(args.blender, artifact)

@@ -1,9 +1,9 @@
 schema_version = "1.0.0"
 
 id = "remi"
-version = "2.0.0"
+version = "2.1.0"
 name = "Remi"
-tagline = "Repair, optimize, retopologize, texture, and bake difficult meshes"
+tagline = "Repair, optimize, retopologize, texture, and bake meshes"
 maintainer = "Remi"
 type = "add-on"
 

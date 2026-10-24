@@ -1,0 +1,194 @@
+"""Modal Blender adapters; the external worker never touches scene data."""
+from pathlib import Path
+
+import bpy
+from bpy.props import StringProperty
+from bpy.types import Operator
+from bpy_extras.io_utils import ImportHelper
+
+from ...blender.gaussian_splats import import_splats, splat_display_label
+from ...integrations.triposplat.client import GenerationJob
+from .settings import default_python
+
+
+class GenerationRuntime:
+    job = None
+    timer = None
+    manager = None
+    cancel_requested = False
+
+    def stop(self):
+        try:
+            if self.job is not None:
+                self.job.cancel()
+        finally:
+            self.job = None
+            self.cancel_requested = False
+            if self.timer is not None and self.manager is not None:
+                try:
+                    self.manager.event_timer_remove(self.timer)
+                except (ReferenceError, RuntimeError):
+                    pass
+            if self.manager is not None:
+                try:
+                    self.manager.remi_generation.busy = False
+                except (ReferenceError, AttributeError):
+                    pass
+            self.timer = self.manager = None
+
+
+runtime = GenerationRuntime()
+
+
+def _progress_label(phase):
+    if phase.startswith("Loading"):
+        return "Loading model…"
+    if phase.startswith("Removing"):
+        return "Preparing image…"
+    if phase.startswith(("Encoding", "Generating", "Decoding")):
+        return "Generating…"
+    if phase.startswith("Saving"):
+        return "Saving…"
+    return "Finishing…" if phase == "Complete" else "Starting…"
+
+
+def can_generate(context):
+    session = getattr(context.window_manager, "remi_session", None)
+    generation = getattr(context.window_manager, "remi_generation", None)
+    return bool(
+        context.mode == "OBJECT"
+        and not (session and session.active)
+        and not (generation and generation.mesh_busy)
+        and runtime.job is None
+    )
+
+
+class Remi_OT_GenerateSplats(Operator):
+    bl_idname = "remi.generate_splats"
+    bl_label = "Generate from Image"
+    bl_description = "Generate native Gaussian splats locally with rand6_100_ncm"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return can_generate(context)
+
+    def invoke(self, context, event):
+        settings = context.scene.remi_generation
+        state = context.window_manager.remi_generation
+        if context.window is None:
+            self.report({"ERROR"}, "Generation needs an interactive Blender window")
+            return {"CANCELLED"}
+        try:
+            if not settings.output or not settings.models or not settings.image:
+                raise ValueError("Choose an image, model folder and output folder")
+            runtime.job = GenerationJob.start(
+                python=bpy.path.abspath(settings.python) if settings.python else default_python(),
+                models=bpy.path.abspath(settings.models),
+                image=bpy.path.abspath(settings.image), output=bpy.path.abspath(settings.output),
+                gaussians=int(settings.gaussians), seed=settings.seed,
+            )
+            runtime.manager = context.window_manager
+            runtime.timer = runtime.manager.event_timer_add(0.25, window=context.window)
+            runtime.cancel_requested = False
+            state.busy = True
+            state.status = "Starting…"
+            state.status_kind = "PROGRESS"
+            state.mesh_status = ""
+            state.mesh_status_kind = "IDLE"
+            state.mesh_source_object = ""
+            state.directory = str(runtime.job.directory)
+            self._scene = context.scene
+            self._preview_limit = settings.preview_limit
+            context.window_manager.modal_handler_add(self)
+        except Exception as exc:
+            runtime.stop()
+            state.status = str(exc)
+            state.status_kind = "ERROR"
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        return {"RUNNING_MODAL"}
+
+    def modal(self, context, event):
+        state = context.window_manager.remi_generation
+        if runtime.job is None:
+            return {"CANCELLED"}
+        if runtime.cancel_requested or (event.type == "ESC" and event.value == "PRESS"):
+            runtime.stop()
+            state.status = "Cancelled. Logs and any completed files are kept in Output Folder."
+            state.status_kind = "CANCELLED"
+            return {"CANCELLED"}
+        if event.type != "TIMER":
+            return {"PASS_THROUGH"}
+        state.status = _progress_label(runtime.job.status().get("phase", "Generating"))
+        if context.area:
+            context.area.tag_redraw()
+        if runtime.job.poll() is None:
+            return {"RUNNING_MODAL"}
+        try:
+            path = runtime.job.result()
+            session = getattr(context.window_manager, "remi_session", None)
+            if context.scene != self._scene or context.mode != "OBJECT" or (session and session.active):
+                raise RuntimeError("Generation saved, but scene/mode changed. Import splats.npz when ready")
+            obj = import_splats(context, path, preview_limit=self._preview_limit)
+            state.mesh_source_object = ""
+            state.status = f"Generated {obj['remi_splat_count']:,} Gaussians · {splat_display_label(obj)}"
+            state.status_kind = "SUCCESS"
+            self.report({"INFO"}, state.status)
+            return {"FINISHED"}
+        except Exception as exc:
+            state.status = str(exc)
+            state.status_kind = "ERROR"
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        finally:
+            runtime.stop()
+
+    def cancel(self, context):
+        runtime.stop()
+
+
+class Remi_OT_CancelGeneration(Operator):
+    bl_idname = "remi.cancel_generation"
+    bl_label = "Cancel Generation"
+    bl_description = "Stop generation without deleting saved outputs"
+
+    @classmethod
+    def poll(cls, context):
+        return runtime.job is not None
+
+    def execute(self, context):
+        runtime.cancel_requested = True
+        return {"FINISHED"}
+
+
+class Remi_OT_ImportSplats(Operator, ImportHelper):
+    bl_idname = "remi.import_splats"
+    bl_label = "Import Generated Splats"
+    bl_description = "Import a previously generated splats.npz model"
+    bl_options = {"REGISTER", "UNDO"}
+    filename_ext = ".npz"
+    filter_glob: StringProperty(default="*.npz", options={"HIDDEN"})
+
+    @classmethod
+    def poll(cls, context):
+        return can_generate(context)
+
+    def execute(self, context):
+        state = context.window_manager.remi_generation
+        try:
+            obj = import_splats(context, bpy.path.abspath(self.filepath),
+                                preview_limit=context.scene.remi_generation.preview_limit)
+            state.status = f"Imported {obj['remi_splat_count']:,} Gaussians"
+            state.status_kind = "SUCCESS"
+            state.mesh_status = ""
+            state.mesh_status_kind = "IDLE"
+            state.mesh_source_object = ""
+            state.directory = str(Path(bpy.path.abspath(self.filepath)).resolve().parent)
+            self.report({"INFO"}, f"Imported {obj['remi_splat_count']:,} native Gaussians")
+        except Exception as exc:
+            state.status = str(exc)
+            state.status_kind = "ERROR"
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        return {"FINISHED"}

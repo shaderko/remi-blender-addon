@@ -58,6 +58,11 @@ class ProcessTests(unittest.TestCase):
 
 
 class PackagingTests(unittest.TestCase):
+    def test_permission_descriptions_fit_blender_manifest_limits(self):
+        for name, description in release.manifest().get("permissions", {}).items():
+            with self.subTest(permission=name):
+                self.assertLessEqual(len(description), 64)
+
     def test_each_archive_stages_only_its_platform(self):
         for target, suffix in (("windows-x64", ".cp313-win_amd64.pyd"),
                                ("macos-arm64", ".cpython-313-darwin.so"),
@@ -79,6 +84,12 @@ class PackagingTests(unittest.TestCase):
                 wheel = root / "wheels" / release.wheel_spec(target)["filename"]
                 wheel.write_bytes(b"test target wheel")
                 (root / "wheels" / "foreign.whl").write_bytes(b"foreign")
+                for directory in ("models", "generations"):
+                    (root / directory).mkdir()
+                    (root / directory / "large-local-data.pt").write_bytes(b"never package local assets")
+                vendor = root / "integrations" / "triposplat" / "vendor"
+                vendor.mkdir(parents=True)
+                (vendor / "model.py").write_text("# retained inference source\n")
                 stage = Path(temporary) / "stage"
                 with mock.patch.object(release, "ROOT", root):
                     release.stage_extension(stage, target, wheel)
@@ -89,6 +100,9 @@ class PackagingTests(unittest.TestCase):
                 self.assertEqual(len(list(stage.rglob("*" + suffix))), 2)
                 self.assertFalse(list(stage.rglob("foreign.*")))
                 self.assertFalse(list(stage.rglob("build-cache")))
+                self.assertFalse((stage / "models").exists())
+                self.assertFalse((stage / "generations").exists())
+                self.assertTrue((stage / "integrations" / "triposplat" / "vendor" / "model.py").is_file())
                 missing = root / next(iter(release.NATIVE_MODULES)) / "_native"
                 next(missing.glob("*" + suffix)).unlink()
                 with mock.patch.object(release, "ROOT", root):

@@ -35,6 +35,9 @@ TESTS = (
     "blender_target_decimation_regression.py",
     "blender_uv_small_faces_regression.py",
     "blender_voxel_surface_regression.py",
+    "blender_generation_regression.py",
+    "blender_mesh_conversion_regression.py",
+    "blender_workspace_ui_regression.py",
 )
 
 
@@ -140,7 +143,7 @@ def stage_extension(stage, target, wheel):
     # Never include another platform's binary, build caches, tests, or developer files.
     shutil.copytree(ROOT, stage, ignore=shutil.ignore_patterns(
         ".*", "__pycache__", "*.pyc", "*.so", "*.pyd", "*.whl", "*.zip",
-        "dist", "scripts", "tests", "native", "weppy-project-sync"))
+        "dist", "scripts", "tests", "native", "weppy-project-sync", "models", "generations"))
     for source in native:
         shutil.copy2(source, stage / source.relative_to(ROOT))
     shutil.copy2(wheel, stage / "wheels" / wheel.name)

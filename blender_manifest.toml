@@ -32,7 +32,7 @@ wheels = [
 ]
 
 [permissions]
-files = "Import, export, compile, and process mesh and texture files"
+files = "Import and process meshes, textures, images, and Gaussian splats"
 
 [build]
 paths_exclude_pattern = [
@@ -42,6 +42,8 @@ paths_exclude_pattern = [
   "/dist/",
   "/scripts/",
   "/tests/",
+  "/models/",
+  "/generations/",
   "/weppy-project-sync/",
   "/features/retopology/instant_meshes/native/",
   "/features/uv/engine/native/",

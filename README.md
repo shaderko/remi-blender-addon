@@ -64,6 +64,23 @@ backend. Do not unzip it or install a second copy in Blender's legacy
 
 ## Quick start
 
+### Experimental: image to Gaussian splats
+
+Open **N-panel → Remi → Generate** to generate with the local
+`rand6_100_ncm` model. This uses an external CUDA/PyTorch environment, saves
+native Gaussian-splat PLY files, and imports lossless splat data with a
+**native Gaussian point cloud on Blender 5.3+**. Blender 5.1/5.2 use a
+non-destructive ellipsoid preview instead. **Create Mesh** reconstructs a
+vertex-colored surface using anisotropic density + Surface Nets, then switches
+to Optimize with the **Reconstructed · Decimate** preset. Each splat object
+keeps its own result; multiple models in one file are supported without an
+archive cache. This is a
+lossy approximation of the splats, not a native splat render. See
+[setup and usage](docs/image_generation.md). Native rendering is tested on
+Blender 5.3 beta; this does not qualify all other tools for 5.3. Runtime paths
+and advanced controls live in the gear menu. Choose **Optimize** for the
+existing mesh workflow.
+
 ### Automatic: remesh to baked asset
 
 1. Select one mesh in **Object Mode**.

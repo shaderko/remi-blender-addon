@@ -63,6 +63,9 @@ bpy.data.objects.remove(alpha_source, do_unlink=True)
 bpy.context.view_layer.objects.active = source
 source.select_set(True)
 print("REMI_INSTALLED_ALPHA_GUIDED_REPAIR_OK")
+assert hasattr(bpy.ops.remi, "create_mesh")
+assert hasattr(bpy.ops.remi, "cancel_mesh")
+assert hasattr(bpy.types, "Remi_PT_GenerationSettings")
 assert bpy.ops.remi.start_session.poll(), "Installed Start Remi is disabled"
 assert bpy.ops.remi.run_full_flow.poll(), "Installed Full Flow is disabled"
 assert bpy.ops.remi.start_session() == {"FINISHED"}

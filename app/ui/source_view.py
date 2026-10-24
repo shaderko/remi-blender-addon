@@ -1,14 +1,15 @@
 """Entry view shown before a Remi editing session starts."""
 
 from .flow_controls import draw_flow_controls
+from ...blender.gaussian_splats import is_splat_object
 
 
 def draw_source(layout, context):
     obj = context.view_layer.objects.active
 
-    layout.label(text="REMI", icon="MOD_REMESH")
-    layout.label(text="One mesh from repair to bake")
-    layout.separator()
+    if is_splat_object(obj):
+        layout.label(text="Select a mesh to optimize", icon="INFO")
+        return
 
     if not obj or obj.type != "MESH" or context.mode != "OBJECT":
         notice = layout.box()

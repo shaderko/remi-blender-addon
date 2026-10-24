@@ -3,6 +3,7 @@
 from . import ui
 from . import flow
 from ..features import edit_tools
+from ..features import generation
 from ..features import registration as feature_registration
 from ..features import settings
 from ..features.retopology import instant_meshes
@@ -23,6 +24,7 @@ MODULES = (
     session,
     flow,
     ui,
+    generation,
     edit_tools,
 )
 

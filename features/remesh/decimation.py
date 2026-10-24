@@ -222,6 +222,13 @@ def create_candidate(obj, settings, disk=None):
             return None, f"Failed to import decimated {kind}", results
         if keep_texture:
             _restore_source_materials(obj, candidate)
+        elif obj.data.materials:
+            # PLY carries vertex colors but not material slots. Preserve the
+            # source material so reconstructed vertex-color meshes stay shaded
+            # after decimation.
+            candidate.data.materials.clear()
+            for material in obj.data.materials:
+                candidate.data.materials.append(material)
         candidate.name = obj.name + settings.output_name_suffix
         candidate.pop("_remi_session_id", None)
         return candidate, "", results

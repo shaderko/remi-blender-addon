@@ -11,6 +11,15 @@ class Remi_PT_EditToolsPanel(Panel):
     bl_category = "Remi"
     bl_context = "mesh_edit"
 
+    @classmethod
+    def poll(cls, context):
+        ui = getattr(context.window_manager, "remi_ui", None)
+        session = getattr(context.window_manager, "remi_session", None)
+        generation = getattr(context.window_manager, "remi_generation", None)
+        return not (generation and (generation.busy or generation.mesh_busy)) and bool(
+            (session and session.active) or ui is None or ui.workspace == "OPTIMIZE"
+        )
+
     def draw(self, context):
         layout = self.layout
         box = layout.box()

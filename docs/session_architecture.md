@@ -7,6 +7,13 @@ runtime, or a central action switch.
 
 ## Composition
 
+Image generation (`features/generation`) is a separate source-creation lifecycle,
+not a registry mesh stage. It launches `integrations/triposplat/worker.py` in
+external Python, then imports validated native splats through
+`blender/gaussian_splats.py`. It never replaces a session object or writes mesh
+history. Splat sources are tagged and rejected by session entry points until a
+real surface-reconstruction step exists. See [image_generation.md](image_generation.md).
+
 `app/application.py` is the composition root. Add-on registration creates one
 `RemiApplication` containing:
 

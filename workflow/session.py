@@ -8,6 +8,7 @@ import uuid
 import bpy
 
 from ..blender.session_objects import SessionObjectStore
+from ..blender.gaussian_splats import is_splat_object
 from .disk import SESSION_ID_KEY, SessionDiskService
 from .contracts import FeatureExecutionContext
 from .history import SessionHistory
@@ -132,6 +133,11 @@ class RemiSessionRuntime:
         state = self.state(context)
         if state.active:
             raise RuntimeError("A Remi session is already active")
+        generation = getattr(context.window_manager, "remi_generation", None)
+        if generation is not None and (generation.busy or generation.mesh_busy):
+            raise RuntimeError("Finish or cancel image generation or meshing before starting a mesh session")
+        if is_splat_object(obj):
+            raise RuntimeError("Gaussian splats are not polygon surfaces; mesh conversion is not available yet")
         if not obj or obj.type != "MESH" or context.mode != "OBJECT":
             raise RuntimeError("Select one mesh in Object Mode")
         if obj.library:

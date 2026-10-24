@@ -3,6 +3,7 @@
 import bpy
 from bpy.props import EnumProperty
 from bpy.types import Operator
+from ..blender.gaussian_splats import is_splat_object
 
 from ..app.application import get_application
 from .session import runtime
@@ -49,12 +50,15 @@ class RemiSessionController:
     @classmethod
     def poll(cls, context):
         state = getattr(context.window_manager, "remi_session", None)
+        generation = getattr(context.window_manager, "remi_generation", None)
         return bool(
             state is not None
             and not state.active
+            and not (generation and (generation.busy or generation.mesh_busy))
             and context.mode == "OBJECT"
             and context.active_object
             and context.active_object.type == "MESH"
+            and not is_splat_object(context.active_object)
         )
 
     def invoke(self, context, event):

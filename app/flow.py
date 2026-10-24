@@ -26,6 +26,7 @@ def preset_items(_owner, _context):
     global _enum_items
     entries = [
         ("DEFAULT", "Default · Remesh to Bake", "Voxel remesh, MeshLab decimation, UV unwrap, and all texture maps"),
+        ("RECONSTRUCTED", "Reconstructed · Decimate", "Preserve reconstructed surfaces: reduce triangles without an initial voxel remesh"),
         ("CURRENT", "Current Settings", "Run the enabled stages with the displayed scene settings"),
     ]
     try:
@@ -94,6 +95,23 @@ def selected_document(context):
         values.update(remesh_backend="VOXEL", use_hole_repair=False,
                       decimation_with_texture=False, bake_uv_method="REMI")
         document = {"version": 1, "name": "Default · Remesh to Bake", "actions": list(DEFAULT_ACTIONS), "settings": values}
+    elif identifier == "RECONSTRUCTED":
+        values = capture_settings(context.scene.remi_settings, defaults=True)
+        values.update(
+            remesh_backend="VOXEL",
+            use_hole_repair=False,
+            decimation_target_faces=120000,
+            decimation_passes=3,
+            target_percentage=0.5,
+            decimation_preserve_detail=True,
+            decimation_with_texture=False,
+        )
+        document = {
+            "version": 1,
+            "name": "Reconstructed · Decimate",
+            "actions": ["DECIMATE"],
+            "settings": values,
+        }
     else:
         document = preset_store().load(identifier)
     validate_plan(context, document)

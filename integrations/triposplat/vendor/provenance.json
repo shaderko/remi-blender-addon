@@ -1,0 +1,22 @@
+{
+  "upstream": "https://github.com/VAST-AI-Research/TripoSplat",
+  "fork": "local NCM flow-transplant, rand6_100_ncm (step 600)",
+  "files": {
+    "model.py": {
+      "sha256": "3b6a5986714d48b489e5d7bcc745b4ef5a50256f0d7d047a8d2bf9ed1798fee4",
+      "bytes": 80508
+    },
+    "triposplat.py": {
+      "sha256": "7a04fd524ce2ee06769813aec3d7784b3cdd5c842b928c09f91ff4a9898262bf",
+      "bytes": 27839
+    },
+    "flow_transplant/faithful_model.py": {
+      "sha256": "209fb00e23a3099374497850a31c19b0d77cdfe30f0a7ead8197628665385e2f",
+      "bytes": 8843
+    },
+    "LICENSE": {
+      "sha256": "bba1617df83f8837b598083b2f841975621b99bc227788abf603c636ecc476f7",
+      "bytes": 1082
+    }
+  }
+}

@@ -1,12 +1,39 @@
 # Third-party notices
 
-Remi is distributed under GPL-3.0-or-later. Its native modules incorporate the
+Remi is distributed under GPL-3.0-or-later. Its bundled integrations incorporate the
 components below under their respective licenses. Those upstream files retain
 their original copyright and license terms; this notice does not relicense
 them.
 
 The release includes the corresponding retained source code and license texts,
 including the source used to build the platform-specific native binaries.
+
+## TripoSplat inference and local NCM flow transplant
+
+- Project: [VAST-AI-Research/TripoSplat](https://github.com/VAST-AI-Research/TripoSplat)
+- License: MIT; retained at `integrations/triposplat/vendor/LICENSE`
+- Snapshot: `model.py`, `triposplat.py`, and the local fork's
+  `flow_transplant/faithful_model.py`; exact SHA-256 hashes are recorded in
+  `integrations/triposplat/vendor/provenance.json`.
+
+The upstream sources are retained without modification and execute only in an
+external Python process. Remi's process client, Blender data adapter, preview,
+and UI are separate code. Large model weights are not bundled. Local setup
+copies the selected research checkpoint and frozen components; it does not
+grant additional redistribution rights for image encoders or other weights.
+
+## Modly SplatToMesh adapter
+
+- Project: [lightningpixel/modly-triposplat-extension](https://github.com/lightningpixel/modly-triposplat-extension)
+- Commit: `6fabeffbaf2b3c4d43b1b4e8f94d46068e8e18a5`
+- License: MIT; retained at `integrations/splat_mesh/vendor/MODLY_LICENSE.txt`
+- Vendored file: `integrations/splat_mesh/vendor/splat_mesh.py`
+
+The adapter is a port of ComfyUI's native `SplatToMesh`
+(`comfy_extras/nodes_gaussian_splat.py`, VAST-AI / Comfy-Org), which is
+distributed under GPL-3.0. Remi is GPL-3.0-or-later, so the combination is
+license-compatible. The vendored file is unmodified. Its runtime dependencies
+(`torch`, `numpy`, `scipy`, `trimesh`) are external and not bundled.
 
 ## PyMeshLab and MeshLab
 

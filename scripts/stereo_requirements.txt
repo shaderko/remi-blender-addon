@@ -1,0 +1,8 @@
+# Install a CUDA-compatible PyTorch separately; this never runs inside Blender.
+numpy>=1.24
+scipy>=1.11
+Pillow>=10
+scikit-image>=0.22
+trimesh>=4
+einops>=0.8
+opt_einsum>=3.3

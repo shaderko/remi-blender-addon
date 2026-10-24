@@ -13,9 +13,6 @@ import numpy as np
 from .gaussian_splats import is_splat_object
 
 
-MASK_GROUP = "remi_projection_mask"
-
-
 def write_world_splat_archive(source, path):
     """Write a splat archive in world space, matching the mesh exchange.
 
@@ -203,33 +200,15 @@ def export_mesh_archive(context, obj, path):
         if not np.isfinite(uvs).all():
             raise ValueError("Mesh exchange contains non-finite UVs")
 
-        mask = None
-        group = obj.vertex_groups.get(MASK_GROUP)
-        if group is not None:
-            if len(mesh.vertices) != len(obj.data.vertices):
-                print(
-                    "Remi: projection mask skipped because modifiers change vertex topology"
-                )
-            else:
-                weights = np.zeros(len(obj.data.vertices), dtype=np.float32)
-                for vertex in obj.data.vertices:
-                    try:
-                        weights[vertex.index] = group.weight(vertex.index)
-                    except RuntimeError:
-                        pass
-                mask = weights[triangle_vertices].astype(np.float32)
-
-        payload = {
-            "schema": np.array(1, dtype=np.int32),
-            "positions": positions,
-            "normals": normals.astype(np.float32),
-            "uvs": uvs,
-            "source_object": np.array(str(obj.name)),
-            "triangle_count": np.array(triangle_count, dtype=np.int32),
-        }
-        if mask is not None:
-            payload["mask"] = mask
-        np.savez(path, **payload)
+        np.savez(
+            path,
+            schema=np.array(1, dtype=np.int32),
+            positions=positions,
+            normals=normals.astype(np.float32),
+            uvs=uvs,
+            source_object=np.array(str(obj.name)),
+            triangle_count=np.array(triangle_count, dtype=np.int32),
+        )
         return path
     finally:
         if mesh is not None:

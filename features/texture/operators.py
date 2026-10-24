@@ -11,7 +11,6 @@ from bpy.types import Operator
 
 from ...blender.gaussian_splats import import_splats, native_splats_available
 from ...blender.splat_projection import (
-    MASK_GROUP,
     ensure_texture_uv,
     export_mesh_archive,
     projection_available,
@@ -24,6 +23,7 @@ from ...blender.texture_layers import (
     sync_base_layer,
 )
 from ...integrations.splat_project.client import ProjectionJob
+from .projection_area import state as projection_area
 from .service import (
     active_mesh,
     appearance_source,
@@ -92,6 +92,14 @@ def _prepare_projection_mesh(context, mesh, settings, state):
         raise RuntimeError("The mesh has no UV map")
     mesh["remi_texture_uv"] = uv_name
     return uv_name
+
+
+def _tag_viewports(context):
+    screen = getattr(context, "screen", None)
+    if screen is not None:
+        for area in screen.areas:
+            if area.type == "VIEW_3D":
+                area.tag_redraw()
 
 
 def _remove_temporary_splat(obj):
@@ -316,6 +324,15 @@ class Remi_OT_ProjectView(Operator):
             output.mkdir(parents=True, exist_ok=True)
             uv_name = _prepare_projection_mesh(context, mesh, settings, state)
 
+            view_mask = None
+            if projection_area.has_points():
+                if not projection_area.valid(context):
+                    raise RuntimeError(
+                        "The drawn projection area belongs to a different view. "
+                        "Redraw the area or clear it."
+                    )
+                view_mask = projection_area.normalized()
+
             temporary = Path(bpy.app.tempdir or tempfile.gettempdir())
             mesh_archive = temporary / f"remi_texture_mesh_{uuid.uuid4().hex}.npz"
             view_image = temporary / f"remi_texture_view_{uuid.uuid4().hex}.png"
@@ -363,6 +380,7 @@ class Remi_OT_ProjectView(Operator):
                 output=output,
                 texture_size=int(settings.texture_size),
                 alpha_threshold=float(settings.view_alpha_threshold),
+                view_mask=view_mask,
                 source=label,
             )
             runtime.manager = context.window_manager
@@ -434,6 +452,8 @@ class Remi_OT_ProjectView(Operator):
             )
             mesh["remi_texture_view_report"] = str(result.get("report", ""))
             state.directory = result["directory"]
+            projection_area.clear()
+            _tag_viewports(context)
             visible = int(result.get("report_data", {}).get("visible_texels", 0))
             state.status = f"View layer added · {visible:,} texels"
             state.status_kind = "SUCCESS"
@@ -478,10 +498,10 @@ class Remi_OT_DeleteTextureLayer(Operator):
         return {"FINISHED"}
 
 
-class Remi_OT_PaintProjectionMask(Operator):
-    bl_idname = "remi.paint_projection_mask"
-    bl_label = "Paint Projection Mask"
-    bl_description = "Paint the area that view projection should affect; white projects, black skips"
+class Remi_OT_DrawProjectionArea(Operator):
+    bl_idname = "remi.draw_projection_area"
+    bl_label = "Draw Projection Area"
+    bl_description = "Drag a loop around the area that the next view projection should affect"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -492,73 +512,93 @@ class Remi_OT_PaintProjectionMask(Operator):
             and obj.type == "MESH"
             and context.mode == "OBJECT"
             and not context.window_manager.remi_texture.busy
+            and viewport_region(context)[0] is not None
         )
 
-    def execute(self, context):
-        obj = context.view_layer.objects.active
-        if obj is None or obj.type != "MESH":
+    def invoke(self, context, event):
+        area, region = viewport_region(context)
+        mesh = active_mesh(context)
+        if area is None or region is None:
+            self.report({"ERROR"}, "Use Draw Area from a 3D Viewport")
             return {"CANCELLED"}
-        group = obj.vertex_groups.get(MASK_GROUP)
-        if group is None:
-            group = obj.vertex_groups.new(name=MASK_GROUP)
-        obj.vertex_groups.active_index = group.index
-        obj.select_set(True)
-        context.view_layer.objects.active = obj
-        try:
-            bpy.ops.object.mode_set(mode="WEIGHT_PAINT")
-        except RuntimeError as exc:
-            self.report({"ERROR"}, f"Could not enter Weight Paint mode: {exc}")
+        if mesh is None:
+            self.report({"ERROR"}, "Select one mesh in Object Mode")
             return {"CANCELLED"}
+        if context.window is None:
+            self.report({"ERROR"}, "Drawing a projection area needs an interactive window")
+            return {"CANCELLED"}
+        projection_area.begin(context, area, region, mesh)
         try:
-            context.scene.tool_settings.vertex_group_weight = 1.0
+            context.window.cursor_modal_set("CROSSHAIR")
+        except (TypeError, ValueError):
+            pass
+        context.window_manager.modal_handler_add(self)
+        _tag_viewports(context)
+        return {"RUNNING_MODAL"}
+
+    def modal(self, context, event):
+        state = projection_area
+        if event.type in {"ESC", "RIGHTMOUSE"}:
+            state.clear()
+            try:
+                context.window.cursor_modal_restore()
+            except (AttributeError, TypeError):
+                pass
+            _tag_viewports(context)
+            return {"CANCELLED"}
+
+        x = event.mouse_x - state.region_x
+        y = event.mouse_y - state.region_y
+        inside = 0 <= x < state.width and 0 <= y < state.height
+
+        if event.type in {"MOUSEMOVE", "INBETWEEN_MOUSEMOVE"}:
+            if state.drawing and inside:
+                state.add_point(x, y)
+                _tag_viewports(context)
+            return {"RUNNING_MODAL"}
+
+        if event.type == "LEFTMOUSE":
+            if event.value == "PRESS" and inside and not state.drawing:
+                state.drawing = True
+                state.points = []
+                state.add_point(x, y)
+                _tag_viewports(context)
+            elif event.value == "RELEASE" and state.drawing:
+                state.finish()
+                try:
+                    context.window.cursor_modal_restore()
+                except (AttributeError, TypeError):
+                    pass
+                _tag_viewports(context)
+                if state.has_points():
+                    return {"FINISHED"}
+                state.clear()
+                return {"CANCELLED"}
+            return {"RUNNING_MODAL"}
+        return {"RUNNING_MODAL"}
+
+    def cancel(self, context):
+        projection_area.clear()
+        try:
+            context.window.cursor_modal_restore()
         except (AttributeError, TypeError):
             pass
-        return {"FINISHED"}
+        _tag_viewports(context)
 
 
-class Remi_OT_FinishProjectionMask(Operator):
-    bl_idname = "remi.finish_projection_mask"
-    bl_label = "Finish Projection Mask"
-    bl_description = "Leave mask painting and return to Object Mode"
+class Remi_OT_ClearProjectionArea(Operator):
+    bl_idname = "remi.clear_projection_area"
+    bl_label = "Clear Projection Area"
+    bl_description = "Remove the drawn area; the next view projection affects the full visible surface"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
     def poll(cls, context):
-        return (
-            context.mode in {"PAINT_WEIGHT", "WEIGHT_PAINT"}
-            and context.view_layer.objects.active is not None
-        )
+        return bool(projection_area.has_points())
 
     def execute(self, context):
-        bpy.ops.object.mode_set(mode="OBJECT")
-        return {"FINISHED"}
-
-
-class Remi_OT_ClearProjectionMask(Operator):
-    bl_idname = "remi.clear_projection_mask"
-    bl_label = "Clear Projection Mask"
-    bl_description = "Remove the projection mask; the next view projection affects the full visible surface"
-    bl_options = {"REGISTER", "UNDO"}
-
-    @classmethod
-    def poll(cls, context):
-        obj = context.view_layer.objects.active
-        return bool(
-            obj is not None
-            and obj.type == "MESH"
-            and obj.vertex_groups.get(MASK_GROUP) is not None
-        )
-
-    def execute(self, context):
-        obj = context.view_layer.objects.active
-        group = obj.vertex_groups.get(MASK_GROUP) if obj is not None else None
-        if group is None:
-            return {"CANCELLED"}
-        if context.mode != "OBJECT":
-            bpy.ops.object.mode_set(mode="OBJECT")
-        obj.vertex_groups.remove(group)
-        if context.area:
-            context.area.tag_redraw()
+        projection_area.clear()
+        _tag_viewports(context)
         return {"FINISHED"}
 
 

@@ -3,12 +3,12 @@ from __future__ import annotations
 
 from ...blender.gaussian_splats import native_splats_available
 from ...blender.splat_projection import (
-    MASK_GROUP,
     existing_normal_map,
     projection_available,
     projection_preview,
 )
 from ...blender.texture_layers import ordered_layer_indices
+from .projection_area import state as projection_area
 from .service import (
     active_mesh,
     appearance_source,
@@ -93,30 +93,21 @@ def _draw_settings(layout, settings, mesh):
         bake.prop(settings, "margin_px", text="Margin")
 
 
-def _draw_mask(layout, mesh):
+def _draw_area(layout, context, mesh):
     box = layout.box()
-    box.label(text="Projection Mask", icon="BRUSH_DATA")
-    group = mesh.vertex_groups.get(MASK_GROUP)
-    if group is None:
-        box.label(text="No mask — full visible view", icon="INFO")
-        box.operator("remi.paint_projection_mask", text="Paint Projection Mask", icon="BRUSH_DATA")
-    else:
-        box.label(text="Painted area only", icon="CHECKMARK")
+    box.label(text="Projection Area", icon="BRUSH_DATA")
+    if projection_area.has_points():
+        if projection_area.valid(context):
+            box.label(text="Area drawn — only inside is projected", icon="CHECKMARK")
+        else:
+            box.label(text="View changed — redraw the area", icon="ERROR")
         row = box.row(align=True)
-        row.operator("remi.paint_projection_mask", text="Edit Mask", icon="BRUSH_DATA")
-        row.operator("remi.clear_projection_mask", text="Clear", icon="X")
-    box.label(text="Applies to Project from View layers", icon="INFO")
-
-
-def _draw_mask_painting(layout, mesh):
-    box = layout.box()
-    box.label(text="Painting Projection Mask", icon="BRUSH_DATA")
-    box.label(text="White projects; black skips", icon="INFO")
-    box.label(text="Paint the area you want the next view layer to affect", icon="INFO")
-    row = box.row(align=True)
-    row.operator("remi.finish_projection_mask", text="Done", icon="CHECKMARK")
-    if mesh.vertex_groups.get(MASK_GROUP) is not None:
-        row.operator("remi.clear_projection_mask", text="Clear", icon="X")
+        row.operator("remi.draw_projection_area", text="Redraw Area", icon="BRUSH_DATA")
+        row.operator("remi.clear_projection_area", text="Clear", icon="X")
+    else:
+        box.label(text="Whole visible view", icon="INFO")
+        box.operator("remi.draw_projection_area", text="Draw Area", icon="BRUSH_DATA")
+    box.label(text="Drag a loop in the 3D Viewport", icon="INFO")
 
 
 def _draw_layers(layout, mesh):
@@ -183,14 +174,6 @@ def _draw_projection_state(layout, mesh, state):
 def draw_texture(layout, context):
     settings = context.scene.remi_texture
     state = context.window_manager.remi_texture
-    active = context.view_layer.objects.active
-    if context.mode in {"PAINT_WEIGHT", "WEIGHT_PAINT"} and active is not None and active.type == "MESH":
-        heading = layout.row(align=True)
-        heading.label(text="Splat Projection", icon="TEXTURE")
-        layout.label(text=active.name, icon="OBJECT_DATA")
-        _draw_mask_painting(layout, active)
-        return
-
     mesh = active_mesh(context)
 
     heading = layout.row(align=True)
@@ -204,7 +187,7 @@ def draw_texture(layout, context):
 
     layout.label(text=f"{mesh.name} · {len(mesh.data.vertices):,} vertices", icon="OBJECT_DATA")
     _draw_source(layout, mesh, settings)
-    _draw_mask(layout, mesh)
+    _draw_area(layout, context, mesh)
 
     source_object, archive, _label = _resolve_source(mesh, settings)
     source_ready = source_is_valid(source_object, archive)
@@ -220,8 +203,14 @@ def draw_texture(layout, context):
         text="Project from View",
         icon="CAMERA_DATA",
     )
+    area_ready = not projection_area.has_points() or projection_area.valid(context)
     view_operator.enabled = bool(
-        can_project(context) and source_ready and python_ready and native_ready and viewport_ready
+        can_project(context)
+        and source_ready
+        and python_ready
+        and native_ready
+        and viewport_ready
+        and area_ready
     )
     bake_action = layout.row(align=True)
     bake_operator = bake_action.operator(

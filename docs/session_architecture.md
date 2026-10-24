@@ -17,10 +17,10 @@ real surface-reconstruction step exists. See [image_generation.md](image_generat
 Texture projection (`features/texture`) is a separate appearance lifecycle,
 also outside the mesh-session registry. It resolves the splat linked to the
 active mesh (or an explicit source), renders the splat from the current
-viewport camera, exports a per-corner mesh exchange (including painted mask
-weights), and launches `integrations/splat_project/worker.py` in external
-Python. The worker rasterizes the mesh UVs, depth-tests against the camera,
-multiplies the layer alpha by the interpolated projection mask, and returns an
+viewport camera, exports a per-corner mesh exchange, and launches
+`integrations/splat_project/worker.py` in external Python with the viewport
+lasso polygon. The worker rasterizes the mesh UVs, depth-tests against the
+camera, multiplies the layer alpha by the rasterized lasso mask, and returns an
 RGBA view layer. The older 3D mode samples the Gaussian field at every texel and
 returns albedo, tangent-space normal, and confidence images. The Blender
 adapter owns layer images, the base-colour layer material, and the optional

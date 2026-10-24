@@ -21,7 +21,6 @@ else:
 from remi.app.ui.workspace import active_workspace
 from remi.blender.gaussian_splats import import_splats
 from remi.blender.splat_projection import (
-    MASK_GROUP,
     apply_projection_material,
     export_mesh_archive,
     import_projection_result,
@@ -31,6 +30,7 @@ from remi.blender.splat_projection import (
     source_label,
     write_world_splat_archive,
 )
+from remi.features.texture.projection_area import state as projection_area
 from remi.blender.texture_layers import (
     add_layer,
     delete_layer,
@@ -167,20 +167,19 @@ try:
             assert data["triangle_count"] == 2
             assert np.allclose(data["positions"][0, 0], (0, 0, 0))
 
-        # A painted vertex group is exchanged as per-corner mask weights.
-        group = mesh.vertex_groups.new(name=MASK_GROUP)
-        group.add([0, 1], 1.0, "REPLACE")
-        group.add([2], 0.25, "REPLACE")
-        masked_exchange = directory / "mesh_masked.npz"
-        export_mesh_archive(bpy.context, mesh, masked_exchange)
-        with np.load(masked_exchange, allow_pickle=False) as data:
-            assert data["mask"].shape == (2, 3)
-            assert np.allclose(data["mask"][0], (1.0, 1.0, 0.25))
-            assert np.allclose(data["mask"][1], (1.0, 0.25, 0.0))
-        assert bpy.ops.remi.paint_projection_mask.poll()
-        assert bpy.ops.remi.clear_projection_mask.poll()
-        assert bpy.ops.remi.clear_projection_mask() == {"FINISHED"}
-        assert mesh.vertex_groups.get(MASK_GROUP) is None
+        # The screen-space projection area is a simple transient lasso.
+        projection_area.clear()
+        assert hasattr(bpy.ops.remi, "draw_projection_area")
+        assert hasattr(bpy.ops.remi, "clear_projection_area")
+        projection_area.points = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0)]
+        projection_area.width = 10
+        projection_area.height = 10
+        assert projection_area.has_points()
+        assert projection_area.normalized() == [
+            (0.0, 0.0), (1.0, 0.0), (1.0, 1.0)
+        ]
+        projection_area.clear()
+        assert not projection_area.has_points()
 
         paths = {
             "albedo": str(make_png(directory / "albedo.png", (1.0, 0.0, 0.0, 1.0))),
@@ -363,6 +362,22 @@ try:
                 assert "Python" in str(exc)
             else:
                 raise AssertionError("missing view Python accepted")
+            spawn.assert_not_called()
+        with mock.patch("remi.integrations.splat_project.client.subprocess.Popen") as spawn:
+            try:
+                ProjectionJob.start_view(
+                    python=sys.executable,
+                    mesh=exchange,
+                    view_image=view_png,
+                    view_matrix=identity,
+                    projection_matrix=identity,
+                    output=directory,
+                    view_mask=[[0.0, 0.0]],
+                )
+            except ValueError as exc:
+                assert "at least three" in str(exc)
+            else:
+                raise AssertionError("short view mask accepted")
             spawn.assert_not_called()
 
         # Loading another file stops an in-flight projector and cleans temp files.

@@ -5,15 +5,15 @@ from bpy.props import PointerProperty
 
 from .operators import (
     Remi_OT_CancelProjection,
-    Remi_OT_ClearProjectionMask,
+    Remi_OT_ClearProjectionArea,
     Remi_OT_DeleteTextureLayer,
-    Remi_OT_FinishProjectionMask,
-    Remi_OT_PaintProjectionMask,
+    Remi_OT_DrawProjectionArea,
     Remi_OT_ProjectSplats,
     Remi_OT_ProjectView,
     Remi_OT_TexturePreview,
     runtime,
 )
+from .projection_area import register_draw_handler, unregister_draw_handler
 from .settings import RemiTextureLayer, RemiTextureSettings, RemiTextureState
 
 
@@ -24,9 +24,8 @@ CLASSES = (
     Remi_OT_ProjectSplats,
     Remi_OT_ProjectView,
     Remi_OT_DeleteTextureLayer,
-    Remi_OT_PaintProjectionMask,
-    Remi_OT_FinishProjectionMask,
-    Remi_OT_ClearProjectionMask,
+    Remi_OT_DrawProjectionArea,
+    Remi_OT_ClearProjectionArea,
     Remi_OT_CancelProjection,
     Remi_OT_TexturePreview,
 )
@@ -35,6 +34,12 @@ CLASSES = (
 @persistent
 def _before_load(_unused):
     runtime.stop()
+    from .projection_area import state as projection_area
+
+    projection_area.clear()
+
+
+_draw_handler = None
 
 
 def register():
@@ -44,12 +49,17 @@ def register():
     bpy.types.WindowManager.remi_texture = PointerProperty(type=RemiTextureState)
     bpy.types.Object.remi_texture_layers = bpy.props.CollectionProperty(type=RemiTextureLayer)
     bpy.app.handlers.load_pre.append(_before_load)
+    global _draw_handler
+    _draw_handler = register_draw_handler()
 
 
 def unregister():
     runtime.stop()
     if _before_load in bpy.app.handlers.load_pre:
         bpy.app.handlers.load_pre.remove(_before_load)
+    global _draw_handler
+    unregister_draw_handler(_draw_handler)
+    _draw_handler = None
     del bpy.types.Object.remi_texture_layers
     del bpy.types.WindowManager.remi_texture
     del bpy.types.Scene.remi_texture

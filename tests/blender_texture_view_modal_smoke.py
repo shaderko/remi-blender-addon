@@ -31,8 +31,8 @@ sys.modules["remi"] = remi
 spec.loader.exec_module(remi)
 remi.register()
 from remi.blender.gaussian_splats import import_splats
-from remi.blender.splat_projection import MASK_GROUP
 from remi.features.texture.operators import runtime as texture_runtime
+from remi.features.texture.projection_area import state as projection_area
 
 bpy.ops.object.select_all(action="SELECT")
 bpy.ops.object.delete(use_global=False)
@@ -47,20 +47,6 @@ bpy.context.view_layer.objects.active = mesh
 mesh.select_set(True)
 splat.select_set(False)
 
-# Exercise the mask brush entry/exit without leaving a mask active for the
-# projection itself.
-assert bpy.ops.remi.paint_projection_mask() == {"FINISHED"}
-assert bpy.context.mode in {"PAINT_WEIGHT", "WEIGHT_PAINT"}
-assert bpy.ops.remi.finish_projection_mask() == {"FINISHED"}
-assert bpy.context.mode == "OBJECT"
-assert bpy.ops.remi.clear_projection_mask() == {"FINISHED"}
-
-# Mask only the left half of the model; the projected layer should be reduced.
-mask_group = mesh.vertex_groups.new(name=MASK_GROUP)
-for vertex in mesh.data.vertices:
-    if vertex.co.x < 0:
-        mask_group.add([vertex.index], 1.0, "REPLACE")
-
 bpy.ops.object.camera_add(location=(0, -2.0, 0), rotation=(math.pi / 2, 0, 0))
 camera = bpy.context.active_object
 camera.data.lens = 50
@@ -68,10 +54,17 @@ bpy.context.scene.camera = camera
 camera.select_set(False)
 bpy.context.view_layer.objects.active = mesh
 mesh.select_set(True)
+view_area = None
+view_region = None
 for area in bpy.context.screen.areas:
     if area.type == "VIEW_3D":
         area.spaces.active.region_3d.view_perspective = "PERSP" if args.orbit else "CAMERA"
+        view_area = area
+        view_region = next(region for region in area.regions if region.type == "WINDOW")
         break
+
+assert hasattr(bpy.ops.remi, "draw_projection_area")
+assert hasattr(bpy.ops.remi, "clear_projection_area")
 
 settings = bpy.context.scene.remi_generation
 settings.python = args.python or settings.python
@@ -104,6 +97,7 @@ def finish():
     image.pixels.foreach_get(pixels)
     masked_texels = int(np.count_nonzero(pixels.reshape(-1, 4)[:, 3] > 0.01))
     assert 1000 < masked_texels < 160000, masked_texels
+    assert not projection_area.has_points()
     (args.output / "texture_view_modal_smoke_passed.txt").write_text(
         f"View projection passed: {len(mesh.remi_texture_layers)} layer(s)\n"
     )
@@ -119,6 +113,15 @@ def begin():
         area = next(area for area in bpy.context.screen.areas if area.type == "VIEW_3D")
         region = next(region for region in area.regions if region.type == "WINDOW")
         with bpy.context.temp_override(area=area, region=region):
+            projection_area.begin(bpy.context, area, region, mesh)
+            projection_area.points = [
+                (0.0, 0.0),
+                (projection_area.width * 0.5, 0.0),
+                (projection_area.width * 0.5, projection_area.height),
+                (0.0, projection_area.height),
+            ]
+            projection_area.drawing = False
+            assert projection_area.valid(bpy.context)
             assert bpy.ops.remi.project_view.poll(), "Project from View poll failed"
             assert bpy.ops.remi.project_view("INVOKE_DEFAULT") == {"RUNNING_MODAL"}
         assert state.busy

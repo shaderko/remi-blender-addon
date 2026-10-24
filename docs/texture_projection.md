@@ -6,10 +6,10 @@ the splats are rendered from the current viewport camera, and that view is
 projected onto the visible mesh surface as a **layer**. Each view is a separate
 layer that can be hidden, faded, or deleted.
 
-The core control is a **brush mask**: paint the area of the model you want to
-receive the next projection. White projects, black is skipped. Then project the
-current camera view into that mask. Each view is a separate layer that can be
-hidden, faded, or deleted.
+The core control is a **viewport lasso**: drag a loop around the area you want
+to receive the next projection. Only the screen-space area inside the loop is
+used. Then project the current camera view into that area. Each view is a
+separate layer that can be hidden, faded, or deleted.
 
 This is the appearance half of the splat-to-asset pipeline: the mesh supplies
 topology and UVs, while the splat supplies the look. It does **not** rely on
@@ -50,11 +50,10 @@ the native splat renderer.
 2. Open **Optimize**, then run Remesh / Repair / Retopology / UV as needed.
    Use **Finish** when the geometry is final.
 3. Switch to **Texture**.
-4. Click **Paint Projection Mask** and brush white over the area you want to
-   affect. Black/zero areas are skipped. Click **Done** when finished.
-5. Set the viewport to the view you want to capture.
+4. Set the viewport to the view you want to capture.
+5. Click **Draw Area** and drag a loop around the region to project.
 6. Click **Project from View**.
-7. Move the viewport, adjust the mask if needed, and repeat for other areas.
+7. Move the viewport, redraw the area, and repeat for other regions.
 8. Use the **Layers** panel to hide, fade, or delete individual views.
 9. Optionally use **Project 3D** for an unmasked full-surface base or a normal
    map.
@@ -63,23 +62,21 @@ Projection writes each layer as an RGBA image and builds a layered material;
 it does not delete the source splat or the mesh UVs. Re-project after any
 geometry or UV change.
 
-## Projection mask
+## Projection area
 
-The mask is a vertex group named `remi_projection_mask` on the mesh:
+The area is a temporary screen-space lasso tied to the current viewport:
 
-- **Paint Projection Mask** enters Weight Paint mode with that group active.
-- White weights project; black weights skip. Use the normal weight brush
-  falloff for soft edges.
-- **Done** returns to Object Mode.
-- **Clear** removes the group; without a group the next view projects the full
+- **Draw Area** starts a lasso; drag a loop directly over the model.
+- The overlay shows the selected region as an orange outline/fill.
+- **Project from View** uses the area automatically.
+- **Clear** removes the area; without an area the next view projects the full
   visible surface.
-- The mask is applied when a view layer is created. Changing the mask later
-  does not change existing layers.
-- The mask is a surface mask, so it works from any camera view. It does not
-  apply to the optional 3D bake.
+- The area is cleared after a successful projection.
+- If you move the camera or resize the viewport, the old area becomes stale;
+  redraw it or clear it.
+- The area applies to view layers, not the optional 3D bake.
 
-If the mask is empty, Project from View has nothing to paint and reports that
-no visible texels were produced.
+No Weight Paint mode, vertex groups, or Blender masking are involved.
 
 ## Layers
 
@@ -123,8 +120,8 @@ the neutral base color until another view is added.
 4. The target mesh is rasterized into a camera depth buffer, so only the
    front-most surface is painted; back surfaces and hidden faces are rejected.
 5. Each visible texel samples the rendered splat view, including its alpha.
-6. Per-vertex mask weights are interpolated across each UV triangle and
-   multiplied into the layer alpha.
+6. The lasso polygon is rasterized at the view render resolution, feathered,
+   and multiplied into the rendered splat alpha.
 7. The result is saved as an RGBA layer and added to the mesh's layer stack.
 
 The rendered view image and the camera matrices are passed to the external

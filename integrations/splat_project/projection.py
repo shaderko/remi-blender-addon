@@ -111,7 +111,7 @@ def prepare_splats(arrays):
     }
 
 
-def rasterize_uv(positions, normals, uvs, size, mask=None):
+def rasterize_uv(positions, normals, uvs, size):
     """Rasterize per-triangle positions/normals/UVs into texture-space fields.
 
     Inputs are per-corner triangle arrays:
@@ -129,10 +129,6 @@ def rasterize_uv(positions, normals, uvs, size, mask=None):
         raise ValueError("Mesh normals must match positions")
     if uvs.shape != (len(positions), 3, 2):
         raise ValueError("Mesh UVs must be a (triangles, 3, 2) array")
-    if mask is not None:
-        mask = np.asarray(mask, dtype=np.float32)
-        if mask.shape != (len(positions), 3):
-            raise ValueError("Mesh mask must be a (triangles, 3) array")
     size = int(size)
     if not 64 <= size <= 8192:
         raise ValueError("Texture size must be between 64 and 8192")
@@ -141,7 +137,6 @@ def rasterize_uv(positions, normals, uvs, size, mask=None):
     nrm_img = np.zeros((size, size, 3), dtype=np.float32)
     tan_img = np.zeros((size, size, 3), dtype=np.float32)
     sign_img = np.ones((size, size), dtype=np.int8)
-    mask_img = np.ones((size, size), dtype=np.float32)
     covered = np.zeros((size, size), dtype=bool)
 
     eps = 1e-6
@@ -211,11 +206,9 @@ def rasterize_uv(positions, normals, uvs, size, mask=None):
             nrm_img[gy, gx] = normal[inside]
             tan_img[gy, gx] = tangent[inside]
             sign_img[gy, gx] = uv_sign
-            if mask is not None:
-                mask_img[gy, gx] = np.einsum("...k,k->...", bary, mask[index])[inside]
             covered[gy, gx] = True
 
-    return pos_img, nrm_img, tan_img, sign_img, mask_img, covered
+    return pos_img, nrm_img, tan_img, sign_img, covered
 
 
 def sample_surface(
@@ -473,9 +466,8 @@ def project(
         raise ValueError("Samples must be between 4 and 64")
 
     prepared = prepare_splats(splats)
-    positions, normals, tangents, uv_sign, _mask, covered = rasterize_uv(
-        mesh["positions"], mesh["normals"], mesh["uvs"], texture_size,
-        mesh.get("mask"),
+    positions, normals, tangents, uv_sign, covered = rasterize_uv(
+        mesh["positions"], mesh["normals"], mesh["uvs"], texture_size
     )
     if not covered.any():
         raise ValueError("The UV map covers no texels")
@@ -642,6 +634,20 @@ def _sample_view(image, x, y):
     )
 
 
+def _polygon_mask(width, height, polygon):
+    """Rasterize a normalized lasso polygon (bottom-left origin) to a mask."""
+    from PIL import Image, ImageDraw, ImageFilter
+
+    mask = Image.new("L", (width, height), 0)
+    points = [
+        (float(x) * width, (1.0 - float(y)) * height)
+        for x, y in polygon
+    ]
+    ImageDraw.Draw(mask).polygon(points, fill=255)
+    mask = mask.filter(ImageFilter.GaussianBlur(0.8))
+    return np.asarray(mask, dtype=np.float32) / 255.0
+
+
 def project_from_view(
     mesh,
     view_image,
@@ -651,12 +657,14 @@ def project_from_view(
     texture_size=2048,
     alpha_threshold=0.01,
     depth_epsilon=1e-4,
+    view_mask=None,
 ):
     """Project a rendered camera view onto the UV-mapped mesh.
 
     The view image is rendered from the same camera as the supplied matrices.
     Each UV texel is projected to screen space, depth-tested against the target
     mesh, and samples the splat view where that texel is the visible surface.
+    An optional screen-space lasso mask limits the projection to a drawn area.
     """
     started = time.perf_counter()
     image = np.asarray(view_image, dtype=np.float32)
@@ -673,9 +681,13 @@ def project_from_view(
     texture_size = int(texture_size)
     matrix = _view_projection_matrix(view_matrix, projection_matrix)
 
-    positions, normals, _tangents, _sign, mask_img, covered = rasterize_uv(
-        mesh["positions"], mesh["normals"], mesh["uvs"], texture_size,
-        mask=mesh.get("mask"),
+    area_mask = None
+    if view_mask is not None and len(view_mask) >= 3:
+        area_mask = _polygon_mask(width, height, view_mask)
+        image[..., 3] *= area_mask
+
+    positions, normals, _tangents, _sign, covered = rasterize_uv(
+        mesh["positions"], mesh["normals"], mesh["uvs"], texture_size
     )
     depth_buffer = _rasterize_depth(mesh["positions"], matrix, width, height)
 
@@ -714,7 +726,7 @@ def project_from_view(
     layer = np.zeros((texture_size, texture_size, 4), dtype=np.float32)
     if visible.any():
         sampled = _sample_view(image, screen_x[visible], screen_y[visible])
-        alpha = sampled[:, 3] * mask_img[visible]
+        alpha = sampled[:, 3]
         keep = alpha >= float(alpha_threshold)
         indices = np.nonzero(visible)
         if keep.any():
@@ -734,7 +746,8 @@ def project_from_view(
         "covered_texels": covered_count,
         "visible_texels": visible_count,
         "alpha_mean": float(layer[..., 3].mean()),
-        "mask_mean": float(mask_img[covered].mean()) if covered.any() else 1.0,
+        "area_mask": area_mask is not None,
+        "area_mask_mean": float(area_mask.mean()) if area_mask is not None else 1.0,
         "alpha_threshold": float(alpha_threshold),
         "elapsed_seconds": float(time.perf_counter() - started),
     }

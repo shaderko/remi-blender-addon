@@ -154,11 +154,15 @@ class ProjectionTests(unittest.TestCase):
         # The alpha hole in the camera image becomes a hole in the layer.
         self.assertEqual(float(result.layer[10, 10, 3]), 0.0)
 
-    def test_view_projection_respects_the_painted_mask(self):
+    def test_polygon_mask_uses_bottom_left_viewport_coordinates(self):
+        mask = projection._polygon_mask(
+            128, 128, [(0.0, 0.5), (1.0, 0.5), (1.0, 1.0), (0.0, 1.0)]
+        )
+        self.assertGreater(mask[:64].mean(), 0.9)
+        self.assertLess(mask[64:].mean(), 0.1)
+
         mesh = plane_mesh()
         mesh["positions"] = mesh["positions"] - np.array([0.5, 0.5, 0.0], dtype=np.float32)
-        # First triangle covers the lower-right UV half, second the upper-left.
-        mesh["mask"] = np.array([[1.0, 1.0, 1.0], [0.0, 0.0, 0.0]], dtype=np.float32)
         view = np.eye(4, dtype=np.float64)
         view[2, 3] = -3.0
         f = 1.0 / np.tan(np.radians(50.0) / 2.0)
@@ -173,18 +177,20 @@ class ProjectionTests(unittest.TestCase):
             dtype=np.float64,
         )
         image = np.ones((256, 256, 4), dtype=np.float32)
-        result = projection.project_from_view(
+        full = projection.project_from_view(
             mesh, image, view, projection_matrix, texture_size=128
         )
-        self.assertGreater(result.layer[100, 100, 3], 0.9)
-        self.assertEqual(float(result.layer[20, 20, 3]), 0.0)
-        self.assertLess(result.report["visible_texels"], 16384)
-
-        mesh["mask"] = np.zeros((2, 3), dtype=np.float32)
-        with self.assertRaises(ValueError):
-            projection.project_from_view(
-                mesh, image, view, projection_matrix, texture_size=128
-            )
+        left = projection.project_from_view(
+            mesh,
+            image,
+            view,
+            projection_matrix,
+            texture_size=128,
+            view_mask=[(0.0, 0.0), (0.5, 0.0), (0.5, 1.0), (0.0, 1.0)],
+        )
+        self.assertTrue(left.report["area_mask"])
+        self.assertLess(left.report["visible_texels"], full.report["visible_texels"])
+        self.assertGreater(left.report["visible_texels"], 0)
 
     def test_worker_writes_images_and_completion(self):
         with tempfile.TemporaryDirectory(prefix="remi-splat-project-") as directory:

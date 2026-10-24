@@ -113,6 +113,7 @@ class ProjectionJob:
         output,
         texture_size=2048,
         alpha_threshold=0.01,
+        view_mask=None,
         source=None,
     ):
         executable = shutil.which(python) if python else None
@@ -127,6 +128,12 @@ class ProjectionJob:
             raise ValueError("Unsupported texture size")
         if not 0.0 <= float(alpha_threshold) <= 1.0:
             raise ValueError("Alpha threshold must be in [0, 1]")
+        if view_mask is not None:
+            if not isinstance(view_mask, (list, tuple)):
+                raise ValueError("View mask must be a polygon point list")
+            if len(view_mask) < 3 or any(len(point) != 2 for point in view_mask):
+                raise ValueError("View mask must contain at least three 2D points")
+            view_mask = [[float(point[0]), float(point[1])] for point in view_mask]
         view_matrix = [list(row) for row in view_matrix]
         projection_matrix = [list(row) for row in projection_matrix]
         if len(view_matrix) != 4 or len(projection_matrix) != 4:
@@ -150,6 +157,7 @@ class ProjectionJob:
                     "source": str(source or ""),
                     "texture_size": int(texture_size),
                     "alpha_threshold": float(alpha_threshold),
+                    "view_mask": view_mask,
                 },
                 indent=2,
             ),

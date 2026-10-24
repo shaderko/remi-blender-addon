@@ -47,6 +47,7 @@ The Blender add-on remains free and open source for local work and manual tools.
 | Run automatic quad retopology | Optional AutoRemesher integration |
 | Build production UVs | Validated charting, repair, and xatlas packing |
 | Transfer source appearance | Albedo, roughness, normal, and AO baking |
+| Project splat appearance onto a clean mesh | **Texture** workspace: albedo, normal, and confidence maps |
 | Separate fused parts or doubled shells | Edit Mode selection tools |
 
 ## Install
@@ -80,6 +81,21 @@ lossy approximation of the splats, not a native splat render. See
 Blender 5.3 beta; this does not qualify all other tools for 5.3. Runtime paths
 and advanced controls live in the gear menu. Choose **Optimize** for the
 existing mesh workflow.
+
+### Experimental: project splat appearance onto a clean mesh
+
+After **Create Mesh** and any Remi cleanup, switch to **Texture**. The workspace
+keeps the source splat linked to the mesh and projects its SH base color, a
+splat-derived tangent-space normal, and a per-texel confidence map onto the
+mesh's UVs. Projection runs in an external Python process rather than blocking
+Blender; the Generate Python environment must provide `numpy`, `scipy`, and
+`Pillow`.
+
+Use **Confidence** to inspect holes and weak coverage. Re-project after
+geometry or UV changes. The splat remains the appearance source; the cleaned
+mesh remains the geometry deliverable. See
+[texture projection](docs/texture_projection.md) for settings, limitations, and
+the relationship to Modddif-style texture repair.
 
 ### Automatic: remesh to baked asset
 
@@ -223,6 +239,34 @@ Remi bakes from the original source checkpoint onto the current result. Use
 - **Recalc Normals** is off by default to preserve the UV-prepared target's normals.
 - Baked images are Blender data; pack or save them before closing the file.
 - Enable **Include Metallic** when the source uses a metallic factor or map.
+
+</details>
+
+<details>
+<summary><strong>Texture projection</strong></summary>
+
+The **Texture** workspace projects the linked splat's SH base color and a
+splat-derived tangent-space normal onto the active mesh's UVs. It writes an
+albedo map, a normal map, and a confidence map. The confidence view exposes
+holes and weak splat coverage; **Fill Holes** gives those texels a nearest-color
+fallback while keeping their confidence at zero.
+
+- Projection runs in the external Python configured in **Generate** and needs
+  `numpy`, `scipy`, and `Pillow`.
+- It runs after geometry cleanup. Re-project after Remesh, Retopology, or UV
+  changes; the splat remains the appearance source.
+- **Normal Map → Projected** uses the splat field; **Keep Baked** preserves a
+  normal map from **Bake → Normal** in Optimize and replaces only the base
+  color. For projected normals, **Auto** uses covariance axes for flat,
+  agreeing splats, the density gradient for moderate anisotropy, and clean mesh
+  normals for volumetric/ambiguous clouds; **Normal Strength** reduces conflict
+  with the clean mesh silhouette.
+- The source splat is linked from **Create Mesh** and can be overridden with
+  **Splat Source**.
+- This is a projected appearance color, not a de-lit PBR albedo. Roughness and
+  metallic are not present in standard Gaussian splats.
+
+See [texture projection](docs/texture_projection.md) for details.
 
 </details>
 

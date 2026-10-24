@@ -80,6 +80,10 @@ def import_reconstructed_mesh(context, path, *, source_object=None, report=None)
                 bpy.data.objects.remove(obj, do_unlink=True)
             raise ValueError("Meshed PLY did not produce exactly one non-empty mesh")
         obj = meshes[0]
+        # Surface Nets output is a smooth organic shell. Smooth shading keeps
+        # both the viewport and the high-poly normal bake from encoding facets.
+        for polygon in obj.data.polygons:
+            polygon.use_smooth = True
         layer = next(iter(obj.data.color_attributes), None)
         material = _vertex_color_material(
             f"{path.parent.name} · reconstructed", layer.name if layer else "",
@@ -94,6 +98,7 @@ def import_reconstructed_mesh(context, path, *, source_object=None, report=None)
         obj["remi_mesh_report"] = str(report or path.with_name("report.json"))
         if source_object is not None:
             obj["remi_mesh_source_object"] = source_object.name
+            obj["remi_splat_source"] = source_object
             archive = source_object.get("remi_splat_archive")
             if archive:
                 obj["remi_mesh_source_archive"] = str(archive)

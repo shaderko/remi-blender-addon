@@ -35,6 +35,15 @@ distributed under GPL-3.0. Remi is GPL-3.0-or-later, so the combination is
 license-compatible. The vendored file is unmodified. Its runtime dependencies
 (`torch`, `numpy`, `scipy`, `trimesh`) are external and not bundled.
 
+## Splat texture projection
+
+- Files: `integrations/splat_project/` and `blender/splat_projection.py`
+- Runtime dependencies: `numpy`, `scipy`, and `Pillow` in the external Python
+  environment configured for generation. They are external and not bundled.
+- Algorithm: UV-space evaluation of the Gaussian field, normal estimation from
+  covariance/density, confidence masking, and texture-space filling. No
+  third-party rasterizer or reconstruction implementation is vendored.
+
 ## PyMeshLab and MeshLab
 
 - Project: [cnr-isti-vclab/PyMeshLab](https://github.com/cnr-isti-vclab/PyMeshLab)

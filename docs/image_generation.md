@@ -85,6 +85,12 @@ initial voxel remesh. The mesh keeps its vertex colors. Run UV and Bake
 manually if the reconstructed topology accepts them; the current Surface Nets
 output is not always suitable for Remi's UV validator.
 
+For a source-faithful look, finish the geometry in **Optimize**, then switch to
+**Texture**. The Texture workspace projects the linked splat's base color and
+surface-derived normal onto the cleaned mesh, with a confidence map for holes.
+It is re-runnable after remesh/UV changes and does not depend on the mesh's
+vertex colors. See [texture_projection.md](texture_projection.md).
+
 The gear menu contains **Mesh Detail** (Draft 160 / Standard 224 / High 288),
 **Smoothing** (Crisp/Balanced/Smooth), and **Mesh Output**. Typical times on the
 local RTX 5070 for 65k Gaussians are 2–5 seconds at Standard/High, plus process

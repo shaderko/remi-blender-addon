@@ -150,6 +150,7 @@ try:
         assert len(obj.data.materials) == 1 and obj.data.materials[0].use_nodes
         assert splat.hide_get()
         assert obj["remi_mesh_source_object"] == splat.name
+        assert obj.get("remi_splat_source") is splat
         assert splat["remi_mesh_object"] == obj.name
         assert mesh_for_splat(splat) is obj
 

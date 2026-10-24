@@ -63,6 +63,7 @@ def _draw_mesh_controls(layout, context, state, settings):
         if mesh_path:
             row.operator("wm.path_open", text="", icon="FILE_FOLDER").filepath = str(Path(mesh_path).parent)
         row.operator("remi.select_workspace", text="Optimize", icon="MOD_DECIM").workspace = "OPTIMIZE"
+        row.operator("remi.select_workspace", text="Texture", icon="TEXTURE").workspace = "TEXTURE"
     current = source.name if source is not None else (active.name if active is not None else "")
     if state.mesh_source_object == current:
         if state.mesh_status_kind == "ERROR" and state.mesh_status:

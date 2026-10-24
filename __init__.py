@@ -6,7 +6,7 @@ bl_info = {
     "version": (2, 0, 0),
     "blender": (5, 1, 0),
     "location": "View3D > Sidebar > Remi",
-    "description": "Repair, optimize, retopologize, and bake meshes inside Blender",
+    "description": "Repair, optimize, retopologize, texture, and bake meshes inside Blender",
     "category": "Object",
 }
 

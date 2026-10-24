@@ -14,6 +14,17 @@ external Python, then imports validated native splats through
 history. Splat sources are tagged and rejected by session entry points until a
 real surface-reconstruction step exists. See [image_generation.md](image_generation.md).
 
+Texture projection (`features/texture`) is a separate appearance lifecycle,
+also outside the mesh-session registry. It resolves the splat linked to the
+active mesh (or an explicit source), exports a per-corner mesh exchange, and
+launches `integrations/splat_project/worker.py` in external Python. The worker
+rasterizes the mesh UVs, samples the Gaussian field, and returns albedo,
+tangent-space normal, and confidence images. The Blender adapter
+(`blender/splat_projection.py`) owns image import and the projected material.
+It does not lock the mesh or write session history; geometry changes invalidate
+the projection and it must be re-run. See
+[texture_projection.md](texture_projection.md).
+
 `app/application.py` is the composition root. Add-on registration creates one
 `RemiApplication` containing:
 
@@ -114,6 +125,10 @@ the geometry service itself still executes inside a normal session transaction.
   bake execution mechanics behind the Bake service.
 - `features/uv/engine`: UV profiles, mesh analysis, charting, packing, native
   xatlas integration, validation, and Blender orchestration.
+- `features/texture`: the separate Texture workspace, its modal projector
+  client, and projected-material import. It is not a session mesh stage.
+- `integrations/splat_project`: the external UV-space Gaussian projector and
+  its scrubbed mesh/splat exchange protocol.
 - `features/retopology/instant_meshes`: interactive viewport workspace and its
   bundled native field solver.
 - `features/edit_tools`: edit-mode bridge and double-shell tools outside the

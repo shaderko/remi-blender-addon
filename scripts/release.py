@@ -38,6 +38,7 @@ TESTS = (
     "blender_generation_regression.py",
     "blender_mesh_conversion_regression.py",
     "blender_workspace_ui_regression.py",
+    "blender_texture_projection_regression.py",
 )
 
 

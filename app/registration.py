@@ -6,6 +6,7 @@ from ..features import edit_tools
 from ..features import generation
 from ..features import registration as feature_registration
 from ..features import settings
+from ..features import texture
 from ..features.retopology import instant_meshes
 from ..compat import registration as compatibility_registration
 from ..workflow import session
@@ -23,6 +24,7 @@ MODULES = (
     compatibility_registration,
     session,
     flow,
+    texture,
     ui,
     generation,
     edit_tools,

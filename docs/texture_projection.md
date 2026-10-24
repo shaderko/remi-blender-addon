@@ -6,6 +6,11 @@ the splats are rendered from the current viewport camera, and that view is
 projected onto the visible mesh surface as a **layer**. Each view is a separate
 layer that can be hidden, faded, or deleted.
 
+The core control is a **brush mask**: paint the area of the model you want to
+receive the next projection. White projects, black is skipped. Then project the
+current camera view into that mask. Each view is a separate layer that can be
+hidden, faded, or deleted.
+
 This is the appearance half of the splat-to-asset pipeline: the mesh supplies
 topology and UVs, while the splat supplies the look. It does **not** rely on
 the splat object and mesh object being aligned in 3D; projection is matched in
@@ -45,15 +50,36 @@ the native splat renderer.
 2. Open **Optimize**, then run Remesh / Repair / Retopology / UV as needed.
    Use **Finish** when the geometry is final.
 3. Switch to **Texture**.
-4. Set the viewport to the view you want to capture.
-5. Click **Project from View**.
-6. Move the viewport and repeat for the other sides of the object.
-7. Use the **Layers** panel to hide, fade, or delete individual views.
-8. Optionally use **Project 3D** for a full-surface base or a normal map.
+4. Click **Paint Projection Mask** and brush white over the area you want to
+   affect. Black/zero areas are skipped. Click **Done** when finished.
+5. Set the viewport to the view you want to capture.
+6. Click **Project from View**.
+7. Move the viewport, adjust the mask if needed, and repeat for other areas.
+8. Use the **Layers** panel to hide, fade, or delete individual views.
+9. Optionally use **Project 3D** for an unmasked full-surface base or a normal
+   map.
 
 Projection writes each layer as an RGBA image and builds a layered material;
 it does not delete the source splat or the mesh UVs. Re-project after any
 geometry or UV change.
+
+## Projection mask
+
+The mask is a vertex group named `remi_projection_mask` on the mesh:
+
+- **Paint Projection Mask** enters Weight Paint mode with that group active.
+- White weights project; black weights skip. Use the normal weight brush
+  falloff for soft edges.
+- **Done** returns to Object Mode.
+- **Clear** removes the group; without a group the next view projects the full
+  visible surface.
+- The mask is applied when a view layer is created. Changing the mask later
+  does not change existing layers.
+- The mask is a surface mask, so it works from any camera view. It does not
+  apply to the optional 3D bake.
+
+If the mask is empty, Project from View has nothing to paint and reports that
+no visible texels were produced.
 
 ## Layers
 
@@ -97,7 +123,9 @@ the neutral base color until another view is added.
 4. The target mesh is rasterized into a camera depth buffer, so only the
    front-most surface is painted; back surfaces and hidden faces are rejected.
 5. Each visible texel samples the rendered splat view, including its alpha.
-6. The result is saved as an RGBA layer and added to the mesh's layer stack.
+6. Per-vertex mask weights are interpolated across each UV triangle and
+   multiplied into the layer alpha.
+7. The result is saved as an RGBA layer and added to the mesh's layer stack.
 
 The rendered view image and the camera matrices are passed to the external
 worker together, so no object-to-object 3D alignment is involved.
@@ -139,7 +167,7 @@ session from the reconstructed mesh.
 
 ## Next steps
 
-- Mask/patch tools for cleaning individual view layers.
+- Patch/erase tools for cleaning individual view layers.
 - Inpaint or patch a masked region from the current view using the original
   input image and splat renders as references.
 - Normal-map brush/patch tools and a relighting preview.

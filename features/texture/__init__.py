@@ -5,7 +5,10 @@ from bpy.props import PointerProperty
 
 from .operators import (
     Remi_OT_CancelProjection,
+    Remi_OT_ClearProjectionMask,
     Remi_OT_DeleteTextureLayer,
+    Remi_OT_FinishProjectionMask,
+    Remi_OT_PaintProjectionMask,
     Remi_OT_ProjectSplats,
     Remi_OT_ProjectView,
     Remi_OT_TexturePreview,
@@ -21,6 +24,9 @@ CLASSES = (
     Remi_OT_ProjectSplats,
     Remi_OT_ProjectView,
     Remi_OT_DeleteTextureLayer,
+    Remi_OT_PaintProjectionMask,
+    Remi_OT_FinishProjectionMask,
+    Remi_OT_ClearProjectionMask,
     Remi_OT_CancelProjection,
     Remi_OT_TexturePreview,
 )

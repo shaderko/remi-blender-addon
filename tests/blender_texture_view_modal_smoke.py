@@ -13,6 +13,7 @@ import time
 import traceback
 
 import bpy
+import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
@@ -30,6 +31,7 @@ sys.modules["remi"] = remi
 spec.loader.exec_module(remi)
 remi.register()
 from remi.blender.gaussian_splats import import_splats
+from remi.blender.splat_projection import MASK_GROUP
 from remi.features.texture.operators import runtime as texture_runtime
 
 bpy.ops.object.select_all(action="SELECT")
@@ -44,6 +46,20 @@ for polygon in mesh.data.polygons:
 bpy.context.view_layer.objects.active = mesh
 mesh.select_set(True)
 splat.select_set(False)
+
+# Exercise the mask brush entry/exit without leaving a mask active for the
+# projection itself.
+assert bpy.ops.remi.paint_projection_mask() == {"FINISHED"}
+assert bpy.context.mode in {"PAINT_WEIGHT", "WEIGHT_PAINT"}
+assert bpy.ops.remi.finish_projection_mask() == {"FINISHED"}
+assert bpy.context.mode == "OBJECT"
+assert bpy.ops.remi.clear_projection_mask() == {"FINISHED"}
+
+# Mask only the left half of the model; the projected layer should be reduced.
+mask_group = mesh.vertex_groups.new(name=MASK_GROUP)
+for vertex in mesh.data.vertices:
+    if vertex.co.x < 0:
+        mask_group.add([vertex.index], 1.0, "REPLACE")
 
 bpy.ops.object.camera_add(location=(0, -2.0, 0), rotation=(math.pi / 2, 0, 0))
 camera = bpy.context.active_object
@@ -82,6 +98,12 @@ def finish():
     assert Path(layer.image_path).is_file()
     assert mesh.data.materials and mesh.data.materials[0].name.endswith("layered")
     assert any(node.type == "MIX_RGB" for node in mesh.data.materials[0].node_tree.nodes)
+    image = bpy.data.images.get(layer.image_name)
+    assert image is not None
+    pixels = np.empty(len(image.pixels), dtype=np.float32)
+    image.pixels.foreach_get(pixels)
+    masked_texels = int(np.count_nonzero(pixels.reshape(-1, 4)[:, 3] > 0.01))
+    assert 1000 < masked_texels < 160000, masked_texels
     (args.output / "texture_view_modal_smoke_passed.txt").write_text(
         f"View projection passed: {len(mesh.remi_texture_layers)} layer(s)\n"
     )

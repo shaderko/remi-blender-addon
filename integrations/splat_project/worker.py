@@ -49,10 +49,16 @@ def _load_mesh(path):
         for name in ("positions", "normals", "uvs"):
             if name not in archive:
                 raise ValueError(f"Mesh archive is missing {name}")
+        mask = (
+            np.asarray(archive["mask"], dtype=np.float32)
+            if "mask" in archive
+            else None
+        )
         mesh = {
             "positions": np.asarray(archive["positions"], dtype=np.float32),
             "normals": np.asarray(archive["normals"], dtype=np.float32),
             "uvs": np.asarray(archive["uvs"], dtype=np.float32),
+            "mask": mask,
         }
     if mesh["positions"].ndim != 3 or mesh["positions"].shape[1:] != (3, 3):
         raise ValueError("Mesh positions must be a (triangles, 3, 3) array")
@@ -60,6 +66,8 @@ def _load_mesh(path):
         raise ValueError("Mesh normals must match positions")
     if mesh["uvs"].shape != (len(mesh["positions"]), 3, 2):
         raise ValueError("Mesh UVs must be a (triangles, 3, 2) array")
+    if mesh["mask"] is not None and mesh["mask"].shape != (len(mesh["positions"]), 3):
+        raise ValueError("Mesh mask must be a (triangles, 3) array")
     if len(mesh["positions"]) == 0:
         raise ValueError("Mesh has no triangles")
     return mesh

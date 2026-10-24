@@ -21,6 +21,7 @@ else:
 from remi.app.ui.workspace import active_workspace
 from remi.blender.gaussian_splats import import_splats
 from remi.blender.splat_projection import (
+    MASK_GROUP,
     apply_projection_material,
     export_mesh_archive,
     import_projection_result,
@@ -165,6 +166,21 @@ try:
             assert data["uvs"].shape == (2, 3, 2)
             assert data["triangle_count"] == 2
             assert np.allclose(data["positions"][0, 0], (0, 0, 0))
+
+        # A painted vertex group is exchanged as per-corner mask weights.
+        group = mesh.vertex_groups.new(name=MASK_GROUP)
+        group.add([0, 1], 1.0, "REPLACE")
+        group.add([2], 0.25, "REPLACE")
+        masked_exchange = directory / "mesh_masked.npz"
+        export_mesh_archive(bpy.context, mesh, masked_exchange)
+        with np.load(masked_exchange, allow_pickle=False) as data:
+            assert data["mask"].shape == (2, 3)
+            assert np.allclose(data["mask"][0], (1.0, 1.0, 0.25))
+            assert np.allclose(data["mask"][1], (1.0, 0.25, 0.0))
+        assert bpy.ops.remi.paint_projection_mask.poll()
+        assert bpy.ops.remi.clear_projection_mask.poll()
+        assert bpy.ops.remi.clear_projection_mask() == {"FINISHED"}
+        assert mesh.vertex_groups.get(MASK_GROUP) is None
 
         paths = {
             "albedo": str(make_png(directory / "albedo.png", (1.0, 0.0, 0.0, 1.0))),

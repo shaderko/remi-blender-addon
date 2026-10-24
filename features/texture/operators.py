@@ -11,6 +11,7 @@ from bpy.types import Operator
 
 from ...blender.gaussian_splats import import_splats, native_splats_available
 from ...blender.splat_projection import (
+    MASK_GROUP,
     ensure_texture_uv,
     export_mesh_archive,
     projection_available,
@@ -472,6 +473,90 @@ class Remi_OT_DeleteTextureLayer(Operator):
         if not delete_layer(mesh, self.index):
             self.report({"WARNING"}, "Layer no longer exists")
             return {"CANCELLED"}
+        if context.area:
+            context.area.tag_redraw()
+        return {"FINISHED"}
+
+
+class Remi_OT_PaintProjectionMask(Operator):
+    bl_idname = "remi.paint_projection_mask"
+    bl_label = "Paint Projection Mask"
+    bl_description = "Paint the area that view projection should affect; white projects, black skips"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.view_layer.objects.active
+        return bool(
+            obj is not None
+            and obj.type == "MESH"
+            and context.mode == "OBJECT"
+            and not context.window_manager.remi_texture.busy
+        )
+
+    def execute(self, context):
+        obj = context.view_layer.objects.active
+        if obj is None or obj.type != "MESH":
+            return {"CANCELLED"}
+        group = obj.vertex_groups.get(MASK_GROUP)
+        if group is None:
+            group = obj.vertex_groups.new(name=MASK_GROUP)
+        obj.vertex_groups.active_index = group.index
+        obj.select_set(True)
+        context.view_layer.objects.active = obj
+        try:
+            bpy.ops.object.mode_set(mode="WEIGHT_PAINT")
+        except RuntimeError as exc:
+            self.report({"ERROR"}, f"Could not enter Weight Paint mode: {exc}")
+            return {"CANCELLED"}
+        try:
+            context.scene.tool_settings.vertex_group_weight = 1.0
+        except (AttributeError, TypeError):
+            pass
+        return {"FINISHED"}
+
+
+class Remi_OT_FinishProjectionMask(Operator):
+    bl_idname = "remi.finish_projection_mask"
+    bl_label = "Finish Projection Mask"
+    bl_description = "Leave mask painting and return to Object Mode"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return (
+            context.mode in {"PAINT_WEIGHT", "WEIGHT_PAINT"}
+            and context.view_layer.objects.active is not None
+        )
+
+    def execute(self, context):
+        bpy.ops.object.mode_set(mode="OBJECT")
+        return {"FINISHED"}
+
+
+class Remi_OT_ClearProjectionMask(Operator):
+    bl_idname = "remi.clear_projection_mask"
+    bl_label = "Clear Projection Mask"
+    bl_description = "Remove the projection mask; the next view projection affects the full visible surface"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.view_layer.objects.active
+        return bool(
+            obj is not None
+            and obj.type == "MESH"
+            and obj.vertex_groups.get(MASK_GROUP) is not None
+        )
+
+    def execute(self, context):
+        obj = context.view_layer.objects.active
+        group = obj.vertex_groups.get(MASK_GROUP) if obj is not None else None
+        if group is None:
+            return {"CANCELLED"}
+        if context.mode != "OBJECT":
+            bpy.ops.object.mode_set(mode="OBJECT")
+        obj.vertex_groups.remove(group)
         if context.area:
             context.area.tag_redraw()
         return {"FINISHED"}

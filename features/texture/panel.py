@@ -2,7 +2,12 @@
 from __future__ import annotations
 
 from ...blender.gaussian_splats import native_splats_available
-from ...blender.splat_projection import existing_normal_map, projection_available, projection_preview
+from ...blender.splat_projection import (
+    MASK_GROUP,
+    existing_normal_map,
+    projection_available,
+    projection_preview,
+)
 from ...blender.texture_layers import ordered_layer_indices
 from .service import (
     active_mesh,
@@ -88,6 +93,32 @@ def _draw_settings(layout, settings, mesh):
         bake.prop(settings, "margin_px", text="Margin")
 
 
+def _draw_mask(layout, mesh):
+    box = layout.box()
+    box.label(text="Projection Mask", icon="BRUSH_DATA")
+    group = mesh.vertex_groups.get(MASK_GROUP)
+    if group is None:
+        box.label(text="No mask — full visible view", icon="INFO")
+        box.operator("remi.paint_projection_mask", text="Paint Projection Mask", icon="BRUSH_DATA")
+    else:
+        box.label(text="Painted area only", icon="CHECKMARK")
+        row = box.row(align=True)
+        row.operator("remi.paint_projection_mask", text="Edit Mask", icon="BRUSH_DATA")
+        row.operator("remi.clear_projection_mask", text="Clear", icon="X")
+    box.label(text="Applies to Project from View layers", icon="INFO")
+
+
+def _draw_mask_painting(layout, mesh):
+    box = layout.box()
+    box.label(text="Painting Projection Mask", icon="BRUSH_DATA")
+    box.label(text="White projects; black skips", icon="INFO")
+    box.label(text="Paint the area you want the next view layer to affect", icon="INFO")
+    row = box.row(align=True)
+    row.operator("remi.finish_projection_mask", text="Done", icon="CHECKMARK")
+    if mesh.vertex_groups.get(MASK_GROUP) is not None:
+        row.operator("remi.clear_projection_mask", text="Clear", icon="X")
+
+
 def _draw_layers(layout, mesh):
     box = layout.box()
     box.label(text="Layers (bottom → top)", icon="RENDERLAYERS")
@@ -152,6 +183,14 @@ def _draw_projection_state(layout, mesh, state):
 def draw_texture(layout, context):
     settings = context.scene.remi_texture
     state = context.window_manager.remi_texture
+    active = context.view_layer.objects.active
+    if context.mode in {"PAINT_WEIGHT", "WEIGHT_PAINT"} and active is not None and active.type == "MESH":
+        heading = layout.row(align=True)
+        heading.label(text="Splat Projection", icon="TEXTURE")
+        layout.label(text=active.name, icon="OBJECT_DATA")
+        _draw_mask_painting(layout, active)
+        return
+
     mesh = active_mesh(context)
 
     heading = layout.row(align=True)
@@ -165,6 +204,7 @@ def draw_texture(layout, context):
 
     layout.label(text=f"{mesh.name} · {len(mesh.data.vertices):,} vertices", icon="OBJECT_DATA")
     _draw_source(layout, mesh, settings)
+    _draw_mask(layout, mesh)
 
     source_object, archive, _label = _resolve_source(mesh, settings)
     source_ready = source_is_valid(source_object, archive)

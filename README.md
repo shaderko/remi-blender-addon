@@ -47,7 +47,7 @@ The Blender add-on remains free and open source for local work and manual tools.
 | Run automatic quad retopology | Optional AutoRemesher integration |
 | Build production UVs | Validated charting, repair, and xatlas packing |
 | Transfer source appearance | Albedo, roughness, normal, and AO baking |
-| Project splats from the current view | **Texture** workspace: hideable view layers plus optional 3D base/normal |
+| Project splats from the current view | **Texture** workspace: brush mask, hideable view layers, optional 3D base/normal |
 | Separate fused parts or doubled shells | Edit Mode selection tools |
 
 ## Install
@@ -84,17 +84,18 @@ existing mesh workflow.
 
 ### Experimental: project splats from the current view
 
-After **Create Mesh** and any Remi cleanup, switch to **Texture**. Set the
-viewport to the view you want, then click **Project from View**. Remi renders
-the linked splats from that camera and projects that view onto the visible mesh
-surface as a layer. Move the view and repeat; each projection is a separate
-layer that can be hidden, faded, or deleted.
+After **Create Mesh** and any Remi cleanup, switch to **Texture**. Paint a
+**Projection Mask** on the model with the brush (white projects, black skips),
+set the viewport to the view you want, then click **Project from View**. Remi
+renders the linked splats from that camera and projects that view only into the
+painted area, as a layer. Move the view and repeat; each projection is a
+separate layer that can be hidden, faded, or deleted.
 
 The projection is matched in screen space through the viewport camera, so the
 mesh and splat objects do not need matching origins. Projection runs in an
 external Python process; the Generate Python environment must provide `numpy`,
-`scipy`, and `Pillow`. **Project 3D** remains available for a full-surface base
-and normal map.
+`scipy`, and `Pillow`. **Project 3D** remains available for an unmasked
+full-surface base and normal map.
 
 See [texture projection](docs/texture_projection.md) for the view workflow,
 layers, settings, and limitations.
@@ -248,14 +249,17 @@ Remi bakes from the original source checkpoint onto the current result. Use
 <summary><strong>Texture projection</strong></summary>
 
 The **Texture** workspace projects the linked splats onto the active mesh.
-**Project from View** renders the splats from the current viewport camera and
-projects that view onto the visible mesh surface as a layer. Add several views
-around the object, then hide, fade, or delete layers in the Layers panel. The
-material is rebuilt from the visible layers.
+Use **Paint Projection Mask** to brush the area that should receive the next
+projection: white projects, black is skipped. Then **Project from View** renders
+the splats from the current viewport camera and projects that view only inside
+the painted mask, as a layer. Add several views around the object, then hide,
+fade, or delete layers in the Layers panel. The material is rebuilt from the
+visible layers.
 
 **Project 3D** is optional: it samples the Gaussian field at every UV texel for
 a full-surface base, tangent-space normal, and confidence map. It does not rely
-on a viewport camera and is available on Blender 5.1+.
+on a viewport camera and is available on Blender 5.1+. The brush mask applies to
+view layers, not the 3D bake.
 
 - View projection requires Blender 5.3+ native Gaussian rendering.
 - Projection runs in the external Python configured in **Generate** and needs
@@ -269,8 +273,8 @@ on a viewport camera and is available on Blender 5.1+.
 - This is a projected appearance color, not a de-lit PBR albedo. Roughness and
   metallic are not present in standard Gaussian splats.
 
-See [texture projection](docs/texture_projection.md) for the view and layer
-workflow, settings, and limitations.
+See [texture projection](docs/texture_projection.md) for the mask, view, and
+layer workflow, settings, and limitations.
 
 </details>
 

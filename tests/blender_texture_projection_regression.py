@@ -30,6 +30,12 @@ from remi.blender.splat_projection import (
     source_label,
     write_world_splat_archive,
 )
+from remi.blender.texture_layers import (
+    add_layer,
+    delete_layer,
+    rebuild_layer_material,
+    sync_base_layer,
+)
 from remi.features.texture import _before_load
 from remi.features.texture.operators import runtime as texture_runtime
 from remi.features.texture.panel import draw_texture
@@ -212,6 +218,57 @@ try:
         assert normal_node.image == baked_image
         assert mesh["remi_texture_normal_mode"] == "EXISTING"
 
+        # A 3D projection becomes the bottom/base layer, and view layers can be
+        # added, hidden, and deleted without rebuilding pixels.
+        base = sync_base_layer(mesh)
+        assert base is not None and base.kind == "BASE"
+        rebuild_layer_material(mesh)
+        assert len(mesh.remi_texture_layers) == 1
+        assert mesh.data.materials[0].name.endswith("layered")
+        assert any(node.type == "NORMAL_MAP" for node in mesh.data.materials[0].node_tree.nodes)
+
+        view_png = make_png(directory / "view_layer.png", (0.1, 0.8, 0.2, 0.5))
+        view_layer = add_layer(
+            mesh,
+            "View",
+            view_png,
+            kind="VIEW",
+            alpha_mode="IMAGE",
+            pack=True,
+        )
+        assert len(mesh.remi_texture_layers) == 2
+        layered = mesh.data.materials[0]
+        assert any(node.type == "MIX_RGB" for node in layered.node_tree.nodes)
+        assert any(node.name.startswith("remi_layer_") and node.type == "TEX_IMAGE"
+                   for node in layered.node_tree.nodes)
+        assert mesh.remi_texture_layers[0].kind == "BASE"
+
+        # Direct property toggles call the rebuild callback.
+        def layer_texture_count():
+            return sum(
+                1
+                for node in mesh.data.materials[0].node_tree.nodes
+                if node.name.startswith("remi_layer_") and node.type == "TEX_IMAGE"
+            )
+
+        assert layer_texture_count() == 2
+        view_layer.visible = False
+        assert layer_texture_count() == 1
+        view_layer.visible = True
+        assert layer_texture_count() == 2
+        view_layer.opacity = 0.25
+        assert mesh.data.materials[0].name.endswith("layered")
+
+        assert bpy.ops.remi.delete_texture_layer.poll()
+        view_index = next(
+            index for index, layer in enumerate(mesh.remi_texture_layers) if layer.kind == "VIEW"
+        )
+        assert bpy.ops.remi.delete_texture_layer(index=view_index) == {"FINISHED"}
+        assert len(mesh.remi_texture_layers) == 1
+        assert delete_layer(mesh, 0)
+        assert len(mesh.remi_texture_layers) == 0
+        assert hasattr(bpy.ops.remi, "project_view")
+
         layout = Layout()
         draw_texture(layout, bpy.context)
         names = operator_names(layout)
@@ -258,6 +315,38 @@ try:
                 assert "Python" in str(exc)
             else:
                 raise AssertionError("missing Python accepted")
+            spawn.assert_not_called()
+
+        identity = [[1.0 if row == column else 0.0 for column in range(4)] for row in range(4)]
+        with mock.patch("remi.integrations.splat_project.client.subprocess.Popen") as spawn:
+            try:
+                ProjectionJob.start_view(
+                    python=sys.executable,
+                    mesh=exchange,
+                    view_image=directory / "missing-view.png",
+                    view_matrix=identity,
+                    projection_matrix=identity,
+                    output=directory,
+                )
+            except ValueError as exc:
+                assert "View image not found" in str(exc)
+            else:
+                raise AssertionError("missing view image accepted")
+            spawn.assert_not_called()
+        with mock.patch("remi.integrations.splat_project.client.subprocess.Popen") as spawn:
+            try:
+                ProjectionJob.start_view(
+                    python=directory / "missing-python.exe",
+                    mesh=exchange,
+                    view_image=view_png,
+                    view_matrix=identity,
+                    projection_matrix=identity,
+                    output=directory,
+                )
+            except ValueError as exc:
+                assert "Python" in str(exc)
+            else:
+                raise AssertionError("missing view Python accepted")
             spawn.assert_not_called()
 
         # Loading another file stops an in-flight projector and cleans temp files.

@@ -18,7 +18,7 @@ from pathlib import Path
 import time
 
 import numpy as np
-from scipy.ndimage import distance_transform_edt, gaussian_filter
+from scipy.ndimage import distance_transform_edt, gaussian_filter, map_coordinates
 from scipy.spatial import cKDTree
 
 C0 = 0.28209479177387814
@@ -33,6 +33,12 @@ class ProjectionResult:
     coverage: np.ndarray
     normal_agreement: np.ndarray
     covered: np.ndarray
+    report: dict
+
+
+@dataclass(frozen=True)
+class ViewProjectionResult:
+    layer: np.ndarray
     report: dict
 
 
@@ -542,6 +548,198 @@ def project(
         covered=covered,
         report=report,
     )
+
+
+def _view_projection_matrix(view_matrix, projection_matrix):
+    view = np.asarray(view_matrix, dtype=np.float64)
+    projection = np.asarray(projection_matrix, dtype=np.float64)
+    if view.shape == (16,):
+        view = view.reshape(4, 4)
+    if projection.shape == (16,):
+        projection = projection.reshape(4, 4)
+    if view.shape != (4, 4) or projection.shape != (4, 4):
+        raise ValueError("Camera matrices must be 4×4 or 16-element arrays")
+    return projection @ view
+
+
+def _rasterize_depth(positions, matrix, width, height):
+    """Rasterize the target mesh into a camera-space depth buffer."""
+    depth = np.full((height, width), np.inf, dtype=np.float32)
+    homogeneous = np.concatenate(
+        (positions, np.ones(positions.shape[:-1] + (1,), dtype=np.float32)), axis=-1
+    )
+    clip = homogeneous @ matrix.T
+    w = clip[..., 3]
+    valid = np.all(w > 1e-6, axis=1)
+    ndc = clip[..., :3] / np.maximum(w[..., None], 1e-8)
+    screen_x = (ndc[..., 0] * 0.5 + 0.5) * width
+    screen_y = (1.0 - (ndc[..., 1] * 0.5 + 0.5)) * height
+    z = ndc[..., 2]
+    eps = 1e-6
+
+    for index in np.nonzero(valid)[0]:
+        x = screen_x[index]
+        y = screen_y[index]
+        xmin = max(0, int(math.floor(float(x.min()))) - 1)
+        xmax = min(width - 1, int(math.ceil(float(x.max()))) + 1)
+        ymin = max(0, int(math.floor(float(y.min()))) - 1)
+        ymax = min(height - 1, int(math.ceil(float(y.max()))) + 1)
+        if xmin > xmax or ymin > ymax:
+            continue
+
+        x0, y0 = float(x[0]), float(y[0])
+        x1, y1 = float(x[1]), float(y[1])
+        x2, y2 = float(x[2]), float(y[2])
+        denominator = (y1 - y2) * (x0 - x2) + (x2 - x1) * (y0 - y2)
+        if abs(denominator) < 1e-12:
+            continue
+        xs = np.arange(xmin, xmax + 1, dtype=np.float32) + 0.5
+        for band_start in range(ymin, ymax + 1, 256):
+            band_end = min(ymax, band_start + 255)
+            ys = np.arange(band_start, band_end + 1, dtype=np.float32) + 0.5
+            grid_x, grid_y = np.meshgrid(xs, ys)
+            w0 = ((y1 - y2) * (grid_x - x2) + (x2 - x1) * (grid_y - y2)) / denominator
+            w1 = ((y2 - y0) * (grid_x - x2) + (x0 - x2) * (grid_y - y2)) / denominator
+            w2 = 1.0 - w0 - w1
+            inside = (w0 >= -eps) & (w1 >= -eps) & (w2 >= -eps)
+            if not inside.any():
+                continue
+            bary = np.stack((w0, w1, w2), axis=-1)
+            z_value = np.einsum("...k,k->...", bary, z[index])
+            yy, xx = np.nonzero(inside)
+            gy = yy + band_start
+            gx = xx + xmin
+            depth[gy, gx] = np.minimum(depth[gy, gx], z_value[inside])
+    return depth
+
+
+def _sample_view(image, x, y):
+    height, width = image.shape[:2]
+    x = np.clip(x, 0.0, width - 1.0)
+    y = np.clip(y, 0.0, height - 1.0)
+    coordinates = np.stack((y, x))
+    return np.stack(
+        [
+            map_coordinates(
+                image[..., channel],
+                coordinates,
+                order=1,
+                mode="constant",
+                cval=0.0,
+                prefilter=False,
+            )
+            for channel in range(4)
+        ],
+        axis=-1,
+    )
+
+
+def project_from_view(
+    mesh,
+    view_image,
+    view_matrix,
+    projection_matrix,
+    *,
+    texture_size=2048,
+    alpha_threshold=0.01,
+    depth_epsilon=1e-4,
+):
+    """Project a rendered camera view onto the UV-mapped mesh.
+
+    The view image is rendered from the same camera as the supplied matrices.
+    Each UV texel is projected to screen space, depth-tested against the target
+    mesh, and samples the splat view where that texel is the visible surface.
+    """
+    started = time.perf_counter()
+    image = np.asarray(view_image, dtype=np.float32)
+    if image.ndim != 3 or image.shape[2] not in (3, 4):
+        raise ValueError("View image must be H×W×3 or H×W×4")
+    if image.shape[2] == 3:
+        image = np.concatenate(
+            (image, np.ones(image.shape[:2] + (1,), dtype=np.float32)), axis=-1
+        )
+    image = np.clip(image, 0.0, 1.0)
+    height, width = image.shape[:2]
+    if width < 16 or height < 16:
+        raise ValueError("View image is too small")
+    texture_size = int(texture_size)
+    matrix = _view_projection_matrix(view_matrix, projection_matrix)
+
+    positions, normals, _tangents, _sign, covered = rasterize_uv(
+        mesh["positions"], mesh["normals"], mesh["uvs"], texture_size
+    )
+    depth_buffer = _rasterize_depth(mesh["positions"], matrix, width, height)
+
+    homogeneous = np.concatenate(
+        (positions, np.ones(positions.shape[:-1] + (1,), dtype=np.float32)), axis=-1
+    )
+    clip = homogeneous @ matrix.T
+    w = clip[..., 3]
+    ndc = clip[..., :3] / np.maximum(w[..., None], 1e-8)
+    screen_x = (ndc[..., 0] * 0.5 + 0.5) * width
+    screen_y = (1.0 - (ndc[..., 1] * 0.5 + 0.5)) * height
+    depth = ndc[..., 2]
+
+    inside = (
+        covered
+        & (w > 1e-6)
+        & (screen_x >= 0.0)
+        & (screen_x < width)
+        & (screen_y >= 0.0)
+        & (screen_y < height)
+    )
+    pixel_x = np.clip(np.floor(screen_x).astype(np.int32), 0, width - 1)
+    pixel_y = np.clip(np.floor(screen_y).astype(np.int32), 0, height - 1)
+    buffer_depth = depth_buffer[pixel_y, pixel_x]
+    visible = inside & np.isfinite(buffer_depth) & (depth <= buffer_depth + float(depth_epsilon))
+
+    # Reject back surfaces even when the depth buffer has a hole at a
+    # silhouette. The camera position is a good approximation for both
+    # perspective and the narrow-angle orthographic case.
+    camera_position = np.linalg.inv(np.asarray(view_matrix, dtype=np.float64).reshape(4, 4))[:3, 3]
+    view_direction = camera_position[None, :] - positions.reshape(-1, 3)
+    view_direction = _normalize(view_direction).reshape(positions.shape)
+    facing = np.sum(normals * view_direction, axis=-1) > 0.0
+    visible &= facing
+
+    layer = np.zeros((texture_size, texture_size, 4), dtype=np.float32)
+    if visible.any():
+        sampled = _sample_view(image, screen_x[visible], screen_y[visible])
+        alpha = sampled[:, 3]
+        keep = alpha >= float(alpha_threshold)
+        indices = np.nonzero(visible)
+        if keep.any():
+            layer[indices[0][keep], indices[1][keep], :3] = sampled[keep, :3]
+            layer[indices[0][keep], indices[1][keep], 3] = alpha[keep]
+
+    visible_count = int(np.count_nonzero(layer[..., 3]))
+    covered_count = int(covered.sum())
+    if visible_count == 0:
+        raise ValueError("View projection produced no visible texels; check the camera and splat visibility")
+    report = {
+        "schema": 1,
+        "mode": "view",
+        "texture_size": texture_size,
+        "view_width": width,
+        "view_height": height,
+        "covered_texels": covered_count,
+        "visible_texels": visible_count,
+        "alpha_mean": float(layer[..., 3].mean()),
+        "alpha_threshold": float(alpha_threshold),
+        "elapsed_seconds": float(time.perf_counter() - started),
+    }
+    return ViewProjectionResult(layer=layer, report=report)
+
+
+def save_view_layer(result, output):
+    from PIL import Image
+
+    output = Path(output)
+    output.mkdir(parents=True, exist_ok=True)
+    path = output / "layer.png"
+    values = np.clip(result.layer * 255.0 + 0.5, 0, 255).astype(np.uint8)
+    Image.fromarray(values, mode="RGBA").save(path)
+    return str(path)
 
 
 def save_textures(result, output):

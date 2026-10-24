@@ -16,6 +16,51 @@ def _splat_poll(_self, obj):
     return is_splat_object(obj)
 
 
+def _layer_changed(self, context):
+    owner = getattr(self, "id_data", None)
+    if not isinstance(owner, bpy.types.Object):
+        return
+    try:
+        from ...blender.texture_layers import rebuild_layer_material
+
+        rebuild_layer_material(owner)
+    except Exception as exc:
+        print(f"Remi: layer material rebuild failed: {exc}")
+    if context is not None and context.area is not None:
+        context.area.tag_redraw()
+
+
+class RemiTextureLayer(PropertyGroup):
+    visible: BoolProperty(
+        name="Visible",
+        description="Include this projection layer in the material",
+        default=True,
+        update=_layer_changed,
+    )
+    opacity: FloatProperty(
+        name="Opacity",
+        description="Layer strength",
+        default=1.0,
+        min=0.0,
+        max=1.0,
+        subtype="FACTOR",
+        update=_layer_changed,
+    )
+    kind: EnumProperty(
+        name="Kind",
+        items=[("VIEW", "View", ""), ("BASE", "Base", "")],
+        default="VIEW",
+    )
+    alpha_mode: EnumProperty(
+        name="Alpha",
+        items=[("IMAGE", "Image Alpha", ""), ("OPAQUE", "Opaque", "")],
+        default="IMAGE",
+    )
+    image_path: StringProperty(name="Image", subtype="FILE_PATH")
+    image_name: StringProperty(name="Image Name")
+    source: StringProperty(name="Source")
+
+
 class RemiTextureSettings(PropertyGroup):
     source_object: PointerProperty(
         name="Splat Source",
@@ -32,6 +77,23 @@ class RemiTextureSettings(PropertyGroup):
             ("4096", "4K", "4096 × 4096"),
         ],
         default="2048",
+    )
+    view_resolution: EnumProperty(
+        name="View Render",
+        description="Resolution used to render the splats from the viewport camera",
+        items=[
+            ("1024", "1K", "Faster viewport splat render"),
+            ("2048", "2K", "Sharper viewport splat render"),
+        ],
+        default="1024",
+    )
+    view_alpha_threshold: FloatProperty(
+        name="View Alpha",
+        description="Minimum rendered splat alpha included in a view layer",
+        default=0.02,
+        min=0.0,
+        max=1.0,
+        subtype="FACTOR",
     )
     samples: IntProperty(
         name="Samples",

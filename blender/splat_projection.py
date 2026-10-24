@@ -335,7 +335,14 @@ def _assign_material(mesh, material):
 
 
 def projection_available(mesh):
-    return bool(mesh and mesh.get("remi_texture_albedo"))
+    return bool(
+        mesh
+        and (
+            mesh.get("remi_texture_albedo")
+            or mesh.get("remi_texture_material")
+            or len(getattr(mesh, "remi_texture_layers", ()))
+        )
+    )
 
 
 def projection_preview(mesh):
@@ -401,7 +408,10 @@ def import_projection_result(
     _assign_material(mesh, material)
 
     mesh["remi_texture_albedo"] = str(albedo_path)
+    mesh["remi_texture_albedo_image"] = albedo.name
     mesh["remi_texture_normal"] = str(normal_path)
+    mesh["remi_texture_normal_image"] = normal_image.name
+    mesh["remi_texture_normal_uv"] = normal_uv
     mesh["remi_texture_confidence"] = str(confidence_path)
     mesh["remi_texture_report"] = str(paths.get("report", ""))
     mesh["remi_texture_uv"] = uv_name

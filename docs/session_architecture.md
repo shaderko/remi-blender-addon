@@ -16,13 +16,15 @@ real surface-reconstruction step exists. See [image_generation.md](image_generat
 
 Texture projection (`features/texture`) is a separate appearance lifecycle,
 also outside the mesh-session registry. It resolves the splat linked to the
-active mesh (or an explicit source), exports a per-corner mesh exchange, and
-launches `integrations/splat_project/worker.py` in external Python. The worker
-rasterizes the mesh UVs, samples the Gaussian field, and returns albedo,
-tangent-space normal, and confidence images. The Blender adapter
-(`blender/splat_projection.py`) owns image import and the projected material.
-It does not lock the mesh or write session history; geometry changes invalidate
-the projection and it must be re-run. See
+active mesh (or an explicit source), renders the splat from the current
+viewport camera, exports a per-corner mesh exchange, and launches
+`integrations/splat_project/worker.py` in external Python. The worker
+rasterizes the mesh UVs, depth-tests against the camera, and returns an RGBA
+view layer. The older 3D mode samples the Gaussian field at every texel and
+returns albedo, tangent-space normal, and confidence images. The Blender
+adapter owns layer images, the base-colour layer material, and the optional
+projected normal material. It does not lock the mesh or write session history;
+geometry changes invalidate the projection and it must be re-run. See
 [texture_projection.md](texture_projection.md).
 
 `app/application.py` is the composition root. Add-on registration creates one

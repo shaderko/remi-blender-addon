@@ -5,17 +5,22 @@ from bpy.props import PointerProperty
 
 from .operators import (
     Remi_OT_CancelProjection,
+    Remi_OT_DeleteTextureLayer,
     Remi_OT_ProjectSplats,
+    Remi_OT_ProjectView,
     Remi_OT_TexturePreview,
     runtime,
 )
-from .settings import RemiTextureSettings, RemiTextureState
+from .settings import RemiTextureLayer, RemiTextureSettings, RemiTextureState
 
 
 CLASSES = (
+    RemiTextureLayer,
     RemiTextureSettings,
     RemiTextureState,
     Remi_OT_ProjectSplats,
+    Remi_OT_ProjectView,
+    Remi_OT_DeleteTextureLayer,
     Remi_OT_CancelProjection,
     Remi_OT_TexturePreview,
 )
@@ -31,6 +36,7 @@ def register():
         bpy.utils.register_class(cls)
     bpy.types.Scene.remi_texture = PointerProperty(type=RemiTextureSettings)
     bpy.types.WindowManager.remi_texture = PointerProperty(type=RemiTextureState)
+    bpy.types.Object.remi_texture_layers = bpy.props.CollectionProperty(type=RemiTextureLayer)
     bpy.app.handlers.load_pre.append(_before_load)
 
 
@@ -38,6 +44,7 @@ def unregister():
     runtime.stop()
     if _before_load in bpy.app.handlers.load_pre:
         bpy.app.handlers.load_pre.remove(_before_load)
+    del bpy.types.Object.remi_texture_layers
     del bpy.types.WindowManager.remi_texture
     del bpy.types.Scene.remi_texture
     for cls in reversed(CLASSES):

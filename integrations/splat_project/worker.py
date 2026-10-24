@@ -19,7 +19,12 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from splat_project.projection import project, save_textures  # noqa: E402
+from splat_project.projection import (  # noqa: E402
+    project,
+    project_from_view,
+    save_textures,
+    save_view_layer,
+)
 
 
 def write_status(output, phase, **extra):
@@ -88,62 +93,99 @@ def _load_splats(path):
 def run(request, output):
     started = time.perf_counter()
     try:
-        import PIL  # noqa: F401
+        from PIL import Image
     except ImportError as exc:
         raise RuntimeError(
             "Texture projection requires Pillow in the external Python environment"
         ) from exc
-    archive_path = Path(request["archive"])
     mesh_path = Path(request["mesh"])
-    if not archive_path.is_file():
-        raise FileNotFoundError(archive_path)
     if not mesh_path.is_file():
         raise FileNotFoundError(mesh_path)
 
+    mode = str(request.get("mode", "field"))
     size = int(request.get("texture_size", 2048))
-    samples = int(request.get("samples", 16))
-    normal_source = str(request.get("normal_source", "AUTO")).upper()
-    normal_strength = float(request.get("normal_strength", 1.0))
-    normal_smoothing = int(request.get("normal_smoothing", 2))
-    fill_holes = bool(request.get("fill_holes", True))
-    fill_background = bool(request.get("fill_background", True))
-    margin_px = int(request.get("margin_px", 8))
 
-    write_status(output, "Loading mesh and Gaussians")
+    write_status(output, "Loading mesh")
     mesh = _load_mesh(mesh_path)
-    splats = _load_splats(archive_path)
 
-    write_status(output, "Rasterizing texture")
-    result = project(
-        mesh,
-        splats,
-        texture_size=size,
-        samples=samples,
-        normal_source=normal_source,
-        normal_strength=normal_strength,
-        normal_smoothing=normal_smoothing,
-        fill_holes=fill_holes,
-        fill_background=fill_background,
-        margin_px=margin_px,
-    )
+    if mode == "view":
+        view_path = Path(request["view_image"])
+        if not view_path.is_file():
+            raise FileNotFoundError(view_path)
+        write_status(output, "Loading view")
+        with Image.open(view_path) as image:
+            view_image = np.asarray(image.convert("RGBA"), dtype=np.float32) / 255.0
+        write_status(output, "Projecting view")
+        result = project_from_view(
+            mesh,
+            view_image,
+            request["view_matrix"],
+            request["projection_matrix"],
+            texture_size=size,
+            alpha_threshold=float(request.get("alpha_threshold", 0.01)),
+            depth_epsilon=float(request.get("depth_epsilon", 1e-4)),
+        )
+        write_status(output, "Saving layer")
+        layer_path = save_view_layer(result, output)
+        report = dict(result.report)
+        report.update(
+            {
+                "schema": 1,
+                "mesh": str(mesh_path),
+                "source": request.get("source", ""),
+                "view_image": str(view_path),
+                "layer": layer_path,
+                "device": "cpu",
+                "elapsed_seconds": float(time.perf_counter() - started),
+                "projector": "viewport camera view projection",
+            }
+        )
+    else:
+        archive_path = Path(request["archive"])
+        if not archive_path.is_file():
+            raise FileNotFoundError(archive_path)
+        samples = int(request.get("samples", 16))
+        normal_source = str(request.get("normal_source", "AUTO")).upper()
+        normal_strength = float(request.get("normal_strength", 1.0))
+        normal_smoothing = int(request.get("normal_smoothing", 2))
+        fill_holes = bool(request.get("fill_holes", True))
+        fill_background = bool(request.get("fill_background", True))
+        margin_px = int(request.get("margin_px", 8))
 
-    write_status(output, "Saving textures")
-    paths = save_textures(result, output)
-    report = dict(result.report)
-    report.update(
-        {
-            "schema": 1,
-            "archive": str(archive_path),
-            "mesh": str(mesh_path),
-            "source": request.get("source", ""),
-            "albedo": paths["albedo"],
-            "normal": paths["normal"],
-            "confidence": paths["confidence"],
-            "device": "cpu",
-            "elapsed_seconds": float(time.perf_counter() - started),
-            "projector": "UV-space Gaussian field projection",
-        }
-    )
+        write_status(output, "Loading Gaussians")
+        splats = _load_splats(archive_path)
+
+        write_status(output, "Rasterizing texture")
+        result = project(
+            mesh,
+            splats,
+            texture_size=size,
+            samples=samples,
+            normal_source=normal_source,
+            normal_strength=normal_strength,
+            normal_smoothing=normal_smoothing,
+            fill_holes=fill_holes,
+            fill_background=fill_background,
+            margin_px=margin_px,
+        )
+
+        write_status(output, "Saving textures")
+        paths = save_textures(result, output)
+        report = dict(result.report)
+        report.update(
+            {
+                "schema": 1,
+                "archive": str(archive_path),
+                "mesh": str(mesh_path),
+                "source": request.get("source", ""),
+                "albedo": paths["albedo"],
+                "normal": paths["normal"],
+                "confidence": paths["confidence"],
+                "device": "cpu",
+                "elapsed_seconds": float(time.perf_counter() - started),
+                "projector": "UV-space Gaussian field projection",
+            }
+        )
     (output / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     (output / "complete.json").write_text(
         json.dumps({"schema": 1, "complete": True}), encoding="utf-8",

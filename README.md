@@ -47,7 +47,7 @@ The Blender add-on remains free and open source for local work and manual tools.
 | Run automatic quad retopology | Optional AutoRemesher integration |
 | Build production UVs | Validated charting, repair, and xatlas packing |
 | Transfer source appearance | Albedo, roughness, normal, and AO baking |
-| Project splat appearance onto a clean mesh | **Texture** workspace: albedo, normal, and confidence maps |
+| Project splats from the current view | **Texture** workspace: hideable view layers plus optional 3D base/normal |
 | Separate fused parts or doubled shells | Edit Mode selection tools |
 
 ## Install
@@ -82,20 +82,22 @@ Blender 5.3 beta; this does not qualify all other tools for 5.3. Runtime paths
 and advanced controls live in the gear menu. Choose **Optimize** for the
 existing mesh workflow.
 
-### Experimental: project splat appearance onto a clean mesh
+### Experimental: project splats from the current view
 
-After **Create Mesh** and any Remi cleanup, switch to **Texture**. The workspace
-keeps the source splat linked to the mesh and projects its SH base color, a
-splat-derived tangent-space normal, and a per-texel confidence map onto the
-mesh's UVs. Projection runs in an external Python process rather than blocking
-Blender; the Generate Python environment must provide `numpy`, `scipy`, and
-`Pillow`.
+After **Create Mesh** and any Remi cleanup, switch to **Texture**. Set the
+viewport to the view you want, then click **Project from View**. Remi renders
+the linked splats from that camera and projects that view onto the visible mesh
+surface as a layer. Move the view and repeat; each projection is a separate
+layer that can be hidden, faded, or deleted.
 
-Use **Confidence** to inspect holes and weak coverage. Re-project after
-geometry or UV changes. The splat remains the appearance source; the cleaned
-mesh remains the geometry deliverable. See
-[texture projection](docs/texture_projection.md) for settings, limitations, and
-the relationship to Modddif-style texture repair.
+The projection is matched in screen space through the viewport camera, so the
+mesh and splat objects do not need matching origins. Projection runs in an
+external Python process; the Generate Python environment must provide `numpy`,
+`scipy`, and `Pillow`. **Project 3D** remains available for a full-surface base
+and normal map.
+
+See [texture projection](docs/texture_projection.md) for the view workflow,
+layers, settings, and limitations.
 
 ### Automatic: remesh to baked asset
 
@@ -245,28 +247,30 @@ Remi bakes from the original source checkpoint onto the current result. Use
 <details>
 <summary><strong>Texture projection</strong></summary>
 
-The **Texture** workspace projects the linked splat's SH base color and a
-splat-derived tangent-space normal onto the active mesh's UVs. It writes an
-albedo map, a normal map, and a confidence map. The confidence view exposes
-holes and weak splat coverage; **Fill Holes** gives those texels a nearest-color
-fallback while keeping their confidence at zero.
+The **Texture** workspace projects the linked splats onto the active mesh.
+**Project from View** renders the splats from the current viewport camera and
+projects that view onto the visible mesh surface as a layer. Add several views
+around the object, then hide, fade, or delete layers in the Layers panel. The
+material is rebuilt from the visible layers.
 
+**Project 3D** is optional: it samples the Gaussian field at every UV texel for
+a full-surface base, tangent-space normal, and confidence map. It does not rely
+on a viewport camera and is available on Blender 5.1+.
+
+- View projection requires Blender 5.3+ native Gaussian rendering.
 - Projection runs in the external Python configured in **Generate** and needs
   `numpy`, `scipy`, and `Pillow`.
 - It runs after geometry cleanup. Re-project after Remesh, Retopology, or UV
   changes; the splat remains the appearance source.
 - **Normal Map → Projected** uses the splat field; **Keep Baked** preserves a
-  normal map from **Bake → Normal** in Optimize and replaces only the base
-  color. For projected normals, **Auto** uses covariance axes for flat,
-  agreeing splats, the density gradient for moderate anisotropy, and clean mesh
-  normals for volumetric/ambiguous clouds; **Normal Strength** reduces conflict
-  with the clean mesh silhouette.
+  normal map from **Bake → Normal** in Optimize.
 - The source splat is linked from **Create Mesh** and can be overridden with
   **Splat Source**.
 - This is a projected appearance color, not a de-lit PBR albedo. Roughness and
   metallic are not present in standard Gaussian splats.
 
-See [texture projection](docs/texture_projection.md) for details.
+See [texture projection](docs/texture_projection.md) for the view and layer
+workflow, settings, and limitations.
 
 </details>
 

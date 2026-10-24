@@ -14,6 +14,31 @@ class ProjectionJob:
         self._log = log
 
     @classmethod
+    def _spawn(cls, executable, directory, request):
+        log = (directory / "worker.log").open("wb")
+        try:
+            process = subprocess.Popen(
+                [
+                    str(executable),
+                    "-I",
+                    "-B",
+                    "-u",
+                    str(Path(__file__).with_name("worker.py")),
+                    "--request",
+                    str(request.resolve()),
+                ],
+                cwd=directory,
+                stdin=subprocess.DEVNULL,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except Exception:
+            log.close()
+            raise
+        return cls(process, directory, log)
+
+    @classmethod
     def start(
         cls,
         *,
@@ -74,28 +99,63 @@ class ProjectionJob:
             ),
             encoding="utf-8",
         )
-        log = (directory / "worker.log").open("wb")
-        try:
-            process = subprocess.Popen(
-                [
-                    str(executable),
-                    "-I",
-                    "-B",
-                    "-u",
-                    str(Path(__file__).with_name("worker.py")),
-                    "--request",
-                    str(request.resolve()),
-                ],
-                cwd=directory,
-                stdin=subprocess.DEVNULL,
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-        except Exception:
-            log.close()
-            raise
-        return cls(process, directory, log)
+        return cls._spawn(executable, directory, request)
+
+    @classmethod
+    def start_view(
+        cls,
+        *,
+        python,
+        mesh,
+        view_image,
+        view_matrix,
+        projection_matrix,
+        output,
+        texture_size=2048,
+        alpha_threshold=0.01,
+        source=None,
+    ):
+        executable = shutil.which(python) if python else None
+        if executable is None or not Path(executable).is_file():
+            raise ValueError("Choose an external Python executable with NumPy, SciPy and Pillow installed")
+        mesh, view_image, output = Path(mesh), Path(view_image), Path(output)
+        if not mesh.is_file():
+            raise ValueError(f"Mesh archive not found: {mesh}")
+        if not view_image.is_file():
+            raise ValueError(f"View image not found: {view_image}")
+        if int(texture_size) not in (512, 1024, 2048, 4096, 8192):
+            raise ValueError("Unsupported texture size")
+        if not 0.0 <= float(alpha_threshold) <= 1.0:
+            raise ValueError("Alpha threshold must be in [0, 1]")
+        view_matrix = [list(row) for row in view_matrix]
+        projection_matrix = [list(row) for row in projection_matrix]
+        if len(view_matrix) != 4 or len(projection_matrix) != 4:
+            raise ValueError("Camera matrices must be 4×4")
+        if any(len(row) != 4 for row in view_matrix + projection_matrix):
+            raise ValueError("Camera matrices must be 4×4")
+
+        directory = output / (
+            datetime.now().strftime("%Y%m%d_%H%M%S_") + "view_" + uuid.uuid4().hex[:8]
+        )
+        directory.mkdir(parents=True, exist_ok=False)
+        request = directory / "request.json"
+        request.write_text(
+            json.dumps(
+                {
+                    "mode": "view",
+                    "mesh": str(mesh.resolve()),
+                    "view_image": str(view_image.resolve()),
+                    "view_matrix": view_matrix,
+                    "projection_matrix": projection_matrix,
+                    "source": str(source or ""),
+                    "texture_size": int(texture_size),
+                    "alpha_threshold": float(alpha_threshold),
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        return cls._spawn(executable, directory, request)
 
     def status(self):
         try:
@@ -124,6 +184,21 @@ class ProjectionJob:
             raise RuntimeError(
                 f"Projector did not confirm completion. See {self.directory / 'worker.log'}"
             )
+        report_path = self.directory / "report.json"
+        try:
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            report = {}
+        layer = self.directory / "layer.png"
+        if report.get("mode") == "view" or layer.is_file():
+            if not layer.is_file():
+                raise RuntimeError(f"Projector did not produce {layer}")
+            return {
+                "layer": str(layer),
+                "report": str(report_path),
+                "directory": str(self.directory),
+                "report_data": report,
+            }
         paths = {
             name: self.directory / f"{name}.png"
             for name in ("albedo", "normal", "confidence")
@@ -131,11 +206,6 @@ class ProjectionJob:
         for name, path in paths.items():
             if not path.is_file():
                 raise RuntimeError(f"Projector did not produce {path}")
-        report_path = self.directory / "report.json"
-        try:
-            report = json.loads(report_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            report = {}
         return {
             **{name: str(path) for name, path in paths.items()},
             "report": str(report_path),

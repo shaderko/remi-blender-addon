@@ -124,6 +124,36 @@ class ProjectionTests(unittest.TestCase):
         self.assertGreater(upright[0, 1], 0.8)
         self.assertLess(mirrored[0, 1], 0.2)
 
+    def test_view_projection_uses_camera_image_and_alpha(self):
+        mesh = plane_mesh()
+        mesh["positions"] = mesh["positions"] - np.array([0.5, 0.5, 0.0], dtype=np.float32)
+        view = np.eye(4, dtype=np.float64)
+        view[2, 3] = -3.0
+        f = 1.0 / np.tan(np.radians(50.0) / 2.0)
+        near, far = 0.1, 100.0
+        projection_matrix = np.array(
+            [
+                [f, 0, 0, 0],
+                [0, f, 0, 0],
+                [0, 0, (far + near) / (near - far), 2 * far * near / (near - far)],
+                [0, 0, -1, 0],
+            ],
+            dtype=np.float64,
+        )
+        image = np.ones((256, 256, 4), dtype=np.float32)
+        image[..., 0] = 1.0
+        image[..., 1] = 0.2
+        image[..., 2] = 0.1
+        image[85:100, 85:100, 3] = 0.0
+        result = projection.project_from_view(
+            mesh, image, view, projection_matrix, texture_size=128
+        )
+        self.assertGreater(result.report["visible_texels"], 10_000)
+        self.assertGreater(result.layer[64, 64, 0], 0.9)
+        self.assertGreater(result.layer[64, 64, 3], 0.9)
+        # The alpha hole in the camera image becomes a hole in the layer.
+        self.assertEqual(float(result.layer[10, 10, 3]), 0.0)
+
     def test_worker_writes_images_and_completion(self):
         with tempfile.TemporaryDirectory(prefix="remi-splat-project-") as directory:
             root = Path(directory)

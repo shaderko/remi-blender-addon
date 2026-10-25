@@ -63,6 +63,7 @@ with tempfile.TemporaryDirectory(prefix="remi-generation-config-") as directory:
             configuration.write_text(invalid)
             assert generation_settings._configuration_defaults() == {}
 assert "torch" not in sys.modules
+assert bpy.context.scene.remi_generation.model_cache_minutes == 5
 assert bpy.ops.remi.generate_splats.poll()
 assert bpy.ops.remi.import_splats.poll()
 assert hasattr(bpy.types, "Remi_PT_GenerationSettings")

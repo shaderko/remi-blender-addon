@@ -1,5 +1,6 @@
 """Modal Blender adapters; the external worker never touches scene data."""
 from pathlib import Path
+import tempfile
 
 import bpy
 from bpy.props import StringProperty
@@ -42,7 +43,9 @@ runtime = GenerationRuntime()
 
 def _progress_label(phase):
     if phase.startswith("Loading"):
-        return "Loading model…"
+        return "Loading model."
+    if phase.startswith("Using"):
+        return "Generating."
     if phase.startswith("Removing"):
         return "Preparing image…"
     if phase.startswith(("Encoding", "Generating", "Decoding")):
@@ -87,6 +90,8 @@ class Remi_OT_GenerateSplats(Operator):
                 models=bpy.path.abspath(settings.models),
                 image=bpy.path.abspath(settings.image), output=bpy.path.abspath(settings.output),
                 gaussians=int(settings.gaussians), seed=settings.seed,
+                cache_minutes=int(settings.model_cache_minutes),
+                cache_dir=Path(bpy.app.tempdir or tempfile.gettempdir()) / "remi-generation-cache",
             )
             runtime.manager = context.window_manager
             runtime.timer = runtime.manager.event_timer_add(0.25, window=context.window)

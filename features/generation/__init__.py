@@ -7,6 +7,7 @@ from .operators import Remi_OT_GenerateSplats, Remi_OT_CancelGeneration, Remi_OT
 from .mesh_operators import Remi_OT_CreateMesh, Remi_OT_CancelMesh, runtime as mesh_runtime
 from .panel import Remi_PT_GenerationSettings
 from .settings import RemiGenerationSettings, RemiGenerationState
+from ...integrations.triposplat.client import shutdown_generation_server
 
 
 CLASSES = (RemiGenerationSettings, RemiGenerationState, Remi_OT_GenerateSplats,
@@ -31,6 +32,7 @@ def register():
 def unregister():
     runtime.stop()
     mesh_runtime.stop()
+    shutdown_generation_server()
     if _before_load in bpy.app.handlers.load_pre:
         bpy.app.handlers.load_pre.remove(_before_load)
     del bpy.types.WindowManager.remi_generation

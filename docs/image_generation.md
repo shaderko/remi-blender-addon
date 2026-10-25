@@ -58,7 +58,8 @@ redistribution mechanism.
    opaque images have their background removed with BiRefNet.
 4. Python is detected automatically. The **gear** opens optional settings for
    Gaussian count, seed, Python override, **Model Folder** (`models/triposplat`),
-   and the output folder. These details stay out of the main view.
+   model-cache idle time, and the output folder. These details stay out of the
+   main view.
 5. Click **Generate**. Blender stays interactive while the worker loads and
    generates. The cancel icon or `Esc` stops the process. The icon beside
    **Generate** imports an existing result; the folder icon after completion
@@ -109,7 +110,9 @@ leaves the scene unchanged and reports the error in its log.
 The model path defaults to the development bundle when present, otherwise to
 Blender's user-data folder. `REMI_TRIPOSPLAT_MODELS` can override the default.
 Paths and generation settings are saved with the scene. The runtime and busy
-state are not saved. Opening another `.blend` or disabling Remi stops the worker.
+state are not saved. Disabling Remi stops the warm worker; opening another
+`.blend` stops only an active generation and leaves an idle warm worker
+available until its cache timeout.
 
 For installed copies, machine-local defaults can be stored in
 `remi-generation.json` inside that Blender version's user **config** folder,
@@ -119,9 +122,18 @@ are read when Remi loads; saved scene values still take precedence, and
 `REMI_TRIPOSPLAT_MODELS` overrides the configured model default. The local 5.3
 installation uses this file to point at the already-prepared Remi model bundle.
 
-Each generation is a fresh process, so it reloads the weights every time and
-releases its GPU memory on exit. No warm-cache speed is promised. A local RTX
-5070 smoke test produced 65,536 splats in about 30 seconds including loading.
+By default the external worker keeps the checkpoint, image encoders, and
+decoder loaded for **5 minutes** after a generation. Repeated generations in
+that window skip the weight-loading step; the next request reuses the same
+process. The **Keep Model Loaded (min)** control in the gear changes this
+timeout. Set it to **0** to always use a fresh process and release GPU memory
+immediately.
+
+The warm worker still writes one request/output directory per generation. Only
+its model state is shared. Cancellation or disabling Remi stops the process and
+releases GPU memory; an idle worker exits automatically after the configured
+timeout. The persistent worker log lives beside the cache under Blender's
+temporary directory, and each output's `worker.log` points to it.
 
 ## What appears in Blender
 
@@ -186,7 +198,7 @@ meta.json       checkpoint, seed, count, coordinate frame, timing
 request.json    exact local inference request
 status.json     worker progress or error
 complete.json   immutable completion marker (written last)
-worker.log      diagnostic output
+worker.log      diagnostic output (points to the warm server log when cached)
 ```
 
 Use the **folder icon** to inspect the result, or the **import icon** beside
@@ -210,6 +222,8 @@ worker.log     diagnostic output
 
 ```powershell
 python -B -m unittest discover -s tests -p "test_generation.py"
+# Warm-cache protocol test is included; set Keep Model Loaded to 0 in Blender
+# to force the one-shot path.
 python -B scripts/generate_splats.py "C:\path\to\image.png"
 & "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" --background --factory-startup --python-exit-code 1 --python tests/blender_generation_regression.py
 & "C:\Program Files\Blender Foundation\Blender 5.3 Beta\blender.exe" --background --factory-startup --python-exit-code 1 --python tests/blender_mesh_conversion_regression.py

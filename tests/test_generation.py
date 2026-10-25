@@ -124,6 +124,95 @@ class WorkerTests(unittest.TestCase):
             finally:
                 job.cancel()
 
+    def test_warm_server_queues_jobs_and_stays_alive(self):
+        with tempfile.TemporaryDirectory(prefix="remi-warm-generation-") as directory:
+            path = Path(directory)
+            image = path / "image.png"
+            image.touch()
+            for name in client.COMPONENTS:
+                component = path / name
+                component.parent.mkdir(parents=True, exist_ok=True)
+                component.touch()
+            cache = path / "cache"
+            process = mock.Mock()
+            process.poll.return_value = None
+            try:
+                with mock.patch.object(client.subprocess, "Popen", return_value=process) as spawn:
+                    first = client.GenerationJob.start(
+                        python=sys.executable, models=path, image=image,
+                        output=path / "output", gaussians=65536, seed=7,
+                        cache_minutes=5, cache_dir=cache,
+                    )
+                    command = spawn.call_args.args[0]
+                    self.assertIn("--serve", command)
+                    self.assertIn("--cache-dir", command)
+                    self.assertTrue(first._persistent)
+                    queue_files = sorted((cache / "queue").glob("*.json"))
+                    self.assertEqual(len(queue_files), 1)
+                    queued = json.loads(queue_files[0].read_text())
+                    self.assertEqual(queued["idle_timeout"], 300.0)
+                    self.assertEqual(queued["request"], str((first.directory / "request.json").resolve()))
+
+                    # A completed job leaves the model process warm.
+                    (first.directory / "complete.json").write_text(
+                        '{"schema": 1, "complete": true}', encoding="utf-8"
+                    )
+                    (first.directory / "splats.npz").touch()
+                    self.assertEqual(first.poll(), 0)
+                    self.assertEqual(first.result(), first.directory / "splats.npz")
+                    first.cancel()
+                    process.terminate.assert_not_called()
+                    # Simulate the server consuming the first queue entry.
+                    queue_files[0].unlink(missing_ok=True)
+
+                    # The next request reuses the same process and updates its
+                    # post-job idle timeout through the queue.
+                    second = client.GenerationJob.start(
+                        python=sys.executable, models=path, image=image,
+                        output=path / "output", gaussians=32768, seed=8,
+                        cache_minutes=2, cache_dir=cache,
+                    )
+                    self.assertEqual(spawn.call_count, 1)
+                    second_queue = sorted((cache / "queue").glob("*.json"))
+                    self.assertEqual(len(second_queue), 1)
+                    self.assertEqual(
+                        json.loads(second_queue[0].read_text())["idle_timeout"], 120.0
+                    )
+                    (second.directory / "complete.json").write_text(
+                        '{"schema": 1, "complete": true}', encoding="utf-8"
+                    )
+                    (second.directory / "splats.npz").touch()
+                    self.assertEqual(second.result(), second.directory / "splats.npz")
+                    second.cancel()
+                    process.terminate.assert_not_called()
+            finally:
+                client.shutdown_generation_server()
+            process.terminate.assert_called_once()
+
+    def test_warm_server_exits_when_idle_timeout_is_zero(self):
+        with tempfile.TemporaryDirectory(prefix="remi-warm-idle-") as directory:
+            path = Path(directory)
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-I",
+                    "-B",
+                    str(Path(client.__file__).with_name("worker.py")),
+                    "--serve",
+                    "--cache-dir",
+                    str(path / "cache"),
+                    "--models",
+                    str(path / "models"),
+                    "--idle-timeout",
+                    "0",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("released its model", result.stdout)
+
     def test_missing_components_fail_before_process_spawn(self):
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(client.subprocess, "Popen") as spawn:
             path = Path(directory)

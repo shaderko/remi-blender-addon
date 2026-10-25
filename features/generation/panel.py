@@ -97,6 +97,9 @@ class Remi_PT_GenerationSettings(bpy.types.Panel):
         controls.separator()
         controls.prop(settings, "python")
         controls.prop(settings, "models")
+        controls.prop(settings, "model_cache_minutes", text="Keep Model Loaded (min)")
+        if settings.model_cache_minutes:
+            controls.label(text=f"Warm cache for {settings.model_cache_minutes} min", icon="TIME")
         controls.prop(settings, "output")
         controls.separator()
         controls.label(text="Reconstructed Mesh")

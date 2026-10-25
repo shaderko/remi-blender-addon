@@ -76,7 +76,9 @@ vertex-colored surface using anisotropic density + Surface Nets, then switches
 to Optimize with the **Reconstructed · Decimate** preset. Each splat object
 keeps its own result; multiple models in one file are supported without an
 archive cache. This is a
-lossy approximation of the splats, not a native splat render. See
+lossy approximation of the splats, not a native splat render. The external
+generation worker keeps its model warm for 5 minutes by default; adjust this in
+the generation gear or set it to 0 to reload every run. See
 [setup and usage](docs/image_generation.md). Native rendering is tested on
 Blender 5.3 beta; this does not qualify all other tools for 5.3. Runtime paths
 and advanced controls live in the gear menu. Choose **Optimize** for the

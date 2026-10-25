@@ -36,6 +36,18 @@ def _models_default():
     )
 
 
+def _cache_changed(self, context):
+    if self.model_cache_minutes == 0:
+        try:
+            from ...integrations.triposplat.client import shutdown_generation_server
+
+            shutdown_generation_server()
+        except Exception as exc:
+            print(f"Remi: could not release the generation cache: {exc}")
+    if context is not None and context.area is not None:
+        context.area.tag_redraw()
+
+
 class RemiGenerationSettings(PropertyGroup):
     image: StringProperty(name="Image", subtype="FILE_PATH")
     python: StringProperty(
@@ -50,6 +62,14 @@ class RemiGenerationSettings(PropertyGroup):
     mesh_output: StringProperty(
         name="Mesh Output", subtype="DIR_PATH",
         default=_LOCAL_DEFAULTS.get("mesh_output", str(Path(bpy.utils.user_resource("DATAFILES")) / "remi" / "meshes")),
+    )
+    model_cache_minutes: IntProperty(
+        name="Keep Model Loaded",
+        description="Minutes to keep the loaded generation model warm between runs; 0 disables the warm worker",
+        default=5,
+        min=0,
+        max=120,
+        update=_cache_changed,
     )
     mesh_detail: EnumProperty(name="Mesh Detail", items=[
         ("160", "Draft", "About 470k triangles; fastest"),

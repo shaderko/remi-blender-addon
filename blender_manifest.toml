@@ -32,6 +32,7 @@ wheels = [
 ]
 
 [permissions]
+network = "Download optional model weights from HTTPS storage"
 files = "Import and process meshes, textures, images, and Gaussian splats"
 
 [build]

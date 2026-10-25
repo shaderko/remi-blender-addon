@@ -168,6 +168,9 @@ def verify_archive(artifact, target):
         wheels = {name for name in archive.namelist() if name.endswith(".whl")}
         if native != expected_native or wheels != {expected_wheel}:
             raise RuntimeError("Archive contains missing or foreign platform binaries")
+        if any(name.startswith("models/") or name.endswith((".pt", ".safetensors", ".onnx"))
+               for name in archive.namelist()):
+            raise RuntimeError("Model weights must be downloaded, not shipped in the extension")
         if hashlib.sha256(archive.read(expected_wheel)).hexdigest() != wheel_spec(target)["sha256"]:
             raise RuntimeError("Archive wheel checksum mismatch")
 
@@ -228,8 +231,9 @@ def main():
         installed_smoke(args.blender, args.artifact.resolve())
     else:
         if args.command == "check":
-            run(sys.executable, "-m", "unittest", "discover", "-s", ROOT / "tests",
-                "-p", "test_platform_support.py")
+            for pattern in ("test_platform_support.py", "test_model_download.py"):
+                run(sys.executable, "-m", "unittest", "discover", "-s", ROOT / "tests",
+                    "-p", pattern)
             for test in TESTS:
                 if test == "blender_target_decimation_regression.py":
                     # Exercise the actual target reducer with the same pinned

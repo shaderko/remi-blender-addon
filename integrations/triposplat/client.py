@@ -114,7 +114,7 @@ def _default_cache_dir():
 def _executable(python):
     executable = shutil.which(python) if python else None
     if executable is None or not Path(executable).is_file():
-        raise ValueError("Choose an external Python executable with CUDA PyTorch installed")
+        raise ValueError("Choose an external Python executable in generation settings")
     return Path(executable)
 
 
@@ -173,7 +173,7 @@ class GenerationJob:
             raise ValueError(f"Input image not found: {image}")
         missing = [name for name in COMPONENTS if not (models / name).is_file()]
         if missing:
-            raise ValueError(f"Missing model files: {', '.join(missing)}")
+            raise ValueError(f"Missing model files: {', '.join(missing)}. Use Download Models in generation settings.")
         if int(gaussians) not in (32768, 65536, 131072, 262144):
             raise ValueError("Unsupported Gaussian count")
         if not 0 <= int(seed) <= 2147483647:
@@ -307,3 +307,54 @@ class GenerationJob:
                 self.process.wait(timeout=5)
         self._close_log()
         # Keep logs and any partial output for diagnosis; never delete user data.
+
+
+class ModelDownloadJob(GenerationJob):
+    """Use the same cancellable process boundary without loading inference packages."""
+
+    @classmethod
+    def start(cls, *, python, models, base_url):
+        from .download import model_base
+
+        executable = _executable(python)
+        base_url = model_base(base_url)
+        directory = Path(tempfile.mkdtemp(prefix="remi-model-download-"))
+        token = uuid.uuid4().hex
+        models = Path(models).resolve()
+        log = (directory / "worker.log").open("wb")
+        try:
+            process = subprocess.Popen(
+                [str(executable), "-I", "-B", "-u",
+                 str(Path(__file__).with_name("download.py")),
+                 "--base-url", base_url, "--models", str(models),
+                 "--status-dir", str(directory), "--token", token],
+                cwd=directory, stdin=subprocess.DEVNULL, stdout=log,
+                stderr=subprocess.STDOUT,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except Exception:
+            log.close()
+            raise
+        job = cls(process, directory, log)
+        job.models, job.token = models, token
+        return job
+
+    def result(self):
+        code = self.poll()
+        if code is None:
+            raise RuntimeError("Model download has not finished")
+        if code != 0 or not self._complete():
+            error = self.status().get("error", "Model download did not complete")
+            raise RuntimeError(f"{error}. See {self.directory / 'worker.log'}")
+        return self.models
+
+    def cancel(self):
+        from .download import partial_path
+
+        super().cancel()
+        # Only delete this process's incomplete files, never another job's files.
+        for name in COMPONENTS:
+            try:
+                partial_path(self.models, name, self.token).unlink(missing_ok=True)
+            except (OSError, ValueError):
+                pass

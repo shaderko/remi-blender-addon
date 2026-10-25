@@ -8,6 +8,8 @@ import bpy
 from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 from bpy.types import PropertyGroup
 
+from ...integrations.triposplat.download import DEFAULT_MODEL_BASE
+
 
 def _configuration_defaults():
     """Optional per-Blender-profile paths, without changing startup.blend."""
@@ -19,7 +21,7 @@ def _configuration_defaults():
     if not isinstance(values, dict):
         return {}
     return {key: value for key, value in values.items()
-            if key in {"python", "models", "output", "mesh_output"} and isinstance(value, str) and value.strip()}
+            if key in {"python", "models", "output", "mesh_output", "download_url"} and isinstance(value, str) and value.strip()}
 
 
 _LOCAL_DEFAULTS = _configuration_defaults()
@@ -55,6 +57,11 @@ class RemiGenerationSettings(PropertyGroup):
         description="Detected automatically; leave empty to use the local default, or choose a CUDA/PyTorch Python environment",
     )
     models: StringProperty(name="Model Folder", subtype="DIR_PATH", default=_models_default())
+    download_url: StringProperty(
+        name="Model Download URL",
+        description="Public HTTPS directory containing bundle.json on Hetzner Object Storage; no credentials",
+        default=os.environ.get("REMI_TRIPOSPLAT_DOWNLOAD_URL") or _LOCAL_DEFAULTS.get("download_url", DEFAULT_MODEL_BASE),
+    )
     output: StringProperty(
         name="Output Folder", subtype="DIR_PATH",
         default=_LOCAL_DEFAULTS.get("output", str(Path(bpy.utils.user_resource("DATAFILES")) / "remi" / "generations")),

@@ -66,6 +66,7 @@ assert "torch" not in sys.modules
 assert bpy.context.scene.remi_generation.model_cache_minutes == 5
 assert bpy.ops.remi.generate_splats.poll()
 assert bpy.ops.remi.import_splats.poll()
+assert bpy.ops.remi.download_models.poll()
 assert hasattr(bpy.types, "Remi_PT_GenerationSettings")
 from remi.features.generation.panel import draw_generation
 layout = Layout()
@@ -73,6 +74,51 @@ bpy.context.view_layer.objects.active = None
 draw_generation(layout, bpy.context)
 assert "remi.generate_splats" in layout.operators
 assert "remi.import_splats" in layout.operators
+from remi.features.generation.panel import Remi_PT_GenerationSettings
+settings_layout = Layout()
+Remi_PT_GenerationSettings.draw(type("Panel", (), {"layout": settings_layout})(), bpy.context)
+assert "remi.download_models" in settings_layout.operators
+
+# Exercise download modal success/cancel and offline gating without network access.
+from types import SimpleNamespace
+from remi.features.generation.model_operators import Remi_OT_DownloadModels
+from remi.features.generation import model_operators
+download_state = SimpleNamespace(busy=False, status="", status_kind="IDLE", directory="")
+download_settings = SimpleNamespace(download_url="https://models.example/release/blender/",
+                                    models=tempfile.gettempdir(), python="")
+manager = mock.Mock()
+manager.remi_generation = download_state
+download_context = SimpleNamespace(scene=SimpleNamespace(remi_generation=download_settings),
+                                   window_manager=manager, window=object(), area=mock.Mock())
+download_operator = SimpleNamespace(_check_access=mock.Mock(), report=mock.Mock())
+download_job = mock.Mock()
+download_job.directory = Path(tempfile.gettempdir())
+download_job.status.return_value = {"phase": "Downloading models · 50%"}
+download_job.poll.return_value = None
+with mock.patch.object(model_operators.ModelDownloadJob, "start", return_value=download_job), \
+     mock.patch.object(model_operators, "shutdown_generation_server"):
+    assert Remi_OT_DownloadModels.execute(download_operator, download_context) == {"RUNNING_MODAL"}
+    assert download_state.busy
+    assert Remi_OT_DownloadModels.modal(download_operator, download_context,
+                                       SimpleNamespace(type="TIMER")) == {"RUNNING_MODAL"}
+    assert download_state.status == "Downloading models · 50%"
+    download_job.poll.return_value = 0
+    assert Remi_OT_DownloadModels.modal(download_operator, download_context,
+                                       SimpleNamespace(type="TIMER")) == {"FINISHED"}
+    assert not download_state.busy and generation_runtime.job is None
+    assert download_state.status_kind == "SUCCESS"
+    assert Remi_OT_DownloadModels.execute(download_operator, download_context) == {"RUNNING_MODAL"}
+    assert Remi_OT_DownloadModels.modal(download_operator, download_context,
+                                       SimpleNamespace(type="ESC", value="PRESS")) == {"CANCELLED"}
+    assert not download_state.busy and generation_runtime.job is None
+    assert download_state.status_kind == "CANCELLED"
+with mock.patch.object(model_operators, "bpy", SimpleNamespace(app=SimpleNamespace(online_access=False))):
+    try:
+        Remi_OT_DownloadModels._check_access()
+    except ValueError as exc:
+        assert "Allow Online Access" in str(exc)
+    else:
+        raise AssertionError("Offline Blender must not start a download")
 bpy.context.view_layer.objects.active = bpy.data.objects.get("Cube")
 
 with tempfile.TemporaryDirectory(prefix="remi-splat-test-") as directory:
@@ -185,6 +231,7 @@ with tempfile.TemporaryDirectory(prefix="remi-splat-test-") as directory:
     session_runtime.begin(bpy.context, original)
     assert not bpy.ops.remi.generate_splats.poll()
     assert not bpy.ops.remi.import_splats.poll()
+    assert not bpy.ops.remi.download_models.poll()
     session_runtime.cancel(bpy.context)
 
     fake = mock.Mock()

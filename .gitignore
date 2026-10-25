@@ -5,6 +5,14 @@ __pycache__/
 dist/
 models/
 generations/
+*.pt
+*.pth
+*.safetensors
+*.onnx
+*.wasm
+.env
+.env.*
+!.env.example
 wheels/*.whl
 features/retopology/instant_meshes/native/build/
 features/uv/engine/native/build/

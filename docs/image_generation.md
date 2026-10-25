@@ -1,6 +1,6 @@
 # Image to Gaussian splats (experimental)
 
-Remi can run the `rand6_100_ncm` checkpoint (validation-selected step 600)
+Remi can run the `rand6_100_ncm` checkpoint (published default: step 1500)
 from Blender. No mesh needs to be selected. A generated splat can then be
 reconstructed into a **vertex-colored polygon mesh** with **Create Mesh** and
 passed directly into Optimize.
@@ -19,7 +19,8 @@ need their up-axis set to Z.
 ## Local setup
 
 Generation runs in an external Python process. Blender does **not** load
-PyTorch, install packages, download weights, or contact a cloud API. The initial
+PyTorch, install packages, or contact an inference API. Optional model downloads
+use a separate subprocess only after explicit confirmation. The initial
 backend requires an NVIDIA CUDA GPU with bfloat16 support; CPU and Apple GPU
 inference are not currently supported.
 
@@ -51,6 +52,36 @@ licenses before redistributing weights; this script is a local copy, not a
 redistribution mechanism.
 
 ## In Blender
+
+### Download weights from Hetzner (installed add-ons)
+
+You do not need the research checkout when a model release has been published.
+In **Generate → gear**, the **Model Download URL** defaults to the public release
+`https://remipublic.hel1.your-objectstorage.com/models/triposplat-rand6_100_ncm-step1500-af36bcb6-v1/blender/`.
+Choose a writable **Model Folder** and click
+**Download Models**. Enable **Allow Online Access** in Blender Preferences first.
+Confirm the approximately 4.5 GB download; Blender remains interactive. The
+cancel button or `Esc` stops it. Verified completed files are reused on retry;
+cancelled/incomplete files restart, and conflicting existing weights are never replaced.
+Transient interruptions during an active transfer resume the current file with
+a checked HTTP range instead of discarding the downloaded prefix.
+Downloads are streamed, size/SHA-256 verified and atomically installed. Images
+are never uploaded, no S3 credentials belong in the add-on, and the ZIP remains
+weight-free. Model-download logs appear through the folder icon.
+
+The URL may also be configured with `REMI_TRIPOSPLAT_DOWNLOAD_URL` or a
+`download_url` string in the per-profile `remi-generation.json`. Use a trusted,
+versioned release: the HTTPS manifest supplies the expected checksums. The
+website uses a separate `/webgpu/` export in the **same bucket**; PyTorch weights
+are not interchangeable with ONNX graphs. Blender generation still requires
+CUDA/PyTorch, not WebGPU. Downloads require only the external Python standard
+library. No network access is needed during generation once files are installed.
+
+Bucket setup and publishing live in the website repository's
+`tools/model-storage/README.md`. Public model storage must be separate from
+private user uploads, and redistribution rights must be checked before upload.
+
+### Generate locally
 
 1. Load the updated add-on and open **3D View → N → Remi** in Object Mode.
 2. Choose the **Generate** tab. **Optimize** contains the mesh workflow separately.
@@ -116,7 +147,7 @@ available until its cache timeout.
 
 For installed copies, machine-local defaults can be stored in
 `remi-generation.json` inside that Blender version's user **config** folder,
-with string fields `python`, `models`, `output`, and `mesh_output`. This avoids changing the
+with string fields `python`, `models`, `output`, `mesh_output`, and `download_url`. This avoids changing the
 user's `startup.blend` or copying model weights into the extension. Defaults
 are read when Remi loads; saved scene values still take precedence, and
 `REMI_TRIPOSPLAT_MODELS` overrides the configured model default. The local 5.3

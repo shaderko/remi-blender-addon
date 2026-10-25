@@ -5,7 +5,7 @@ import bpy
 
 from ...blender.gaussian_splats import native_splats_available
 from ...blender.reconstructed_mesh import is_reconstructed_mesh, mesh_for_splat
-from .mesh_operators import can_convert, splat_source, runtime as mesh_runtime
+from .mesh_operators import can_convert, splat_source
 
 
 def _draw_status(layout, state):
@@ -16,7 +16,7 @@ def _draw_status(layout, state):
         row.label(text=state.status, icon="TIME")
         row.operator("remi.cancel_generation", text="", icon="CANCEL")
     elif state.status_kind == "SUCCESS":
-        row.label(text="Model ready", icon="CHECKMARK")
+        row.label(text="Models ready" if state.status.startswith("Models downloaded") else "Model ready", icon="CHECKMARK")
     elif state.status_kind == "CANCELLED":
         row.label(text="Cancelled")
     elif state.status_kind == "ERROR":
@@ -44,10 +44,10 @@ def draw_generation(layout, context):
     if context.mode != "OBJECT":
         layout.label(text="Switch to Object Mode to generate", icon="INFO")
     _draw_status(layout, state)
-    _draw_mesh_controls(layout, context, state, settings)
+    _draw_mesh_controls(layout, context, state)
 
 
-def _draw_mesh_controls(layout, context, state, settings):
+def _draw_mesh_controls(layout, context, state):
     if state.mesh_busy:
         row = layout.row(align=True)
         row.label(text=state.mesh_status or "Creating mesh…", icon="TIME")
@@ -97,6 +97,8 @@ class Remi_PT_GenerationSettings(bpy.types.Panel):
         controls.separator()
         controls.prop(settings, "python")
         controls.prop(settings, "models")
+        controls.prop(settings, "download_url")
+        controls.operator("remi.download_models", text="Download Models", icon="IMPORT")
         controls.prop(settings, "model_cache_minutes", text="Keep Model Loaded (min)")
         if settings.model_cache_minutes:
             controls.label(text=f"Warm cache for {settings.model_cache_minutes} min", icon="TIME")

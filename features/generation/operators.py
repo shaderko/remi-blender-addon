@@ -156,7 +156,7 @@ class Remi_OT_GenerateSplats(Operator):
 class Remi_OT_CancelGeneration(Operator):
     bl_idname = "remi.cancel_generation"
     bl_label = "Cancel Generation"
-    bl_description = "Stop generation without deleting saved outputs"
+    bl_description = "Stop generation or model download, keeping completed files"
 
     @classmethod
     def poll(cls, context):

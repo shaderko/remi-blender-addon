@@ -54,7 +54,8 @@ class ModelDownloadTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             phases = []
-            self.assertEqual(download.download_models(BASE, root, phases.append, opener=self.opener), root)
+            # macOS /var aliases and Windows short paths resolve to different spellings.
+            self.assertEqual(download.download_models(BASE, root, phases.append, opener=self.opener), root.resolve())
             for name in download.COMPONENTS:
                 self.assertEqual((root / name).read_bytes(), self.files[name])
             self.assertEqual(list(root.rglob("*.partial")), [])

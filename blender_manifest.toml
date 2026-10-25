@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "remi"
-version = "2.5.0"
+version = "2.6.0"
 name = "Remi"
 tagline = "Repair, optimize, retopologize, texture, and bake meshes"
 maintainer = "Remi"

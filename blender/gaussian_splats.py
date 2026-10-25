@@ -73,6 +73,88 @@ def write_splat_archive(obj, path):
     return Path(path)
 
 
+def covariance_normals(arrays, view_matrix=None, object_matrix=None):
+    """Estimate one normal per Gaussian from its flattest covariance axis.
+
+    Standard 3DGS has orientation and anisotropic scale but no stored normal.
+    The shortest ellipsoid axis is the usual surfel normal estimate. When a
+    view matrix is supplied, normals are oriented toward the camera so the pass
+    represents the visible side of the splat surface.
+    """
+    positions = np.asarray(arrays["positions"], dtype=np.float32)
+    scales = np.asarray(arrays["scales"], dtype=np.float32)
+    rotations = np.asarray(arrays["rotations"], dtype=np.float32)
+    q = rotations / np.maximum(np.linalg.norm(rotations, axis=1, keepdims=True), 1e-12)
+    w, x, y, z = q.T
+    rotation = np.stack(
+        (
+            1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y),
+            2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x),
+            2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y),
+        ),
+        axis=1,
+    ).reshape(-1, 3, 3)
+    covariance = np.einsum(
+        "nij,nj,nkj->nik", rotation, np.maximum(scales, 1e-8) ** 2, rotation
+    )
+    _values, eigenvectors = np.linalg.eigh(covariance)
+    normals = eigenvectors[:, :, 0].astype(np.float32)
+    if object_matrix is not None:
+        matrix = np.asarray(object_matrix, dtype=np.float64).reshape(4, 4)
+        linear = matrix[:3, :3]
+        positions = (
+            positions @ linear.T + matrix[:3, 3]
+        ).astype(np.float32)
+        normal_matrix = np.linalg.inv(linear).T
+        normals = (normals @ normal_matrix.T).astype(np.float32)
+        normals /= np.maximum(np.linalg.norm(normals, axis=1, keepdims=True), 1e-8)
+    if view_matrix is not None:
+        view = np.asarray(view_matrix, dtype=np.float64).reshape(4, 4)
+        camera = np.linalg.inv(view)[:3, 3]
+        toward_camera = camera[None, :] - positions
+        normals[np.sum(normals * toward_camera, axis=1) < 0.0] *= -1.0
+    return normals
+
+
+def create_normal_splat(context, splat, view_matrix):
+    """Create a temporary native splat object whose radiance encodes normals.
+
+    Blender's native Gaussian renderer composites radiance:base with the real
+    splat alpha. Reusing it for encoded covariance normals gives a normal pass
+    with exactly the same visibility, overlap and silhouette as the colour
+    render. The returned object must be removed with ``remove_normal_splat``.
+    """
+    if not uses_native_splats(splat):
+        return None
+    arrays = splat_arrays(splat)
+    normals = covariance_normals(
+        arrays, view_matrix, object_matrix=splat.matrix_world
+    )
+    encoded = np.clip(normals * 0.5 + 0.5, 0.0, 1.0)
+    sh_dc = (encoded - 0.5) / 0.28209479177387814
+    radiance = np.column_stack((sh_dc, arrays["opacities"])).astype(np.float32)
+    data = splat.data.copy()
+    attribute = data.attributes.get("radiance:base")
+    if attribute is None:
+        bpy.data.pointclouds.remove(data)
+        raise RuntimeError("Native Gaussian data has no radiance attribute")
+    attribute.data.foreach_set("vector", radiance.ravel())
+    obj = bpy.data.objects.new(f"{splat.name} \u00b7 normal pass", data)
+    obj.matrix_world = splat.matrix_world.copy()
+    context.scene.collection.objects.link(obj)
+    obj.hide_set(False)
+    return obj
+
+
+def remove_normal_splat(obj):
+    if obj is None:
+        return
+    data = obj.data
+    bpy.data.objects.remove(obj, do_unlink=True)
+    if data is not None and data.users == 0:
+        bpy.data.pointclouds.remove(data)
+
+
 def native_splats_available():
     property_type = bpy.types.PointCloud.bl_rna.properties.get("type")
     return bool(property_type and "GAUSSIAN_SPLAT" in property_type.enum_items)

@@ -96,6 +96,26 @@ def finish():
     image.pixels.foreach_get(pixels)
     masked_texels = int(np.count_nonzero(pixels.reshape(-1, 4)[:, 3] > 0.01))
     assert 1000 < masked_texels < 500000, masked_texels
+    assert layer.normal_path and Path(layer.normal_path).is_file(), state.status
+    normal_image = bpy.data.images.get(layer.normal_name)
+    assert normal_image is not None
+    assert normal_image.colorspace_settings.name == "Non-Color"
+    normal_pixels = np.empty(len(normal_image.pixels), dtype=np.float32)
+    normal_image.pixels.foreach_get(normal_pixels)
+    normal_texels = int(np.count_nonzero(normal_pixels.reshape(-1, 4)[:, 3] > 0.01))
+    assert 1000 < normal_texels < 500000, normal_texels
+    material_nodes = mesh.data.materials[0].node_tree.nodes
+    assert any(node.type == "NORMAL_MAP" for node in material_nodes)
+    assert any(
+        node.type == "TEX_IMAGE" and node.image == normal_image
+        for node in material_nodes
+    )
+    layer.visible = False
+    material_nodes = mesh.data.materials[0].node_tree.nodes
+    assert not any(node.type == "NORMAL_MAP" for node in material_nodes)
+    layer.visible = True
+    material_nodes = mesh.data.materials[0].node_tree.nodes
+    assert any(node.type == "NORMAL_MAP" for node in material_nodes)
     assert not projection_area.has_points()
     (args.output / "texture_view_modal_smoke_passed.txt").write_text(
         f"View projection passed: {len(mesh.remi_texture_layers)} layer(s)\n"

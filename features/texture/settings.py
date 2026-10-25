@@ -58,6 +58,8 @@ class RemiTextureLayer(PropertyGroup):
     )
     image_path: StringProperty(name="Image", subtype="FILE_PATH")
     image_name: StringProperty(name="Image Name")
+    normal_path: StringProperty(name="Normal", subtype="FILE_PATH")
+    normal_name: StringProperty(name="Normal Name")
     source: StringProperty(name="Source")
 
 
@@ -92,6 +94,27 @@ class RemiTextureSettings(PropertyGroup):
         default=24.0,
         min=0.0,
         max=128.0,
+        subtype="PIXEL",
+    )
+    view_normal_map: BoolProperty(
+        name="Normal Map",
+        description="Render a normal pass from the visible Gaussians and project it with the view layer",
+        default=True,
+    )
+    view_normal_strength: FloatProperty(
+        name="Normal Strength",
+        description="Blend between the clean mesh normal and the rendered Gaussian normal",
+        default=1.0,
+        min=0.0,
+        max=1.0,
+        subtype="FACTOR",
+    )
+    view_normal_smoothing: IntProperty(
+        name="Normal Smoothing",
+        description="Texture-space smoothing radius for the rendered Gaussian normals, in pixels",
+        default=2,
+        min=0,
+        max=8,
         subtype="PIXEL",
     )
     samples: IntProperty(

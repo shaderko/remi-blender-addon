@@ -67,6 +67,11 @@ def _draw_settings(layout, settings, mesh):
     row.prop(settings, "texture_size", text="Texture")
     row.prop(settings, "view_alpha_threshold", text="View Alpha")
     layout.prop(settings, "view_mask_feather", text="Area Feather")
+    layout.prop(settings, "view_normal_map", text="Normal Map")
+    if settings.view_normal_map:
+        row = layout.row(align=True)
+        row.prop(settings, "view_normal_strength", text="Normal Strength")
+        row.prop(settings, "view_normal_smoothing", text="Smoothing")
     layout.prop(settings, "pack_images", text="Pack Images")
     layout.prop(settings, "smooth_mesh", text="Smooth Mesh")
 

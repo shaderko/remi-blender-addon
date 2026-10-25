@@ -210,6 +210,47 @@ class ProjectionTests(unittest.TestCase):
         self.assertLess(left.report["visible_texels"], full.report["visible_texels"])
         self.assertGreater(left.report["visible_texels"], 0)
 
+    def test_view_projection_accepts_a_rendered_normal_pass(self):
+        mesh = plane_mesh()
+        mesh["positions"] = mesh["positions"] - np.array([0.5, 0.5, 0.0], dtype=np.float32)
+        view = np.eye(4, dtype=np.float64)
+        view[2, 3] = -3.0
+        f = 1.0 / np.tan(np.radians(50.0) / 2.0)
+        near, far = 0.1, 100.0
+        projection_matrix = np.array(
+            [
+                [f, 0, 0, 0],
+                [0, f, 0, 0],
+                [0, 0, (far + near) / (near - far), 2 * far * near / (near - far)],
+                [0, 0, -1, 0],
+            ],
+            dtype=np.float64,
+        )
+        image = np.ones((256, 256, 4), dtype=np.float32)
+        image[..., 0] = 1.0
+        image[..., 1] = 0.2
+        image[..., 2] = 0.1
+        normal_image = np.zeros((256, 256, 4), dtype=np.float32)
+        normal_image[..., :3] = (0.5, 0.85, 0.85)
+        normal_image[..., 3] = 1.0
+        result = projection.project_from_view(
+            mesh,
+            image,
+            view,
+            projection_matrix,
+            texture_size=128,
+            normal_image=normal_image,
+            normal_smoothing=0,
+        )
+        self.assertIsNotNone(result.normal)
+        self.assertGreater(float(result.normal[64, 64, 3]), 0.9)
+        self.assertTrue(
+            np.allclose(result.normal[64, 64, :3], (0.5, 0.85, 0.85), atol=0.03)
+        )
+        with tempfile.TemporaryDirectory(prefix="remi-view-normal-") as directory:
+            path = projection.save_view_normal(result, Path(directory))
+            self.assertTrue(Path(path).is_file())
+
     def test_worker_writes_images_and_completion(self):
         with tempfile.TemporaryDirectory(prefix="remi-splat-project-") as directory:
             root = Path(directory)

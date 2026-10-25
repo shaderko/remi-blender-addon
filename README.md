@@ -47,7 +47,7 @@ The Blender add-on remains free and open source for local work and manual tools.
 | Run automatic quad retopology | Optional AutoRemesher integration |
 | Build production UVs | Validated charting, repair, and xatlas packing |
 | Transfer source appearance | Albedo, roughness, normal, and AO baking |
-| Project splats from the current view | **Texture** workspace: lasso area, hideable view layers, optional 3D base/normal |
+| Project splats from the current view | **Texture** workspace: lasso area, hideable view layers with rendered Gaussian normals, optional 3D base |
 | Separate fused parts or doubled shells | Edit Mode selection tools |
 
 ## Install
@@ -92,10 +92,11 @@ repeat; each projection is a separate layer that can be hidden, faded, or
 deleted.
 
 The projection is matched in screen space through the viewport camera, so the
-mesh and splat objects do not need matching origins. Projection runs in an
-external Python process; the Generate Python environment must provide `numpy`,
-`scipy`, and `Pillow`. **Project 3D** remains available for an unmasked
-full-surface base and normal map.
+mesh and splat objects do not need matching origins. Each view layer can also
+include a normal map rendered from the same visible Gaussians. Projection runs
+in an external Python process; the Generate Python environment must provide
+`numpy`, `scipy`, and `Pillow`. **Project 3D** remains available for an
+unmasked full-surface base.
 
 See [texture projection](docs/texture_projection.md) for the view workflow,
 layers, settings, and limitations.
@@ -253,7 +254,10 @@ Click **Draw Area** and drag a loop around the region that should receive the
 next projection. Then **Project from View** renders the splats from the current
 viewport camera and projects that view only inside the drawn region, as a layer.
 Add several views around the object, then hide, fade, or delete layers in the
-Layers panel. The material is rebuilt from the visible layers.
+Layers panel. The material is rebuilt from the visible layers. With **Normal
+Map** enabled, Remi renders a second pass of the same Gaussians with their
+covariance normals and stores a tangent-space normal map on each view layer;
+normal layers composite over an existing or 3D-projected base normal.
 
 **Project 3D** is optional: it samples the Gaussian field at every UV texel for
 a full-surface base, tangent-space normal, and confidence map. It does not rely

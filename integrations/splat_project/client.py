@@ -112,10 +112,14 @@ class ProjectionJob:
         projection_matrix,
         output,
         view_background=None,
+        normal_image=None,
+        normal_background=None,
         texture_size=2048,
         alpha_threshold=0.01,
         view_mask=None,
         view_mask_feather=24.0,
+        normal_strength=1.0,
+        normal_smoothing=2,
         source=None,
     ):
         executable = shutil.which(python) if python else None
@@ -130,12 +134,24 @@ class ProjectionJob:
             view_background = Path(view_background)
             if not view_background.is_file():
                 raise ValueError(f"View background image not found: {view_background}")
+        if normal_image is not None:
+            normal_image = Path(normal_image)
+            if not normal_image.is_file():
+                raise ValueError(f"Normal view image not found: {normal_image}")
+        if normal_background is not None:
+            normal_background = Path(normal_background)
+            if not normal_background.is_file():
+                raise ValueError(f"Normal view background image not found: {normal_background}")
         if int(texture_size) not in (512, 1024, 2048, 4096, 8192):
             raise ValueError("Unsupported texture size")
         if not 0.0 <= float(alpha_threshold) <= 1.0:
             raise ValueError("Alpha threshold must be in [0, 1]")
         if not 0.0 <= float(view_mask_feather) <= 256.0:
             raise ValueError("Area feather must be between 0 and 256 pixels")
+        if not 0.0 <= float(normal_strength) <= 1.0:
+            raise ValueError("Normal strength must be in [0, 1]")
+        if not 0 <= int(normal_smoothing) <= 16:
+            raise ValueError("Normal smoothing must be between 0 and 16 pixels")
         if view_mask is not None:
             if not isinstance(view_mask, (list, tuple)):
                 raise ValueError("View mask must be a polygon point list")
@@ -161,6 +177,8 @@ class ProjectionJob:
                     "mesh": str(mesh.resolve()),
                     "view_image": str(view_image.resolve()),
                     "view_background": str(view_background.resolve()) if view_background is not None else None,
+                    "normal_image": str(normal_image.resolve()) if normal_image is not None else None,
+                    "normal_background": str(normal_background.resolve()) if normal_background is not None else None,
                     "view_matrix": view_matrix,
                     "projection_matrix": projection_matrix,
                     "source": str(source or ""),
@@ -168,6 +186,8 @@ class ProjectionJob:
                     "alpha_threshold": float(alpha_threshold),
                     "view_mask": view_mask,
                     "view_mask_feather": float(view_mask_feather),
+                    "normal_strength": float(normal_strength),
+                    "normal_smoothing": int(normal_smoothing),
                 },
                 indent=2,
             ),
@@ -211,8 +231,10 @@ class ProjectionJob:
         if report.get("mode") == "view" or layer.is_file():
             if not layer.is_file():
                 raise RuntimeError(f"Projector did not produce {layer}")
+            normal = self.directory / "normal.png"
             return {
                 "layer": str(layer),
+                "normal": str(normal) if normal.is_file() else None,
                 "report": str(report_path),
                 "directory": str(self.directory),
                 "report_data": report,

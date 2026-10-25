@@ -9,7 +9,13 @@ import bpy
 from bpy.props import EnumProperty, IntProperty
 from bpy.types import Operator
 
-from ...blender.gaussian_splats import import_splats, native_splats_available
+from ...blender.gaussian_splats import (
+    create_normal_splat,
+    import_splats,
+    native_splats_available,
+    remove_normal_splat,
+    uses_native_splats,
+)
 from ...blender.splat_projection import (
     ensure_texture_uv,
     export_mesh_archive,
@@ -34,7 +40,11 @@ from .service import (
     output_directory,
     source_is_valid,
 )
-from .view_camera import render_splat_view, viewport_region
+from .view_camera import (
+    render_splat_normal_view,
+    render_splat_view,
+    viewport_region,
+)
 
 
 class TextureRuntime:
@@ -113,6 +123,14 @@ def _remove_temporary_splat(obj):
             bpy.data.pointclouds.remove(data)
         elif isinstance(data, bpy.types.Mesh):
             bpy.data.meshes.remove(data)
+
+
+def _matrices_close(first, second, tolerance=1e-5):
+    return all(
+        abs(float(a) - float(b)) <= tolerance
+        for row_a, row_b in zip(first, second)
+        for a, b in zip(row_a, row_b)
+    )
 
 
 def _phase_label(phase):
@@ -306,6 +324,7 @@ class Remi_OT_ProjectView(Operator):
             return {"CANCELLED"}
 
         temp_splat = None
+        normal_splat = None
         previous_active = context.view_layer.objects.active
         previous_selected = list(context.selected_objects)
         try:
@@ -337,7 +356,15 @@ class Remi_OT_ProjectView(Operator):
             mesh_archive = temporary / f"remi_texture_mesh_{uuid.uuid4().hex}.npz"
             view_black = temporary / f"remi_texture_view_black_{uuid.uuid4().hex}.png"
             view_white = temporary / f"remi_texture_view_white_{uuid.uuid4().hex}.png"
-            runtime.temp_paths = (mesh_archive, view_black, view_white)
+            normal_black = temporary / f"remi_texture_normal_black_{uuid.uuid4().hex}.png"
+            normal_white = temporary / f"remi_texture_normal_white_{uuid.uuid4().hex}.png"
+            runtime.temp_paths = (
+                mesh_archive,
+                view_black,
+                view_white,
+                normal_black,
+                normal_white,
+            )
 
             render_splat = source_object
             if render_splat is None:
@@ -361,6 +388,47 @@ class Remi_OT_ProjectView(Operator):
                     "The view changed while rendering the splat. "
                     "Keep the view still and project again."
                 )
+
+            normal_view = None
+            if settings.view_normal_map:
+                if not uses_native_splats(render_splat):
+                    raise RuntimeError(
+                        "Normal maps require native Gaussian splats in Blender 5.3+"
+                    )
+                state.status = "Rendering Gaussian normals from current view."
+                state.status_kind = "PROGRESS"
+                normal_splat = create_normal_splat(
+                    context, render_splat, view["view_matrix"]
+                )
+                if normal_splat is None:
+                    raise RuntimeError("Could not create the Gaussian normal pass")
+                try:
+                    normal_view = render_splat_normal_view(
+                        context,
+                        normal_splat,
+                        normal_black,
+                        normal_white,
+                    )
+                finally:
+                    remove_normal_splat(normal_splat)
+                    normal_splat = None
+                if (
+                    not _matrices_close(
+                        normal_view["view_matrix"], view["view_matrix"]
+                    )
+                    or not _matrices_close(
+                        normal_view["projection_matrix"], view["projection_matrix"]
+                    )
+                ):
+                    raise RuntimeError(
+                        "The view changed between the color and normal passes. "
+                        "Keep the view still and project again."
+                    )
+                if view_mask is not None and not projection_area.valid(context):
+                    raise RuntimeError(
+                        "The view changed while rendering the splat normals. "
+                        "Keep the view still and project again."
+                    )
             # The render call hides and restores render visibility; restore the
             # artist's selection before the modal worker starts.
             bpy.ops.object.select_all(action="DESELECT")
@@ -380,6 +448,8 @@ class Remi_OT_ProjectView(Operator):
                 mesh=mesh_archive,
                 view_image=view["image"],
                 view_background=view["background"],
+                normal_image=normal_view["image"] if normal_view is not None else None,
+                normal_background=normal_view["background"] if normal_view is not None else None,
                 view_matrix=view["view_matrix"],
                 projection_matrix=view["projection_matrix"],
                 output=output,
@@ -387,6 +457,8 @@ class Remi_OT_ProjectView(Operator):
                 alpha_threshold=float(settings.view_alpha_threshold),
                 view_mask=view_mask,
                 view_mask_feather=float(settings.view_mask_feather),
+                normal_strength=float(settings.view_normal_strength),
+                normal_smoothing=int(settings.view_normal_smoothing),
                 source=label,
             )
             runtime.manager = context.window_manager
@@ -416,6 +488,9 @@ class Remi_OT_ProjectView(Operator):
         finally:
             # A successful path keeps the temp splat only until rendering is
             # done; it is never needed by the worker.
+            if normal_splat is not None:
+                remove_normal_splat(normal_splat)
+                normal_splat = None
             if temp_splat is not None:
                 _remove_temporary_splat(temp_splat)
                 temp_splat = None
@@ -451,6 +526,7 @@ class Remi_OT_ProjectView(Operator):
                 mesh,
                 name="View",
                 image_path=result["layer"],
+                normal_path=result.get("normal"),
                 kind="VIEW",
                 alpha_mode="IMAGE",
                 source=state.source_name,

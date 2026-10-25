@@ -37,6 +37,25 @@ def _load_image(name, path, *, pack=True):
     return image
 
 
+def _load_normal_image(name, path, *, pack=True):
+    path = str(path)
+    if not Path(path).is_file():
+        raise ValueError(f"Projection normal image not found: {path}")
+    image = bpy.data.images.get(name)
+    if image is None:
+        image = bpy.data.images.load(path, check_existing=False)
+        image.name = name
+    else:
+        image.filepath = path
+        image.reload()
+    image.colorspace_settings.name = "Non-Color"
+    image.file_format = "PNG"
+    image.use_fake_user = True
+    if pack:
+        image.pack()
+    return image
+
+
 def _image_for_layer(layer):
     if layer.image_name:
         image = bpy.data.images.get(layer.image_name)
@@ -56,11 +75,32 @@ def _image_for_layer(layer):
         return None
 
 
+def _normal_for_layer(layer):
+    if layer.normal_name:
+        image = bpy.data.images.get(layer.normal_name)
+        if image is not None:
+            image.colorspace_settings.name = "Non-Color"
+            return image
+    if not layer.normal_path:
+        return None
+    try:
+        image = _load_normal_image(
+            layer.normal_name or f"Remi Layer Normal · {Path(layer.normal_path).stem}",
+            layer.normal_path,
+            pack=False,
+        )
+        layer.normal_name = image.name
+        return image
+    except ValueError:
+        return None
+
+
 def add_layer(
     mesh,
     name,
     image_path,
     *,
+    normal_path=None,
     kind="VIEW",
     alpha_mode="IMAGE",
     source="",
@@ -73,6 +113,11 @@ def add_layer(
     layer.name = _unique_name(mesh, name)
     try:
         image = _load_image(f"{mesh.name} · {layer.name}", image_path, pack=pack)
+        normal = None
+        if normal_path:
+            normal = _load_normal_image(
+                f"{mesh.name} · {layer.name} normal", normal_path, pack=pack
+            )
     except Exception:
         mesh.remi_texture_layers.remove(len(mesh.remi_texture_layers) - 1)
         raise
@@ -80,6 +125,9 @@ def add_layer(
     layer.alpha_mode = alpha_mode
     layer.image_path = str(image_path)
     layer.image_name = image.name
+    if normal_path:
+        layer.normal_path = str(normal_path)
+        layer.normal_name = normal.name if normal is not None else ""
     layer.source = source
     layer.visible = visible
     layer.opacity = opacity
@@ -155,6 +203,13 @@ def rebuild_layer_material(mesh):
     if normal_image is not None:
         normal_image.colorspace_settings.name = "Non-Color"
     normal_uv = normal_uv or str(mesh.get("remi_texture_normal_uv", "")) or uv_name
+    normal_layers = []
+    for index, layer in enumerate(ordered_layers(mesh)):
+        if not layer.visible:
+            continue
+        normal = _normal_for_layer(layer)
+        if normal is not None:
+            normal_layers.append((index, layer, normal))
 
     material = bpy.data.materials.get(f"{mesh.name} · layered")
     if material is None:
@@ -218,7 +273,62 @@ def rebuild_layer_material(mesh):
 
     links.new(previous.outputs["Color"], bsdf.inputs["Base Color"])
 
-    if normal_image is not None:
+    normal_socket = None
+    normal_map_uv = normal_uv
+    if normal_layers:
+        # View normals are tangent-space maps in the projection UV. Blend the
+        # visible layers over the existing/base normal where the layer alpha is
+        # present; the Blender normal-map node renormalizes the result.
+        normal_map_uv = uv_name
+        use_base = normal_image is not None and (
+            not normal_uv or not uv_name or normal_uv == uv_name
+        )
+        if use_base:
+            normal_texture = nodes.new("ShaderNodeTexImage")
+            normal_texture.name = "remi_normal_texture"
+            normal_texture.label = "Base normal"
+            normal_texture.image = normal_image
+            normal_texture.interpolation = "Linear"
+            normal_texture.extension = "EXTEND"
+            normal_texture.location = (-620, -520)
+            if normal_uv and hasattr(normal_texture, "uv_map"):
+                normal_texture.uv_map = normal_uv
+            normal_socket = normal_texture.outputs["Color"]
+        else:
+            neutral = nodes.new("ShaderNodeRGB")
+            neutral.name = "remi_normal_neutral"
+            neutral.label = "Neutral normal"
+            neutral.location = (-620, -520)
+            neutral.outputs["Color"].default_value = (0.5, 0.5, 1.0, 1.0)
+            normal_socket = neutral.outputs["Color"]
+
+        for position, (index, layer, normal) in enumerate(normal_layers):
+            normal_texture = nodes.new("ShaderNodeTexImage")
+            normal_texture.name = f"remi_layer_normal_{index}"
+            normal_texture.label = f"{layer.name} normal"
+            normal_texture.image = normal
+            normal_texture.interpolation = "Linear"
+            normal_texture.extension = "EXTEND"
+            normal_texture.location = (-620, -640 - 120 * position)
+            if uv_name and hasattr(normal_texture, "uv_map"):
+                normal_texture.uv_map = uv_name
+
+            multiply = nodes.new("ShaderNodeMath")
+            multiply.operation = "MULTIPLY"
+            multiply.name = f"remi_layer_normal_alpha_{index}"
+            multiply.location = (-360, -640 - 120 * position)
+            links.new(normal_texture.outputs["Alpha"], multiply.inputs[0])
+            multiply.inputs[1].default_value = float(layer.opacity)
+
+            mix = nodes.new("ShaderNodeMixRGB")
+            mix.name = f"remi_layer_normal_mix_{index}"
+            mix.blend_type = "MIX"
+            mix.location = (-180, -520 - 120 * position)
+            links.new(normal_socket, mix.inputs["Color1"])
+            links.new(normal_texture.outputs["Color"], mix.inputs["Color2"])
+            links.new(multiply.outputs["Value"], mix.inputs["Fac"])
+            normal_socket = mix.outputs["Color"]
+    elif normal_image is not None:
         normal_texture = nodes.new("ShaderNodeTexImage")
         normal_texture.name = "remi_normal_texture"
         normal_texture.label = "Projected normal"
@@ -228,11 +338,14 @@ def rebuild_layer_material(mesh):
         normal_texture.location = (-420, -520)
         if normal_uv and hasattr(normal_texture, "uv_map"):
             normal_texture.uv_map = normal_uv
+        normal_socket = normal_texture.outputs["Color"]
+
+    if normal_socket is not None:
         normal_map = nodes.new("ShaderNodeNormalMap")
         normal_map.location = (-80, -520)
-        if normal_uv and hasattr(normal_map, "uv_map"):
-            normal_map.uv_map = normal_uv
-        links.new(normal_texture.outputs["Color"], normal_map.inputs["Color"])
+        if normal_map_uv and hasattr(normal_map, "uv_map"):
+            normal_map.uv_map = normal_map_uv
+        links.new(normal_socket, normal_map.inputs["Color"])
         links.new(normal_map.outputs["Normal"], bsdf.inputs["Normal"])
 
     mesh.data.materials.clear()

@@ -39,6 +39,7 @@ class ProjectionResult:
 @dataclass(frozen=True)
 class ViewProjectionResult:
     layer: np.ndarray
+    normal: np.ndarray | None
     report: dict
 
 
@@ -691,6 +692,9 @@ def project_from_view(
     depth_epsilon=1e-4,
     view_mask=None,
     view_mask_feather=24.0,
+    normal_image=None,
+    normal_strength=1.0,
+    normal_smoothing=2,
 ):
     """Project a rendered camera view onto the UV-mapped mesh.
 
@@ -698,6 +702,11 @@ def project_from_view(
     Each UV texel is projected to screen space, depth-tested against the target
     mesh, and samples the splat view where that texel is the visible surface.
     An optional screen-space lasso mask limits the projection to a drawn area.
+
+    When ``normal_image`` is supplied it is the matching rendered normal pass
+    (encoded tangent-space-ready RGB plus splat alpha). It is projected with
+    the same visibility rules and encoded in the mesh tangent basis, producing
+    a normal layer that matches the rendered splat surface.
     """
     started = time.perf_counter()
     image = np.asarray(view_image, dtype=np.float32)
@@ -712,14 +721,32 @@ def project_from_view(
     if width < 16 or height < 16:
         raise ValueError("View image is too small")
     texture_size = int(texture_size)
+
+    normal = None
+    normal_values = None
+    if normal_image is not None:
+        normal_values = np.asarray(normal_image, dtype=np.float32)
+        if normal_values.ndim != 3 or normal_values.shape[2] not in (3, 4):
+            raise ValueError("Normal view image must be H×W×3 or H×W×4")
+        if normal_values.shape[:2] != (height, width):
+            raise ValueError("Normal view image dimensions must match the view image")
+        if normal_values.shape[2] == 3:
+            normal_values = np.concatenate(
+                (normal_values, np.ones(normal_values.shape[:2] + (1,), dtype=np.float32)),
+                axis=-1,
+            )
+        normal_values = np.clip(normal_values, 0.0, 1.0)
+
     matrix = _view_projection_matrix(view_matrix, projection_matrix)
 
     area_mask = None
     if view_mask is not None and len(view_mask) >= 3:
         area_mask = _polygon_mask(width, height, view_mask, view_mask_feather)
         image[..., 3] *= area_mask
+        if normal_values is not None:
+            normal_values[..., 3] *= area_mask
 
-    positions, normals, _tangents, _sign, covered = rasterize_uv(
+    positions, normals, tangents, uv_sign, covered = rasterize_uv(
         mesh["positions"], mesh["normals"], mesh["uvs"], texture_size
     )
     depth_buffer = _rasterize_depth(mesh["positions"], matrix, width, height)
@@ -766,6 +793,49 @@ def project_from_view(
             layer[indices[0][keep], indices[1][keep], :3] = sampled[keep, :3]
             layer[indices[0][keep], indices[1][keep], 3] = alpha[keep]
 
+    normal_texels = 0
+    if normal_values is not None and visible.any():
+        sampled = _sample_view(normal_values, screen_x[visible], screen_y[visible])
+        normal_alpha = sampled[:, 3]
+        keep = normal_alpha >= float(alpha_threshold)
+        indices = np.nonzero(visible)
+        if keep.any():
+            encoded = sampled[keep, :3]
+            # The native normal pass is rendered with the Standard view
+            # transform, so the PNG values are the encoded normal itself.
+            world = _normalize(encoded * 2.0 - 1.0)
+            mesh_normal = normals[visible][keep]
+            world = _orient(world, mesh_normal)
+            normal_world = np.zeros((texture_size, texture_size, 3), dtype=np.float32)
+            normal_alpha_map = np.zeros((texture_size, texture_size), dtype=np.float32)
+            normal_valid = np.zeros((texture_size, texture_size), dtype=bool)
+            normal_world[indices[0][keep], indices[1][keep]] = world
+            normal_alpha_map[indices[0][keep], indices[1][keep]] = normal_alpha[keep]
+            normal_valid[indices[0][keep], indices[1][keep]] = True
+            if int(normal_smoothing) > 0:
+                normal_world = smooth_normals(
+                    normal_world, normal_valid, float(normal_smoothing)
+                )
+            strength = float(np.clip(normal_strength, 0.0, 1.0))
+            mesh_normals_map = np.zeros_like(normal_world)
+            mesh_normals_map[normal_valid] = normals[visible][keep]
+            blended = _normalize(
+                (1.0 - strength) * mesh_normals_map + strength * normal_world
+            )
+            encoded_normals = encode_normal_map(
+                blended[normal_valid],
+                tangents[visible][keep],
+                mesh_normals_map[normal_valid],
+                uv_sign[visible][keep],
+            )
+            normal = np.zeros((texture_size, texture_size, 4), dtype=np.float32)
+            normal[..., :3] = (0.5, 0.5, 1.0)
+            normal[indices[0][keep], indices[1][keep], :3] = encoded_normals
+            normal[indices[0][keep], indices[1][keep], 3] = normal_alpha_map[
+                indices[0][keep], indices[1][keep]
+            ]
+            normal_texels = int(np.count_nonzero(normal[..., 3] >= float(alpha_threshold)))
+
     visible_count = int(np.count_nonzero(layer[..., 3]))
     covered_count = int(covered.sum())
     if visible_count == 0:
@@ -778,13 +848,14 @@ def project_from_view(
         "view_height": height,
         "covered_texels": covered_count,
         "visible_texels": visible_count,
+        "normal_texels": normal_texels,
         "alpha_mean": float(layer[..., 3].mean()),
         "area_mask": area_mask is not None,
         "area_mask_mean": float(area_mask.mean()) if area_mask is not None else 1.0,
         "alpha_threshold": float(alpha_threshold),
         "elapsed_seconds": float(time.perf_counter() - started),
     }
-    return ViewProjectionResult(layer=layer, report=report)
+    return ViewProjectionResult(layer=layer, normal=normal, report=report)
 
 
 def save_view_layer(result, output):
@@ -794,6 +865,19 @@ def save_view_layer(result, output):
     output.mkdir(parents=True, exist_ok=True)
     path = output / "layer.png"
     values = np.clip(result.layer * 255.0 + 0.5, 0, 255).astype(np.uint8)
+    Image.fromarray(values, mode="RGBA").save(path)
+    return str(path)
+
+
+def save_view_normal(result, output):
+    from PIL import Image
+
+    if result.normal is None:
+        return None
+    output = Path(output)
+    output.mkdir(parents=True, exist_ok=True)
+    path = output / "normal.png"
+    values = np.clip(result.normal * 255.0 + 0.5, 0, 255).astype(np.uint8)
     Image.fromarray(values, mode="RGBA").save(path)
     return str(path)
 

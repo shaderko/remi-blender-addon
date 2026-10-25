@@ -55,8 +55,7 @@ the native splat renderer.
 6. Click **Project from View**.
 7. Move the viewport, redraw the area, and repeat for other regions.
 8. Use the **Layers** panel to hide, fade, or delete individual views.
-9. Optionally use **Project 3D** for an unmasked full-surface base or a normal
-   map.
+9. Optionally use **Project 3D** for an unmasked full-surface base.
 
 Projection writes each layer as an RGBA image and builds a layered material;
 it does not delete the source splat or the mesh UVs. Re-project after any
@@ -94,6 +93,12 @@ A view layer contains straight alpha from the splat render, so the material
 composites it smoothly over lower layers. Areas not covered by any view remain
 the neutral base color until another view is added.
 
+When **Normal Map** is enabled, each view layer also stores a tangent-space
+normal map derived from a normal pass of the same rendered Gaussians. The
+normal pass uses the same visibility, overlap, lasso, and camera as the color
+pass. Visible normal layers are composited in the material over an existing or
+3D-projected base normal.
+
 ## Settings
 
 | Setting | Meaning |
@@ -101,10 +106,13 @@ the neutral base color until another view is added.
 | Texture | Output texture resolution (1K / 2K / 4K). |
 | View Alpha | Minimum rendered splat alpha included in a view layer. |
 | Area Feather | Softness of the lasso edge, in viewport pixels. The default is a soft fade rather than a hard cut. |
+| Normal Map | Render a normal pass from the visible Gaussians and store it with each view layer. |
+| Normal Strength | Blend between the clean mesh normal and the rendered Gaussian normal. |
+| Normal Smoothing | Texture-space smoothing radius for rendered Gaussian normals, in pixels. |
 | Smooth Mesh | Sets the target to smooth shading before projection so normal maps encode splat detail rather than facet edges. |
 | Pack Images | Stores layer PNGs inside the `.blend`. |
 | Samples | 3D bake only: nearest Gaussians evaluated per texel. |
-| Normal Map | 3D bake only: use projected splat normals or preserve an existing baked normal map. |
+| Normal Map (3D bake) | 3D bake only: use projected splat normals or preserve an existing baked normal map. |
 | Normal source / Strength / Smoothing | 3D bake normal controls. |
 | Fill Holes / Fill Background / Margin | 3D bake fill controls. |
 
@@ -121,7 +129,13 @@ the neutral base color until another view is added.
 5. Each visible texel samples the rendered splat view, including its alpha.
 6. The lasso polygon is rasterized at the view resolution, feathered, and
    multiplied into the rendered splat alpha.
-7. The result is saved as an RGBA layer and added to the mesh's layer stack.
+7. When Normal Map is enabled, a temporary copy of the splats is rendered with
+   each Gaussian's shortest covariance axis encoded as color. Because the
+   native splat renderer supplies the alpha, overlap, and visibility, this is a
+   normal pass of the same rendered surface. It is projected with the same
+   depth test and lasso, then encoded in the mesh tangent basis.
+8. The color and normal results are saved as a view layer and added to the
+   mesh's layer stack.
 
 The rendered view image and the camera matrices are passed to the external
 worker together, so no object-to-object 3D alignment is involved.
@@ -129,7 +143,7 @@ worker together, so no object-to-object 3D alignment is involved.
 ## 3D bake (optional)
 
 The older **Project 3D** action samples the Gaussian field directly at every
-UV texel. It provides a full-surface base layer and an optional normal map,
+UV texel. It provides a full-surface base layer and an optional 3D normal map,
 including a **Keep Baked** mode that preserves a normal map from **Bake →
 Normal** in Optimize.
 
@@ -155,10 +169,11 @@ session from the reconstructed mesh.
   roughness, metallic, or AO channels. Roughness/metallic must be authored or
   estimated separately; AO can be baked from the cleaned mesh.
 - It does not invent back-side appearance. Add more views to cover the object.
-- It does not generate a normal map from a view layer yet. Use the 3D bake or a
-  baked shape normal.
-- Orthographic orbit views are approximated from the viewport scale; camera
-  view is exact, and perspective orbit views are the primary target.
+- Gaussian normals are estimates, not stored ground truth. The normal pass uses
+  each Gaussian's shortest covariance axis, so thin/surfel-like splats give the
+  most reliable result; fuzzy or volumetric clusters can produce noisy normals.
+- View normals are view-dependent. A normal layer is correct for the view it was
+  captured from; capture additional views for other sides.
 - It does not modify or replace the splat source.
 
 ## Next steps
@@ -167,6 +182,7 @@ session from the reconstructed mesh.
 - Inpaint or patch a masked region from the current view using the original
   input image and splat renders as references.
 - Normal-map brush/patch tools and a relighting preview.
+- Depth-gradient normal refinement for fuzzy splat clusters.
 - Shape + splat-detail + AI-detail normal compositing.
 
 ## Relation to the Gaussian mesh research

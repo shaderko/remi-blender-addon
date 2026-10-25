@@ -157,3 +157,11 @@ def render_splat_view(context, splat, output, output_white=None):
     if output_white is None:
         raise RuntimeError("Viewport splat rendering needs a background pass")
     return _render_viewport_view(context, splat, output, output_white, area, region)
+
+
+def render_splat_normal_view(context, normal_splat, output_black, output_white):
+    """Render the encoded-normal splat object through the same viewport pass."""
+    area, region = viewport_region(context)
+    if area is None or region is None:
+        raise RuntimeError("Normal projection must be run from a 3D Viewport")
+    return _render_viewport_view(context, normal_splat, output_black, output_white, area, region)

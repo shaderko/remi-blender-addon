@@ -24,6 +24,7 @@ from splat_project.projection import (  # noqa: E402
     project_from_view,
     save_textures,
     save_view_layer,
+    save_view_normal,
     unblend_view,
 )
 
@@ -127,6 +128,25 @@ def run(request, output):
         else:
             with Image.open(view_path) as image:
                 view_image = np.asarray(image.convert("RGBA"), dtype=np.float32) / 255.0
+        normal_values = None
+        normal_path = request.get("normal_image")
+        if normal_path:
+            normal_path = Path(normal_path)
+            normal_background = request.get("normal_background")
+            if not normal_path.is_file():
+                raise FileNotFoundError(normal_path)
+            if normal_background:
+                normal_background = Path(normal_background)
+                if not normal_background.is_file():
+                    raise FileNotFoundError(normal_background)
+                with Image.open(normal_path) as image:
+                    black = np.asarray(image.convert("RGB"), dtype=np.float32) / 255.0
+                with Image.open(normal_background) as image:
+                    white = np.asarray(image.convert("RGB"), dtype=np.float32) / 255.0
+                normal_values = unblend_view(black, white)
+            else:
+                with Image.open(normal_path) as image:
+                    normal_values = np.asarray(image.convert("RGBA"), dtype=np.float32) / 255.0
         write_status(output, "Projecting view")
         result = project_from_view(
             mesh,
@@ -138,9 +158,13 @@ def run(request, output):
             depth_epsilon=float(request.get("depth_epsilon", 1e-4)),
             view_mask=request.get("view_mask"),
             view_mask_feather=float(request.get("view_mask_feather", 24.0)),
+            normal_image=normal_values,
+            normal_strength=float(request.get("normal_strength", 1.0)),
+            normal_smoothing=int(request.get("normal_smoothing", 2)),
         )
         write_status(output, "Saving layer")
         layer_path = save_view_layer(result, output)
+        normal_output = save_view_normal(result, output)
         report = dict(result.report)
         report.update(
             {
@@ -149,6 +173,7 @@ def run(request, output):
                 "source": request.get("source", ""),
                 "view_image": str(view_path),
                 "layer": layer_path,
+                "normal": normal_output,
                 "device": "cpu",
                 "elapsed_seconds": float(time.perf_counter() - started),
                 "projector": "viewport camera view projection",

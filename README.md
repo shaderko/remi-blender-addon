@@ -52,6 +52,14 @@ The Blender add-on remains free and open source for local work and manual tools.
 
 ## Install
 
+### Model generation beta
+
+The `model-generation` branch is published separately as **2.7.0-beta.1**.
+It includes image-to-splats generation, mesh reconstruction, layered texture
+projection and on-demand model downloads. This is a **prerelease**, not a
+replacement for the stable release. Back up your `.blend` files before testing.
+See [beta release notes and setup](docs/releases/2.7.0-beta.1.md).
+
 **Supported packages:** Blender 5.1 or 5.2 on **Windows x64** and **macOS Apple Silicon**.
 
 1. Download the ZIP matching your computer (`windows-x64` or `macos-arm64`) from [GitHub Releases](https://github.com/shaderko/remi-blender-addon/releases).

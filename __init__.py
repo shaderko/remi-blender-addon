@@ -3,7 +3,7 @@
 bl_info = {
     "name": "Remi",
     "author": "Remi",
-    "version": (2, 4, 0),
+    "version": (2, 7, 0),
     "blender": (5, 1, 0),
     "location": "View3D > Sidebar > Remi",
     "description": "Repair, optimize, retopologize, texture, and bake meshes inside Blender",

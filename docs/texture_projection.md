@@ -99,8 +99,8 @@ the neutral base color until another view is added.
 | Setting | Meaning |
 | --- | --- |
 | Texture | Output texture resolution (1K / 2K / 4K). |
-| View Render | Resolution used to render the splats from the viewport camera (1K / 2K). |
 | View Alpha | Minimum rendered splat alpha included in a view layer. |
+| Area Feather | Softness of the lasso edge, in viewport pixels. The default is a soft fade rather than a hard cut. |
 | Smooth Mesh | Sets the target to smooth shading before projection so normal maps encode splat detail rather than facet edges. |
 | Pack Images | Stores layer PNGs inside the `.blend`. |
 | Samples | 3D bake only: nearest Gaussians evaluated per texel. |
@@ -110,18 +110,17 @@ the neutral base color until another view is added.
 
 ## How view projection works
 
-1. The viewport's camera pose and lens are captured. In camera view the scene
-   camera is used; in orbit view a temporary camera is built from the viewport
-   view matrix.
-2. Only the splat object is rendered, with a transparent film, from that exact
-   camera.
+1. The actual viewport is rendered with only the splat visible, using the
+   viewport's own view and projection. No approximate temporary camera is used.
+2. Two passes over black and white viewport backgrounds recover straight
+   splat color and alpha; the result has the same framing as the viewport.
 3. The worker rasterizes the mesh UVs to world positions and projects them
-   through the same camera.
-4. The target mesh is rasterized into a camera depth buffer, so only the
-   front-most surface is painted; back surfaces and hidden faces are rejected.
+   through the viewport's exact projection matrix.
+4. The target mesh is rasterized into a depth buffer, so only the front-most
+   surface is painted; back surfaces and hidden faces are rejected.
 5. Each visible texel samples the rendered splat view, including its alpha.
-6. The lasso polygon is rasterized at the view render resolution, feathered,
-   and multiplied into the rendered splat alpha.
+6. The lasso polygon is rasterized at the view resolution, feathered, and
+   multiplied into the rendered splat alpha.
 7. The result is saved as an RGBA layer and added to the mesh's layer stack.
 
 The rendered view image and the camera matrices are passed to the external

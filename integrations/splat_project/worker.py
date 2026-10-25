@@ -24,6 +24,7 @@ from splat_project.projection import (  # noqa: E402
     project_from_view,
     save_textures,
     save_view_layer,
+    unblend_view,
 )
 
 
@@ -112,9 +113,20 @@ def run(request, output):
         view_path = Path(request["view_image"])
         if not view_path.is_file():
             raise FileNotFoundError(view_path)
+        background = request.get("view_background")
         write_status(output, "Loading view")
-        with Image.open(view_path) as image:
-            view_image = np.asarray(image.convert("RGBA"), dtype=np.float32) / 255.0
+        if background:
+            background_path = Path(background)
+            if not background_path.is_file():
+                raise FileNotFoundError(background_path)
+            with Image.open(view_path) as image:
+                black = np.asarray(image.convert("RGB"), dtype=np.float32) / 255.0
+            with Image.open(background_path) as image:
+                white = np.asarray(image.convert("RGB"), dtype=np.float32) / 255.0
+            view_image = unblend_view(black, white)
+        else:
+            with Image.open(view_path) as image:
+                view_image = np.asarray(image.convert("RGBA"), dtype=np.float32) / 255.0
         write_status(output, "Projecting view")
         result = project_from_view(
             mesh,
@@ -125,6 +137,7 @@ def run(request, output):
             alpha_threshold=float(request.get("alpha_threshold", 0.01)),
             depth_epsilon=float(request.get("depth_epsilon", 1e-4)),
             view_mask=request.get("view_mask"),
+            view_mask_feather=float(request.get("view_mask_feather", 24.0)),
         )
         write_status(output, "Saving layer")
         layer_path = save_view_layer(result, output)

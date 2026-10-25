@@ -22,6 +22,7 @@ class ProjectionAreaState:
     view_matrix: tuple = ()
     lens: float = 50.0
     mesh_name: str = ""
+    suspended: bool = False
 
     def begin(self, context, area, region, mesh):
         self.points = []
@@ -112,6 +113,8 @@ state = ProjectionAreaState()
 
 
 def _draw_overlay():
+    if state.suspended:
+        return
     context = bpy.context
     area = getattr(context, "area", None)
     region = getattr(context, "region", None)

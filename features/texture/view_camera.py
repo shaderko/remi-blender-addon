@@ -1,4 +1,4 @@
-"""Render the linked splat from the current viewport camera for projection."""
+"""Render the linked splat from the current viewport for view projection."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -23,150 +23,137 @@ def viewport_region(context):
     return None, None
 
 
-def _temp_camera(context):
-    region_data = context.region_data
-    space_data = context.space_data
-    if region_data is None or space_data is None or space_data.type != "VIEW_3D":
-        raise RuntimeError("Project from View must be run from a 3D Viewport")
-
-    if region_data.view_perspective == "CAMERA" and context.scene.camera is not None:
-        return context.scene.camera, False
-
-    camera_data = bpy.data.cameras.new("Remi View Camera")
-    camera = bpy.data.objects.new("Remi View Camera", camera_data)
-    context.scene.collection.objects.link(camera)
-    camera.matrix_world = region_data.view_matrix.inverted()
-    camera_data.lens = float(getattr(space_data, "lens", 50.0))
-    camera_data.sensor_width = 36.0
-    camera_data.sensor_fit = "AUTO"
-    if region_data.view_perspective == "ORTHO":
-        camera_data.type = "ORTHO"
-        camera_data.ortho_scale = float(getattr(region_data, "view_distance", 10.0))
-    else:
-        camera_data.type = "PERSP"
-    return camera, True
+def _render_opengl(context, area, region, path):
+    with context.temp_override(area=area, region=region):
+        bpy.ops.render.opengl(write_still=True, view_context=True)
+    if not Path(path).is_file():
+        raise RuntimeError("Viewport splat render did not produce an image")
 
 
-def _resolution(context, base):
-    region = context.region
-    if region is None or region.width <= 0 or region.height <= 0:
-        return int(base), int(base)
-    aspect = region.width / max(region.height, 1)
-    base = int(base)
-    if aspect >= 1.0:
-        return base, max(64, int(round(base / aspect)))
-    return max(64, int(round(base * aspect))), base
-
-
-def render_splat_view(context, splat, output, *, base_resolution=1024, mesh=None):
-    """Render only the splat object from the current viewport camera.
-
-    Returns the rendered image path plus the matching world-to-camera and
-    projection matrices. The temporary camera and render settings are restored.
-    """
-    scene = context.scene
-    camera, temporary_camera = _temp_camera(context)
-    width, height = _resolution(context, base_resolution)
-    output = Path(output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-
-    if mesh is None:
-        mesh = context.view_layer.objects.active
-    diagnostic = 1.0
-    if mesh is not None:
-        diagnostic = max(0.001, float(mesh.dimensions.length))
-    distance = (camera.matrix_world.translation - (mesh.matrix_world.translation if mesh else camera.matrix_world.translation)).length
-    camera.data.clip_start = max(1e-5, min(diagnostic * 1e-4, distance * 0.25))
-    camera.data.clip_end = max(diagnostic * 100.0, distance * 10.0, 1.0)
-
-    saved = {
-        "camera": scene.camera,
+def _save_render_state(scene):
+    return {
         "engine": scene.render.engine,
-        "x": scene.render.resolution_x,
-        "y": scene.render.resolution_y,
-        "percentage": scene.render.resolution_percentage,
-        "transparent": scene.render.film_transparent,
         "filepath": scene.render.filepath,
         "format": scene.render.image_settings.file_format,
         "color_mode": scene.render.image_settings.color_mode,
-        "samples": getattr(scene.eevee, "taa_render_samples", None),
-        "clip_start": camera.data.clip_start,
-        "clip_end": camera.data.clip_end,
+        "color_depth": scene.render.image_settings.color_depth,
+        "resolution_x": scene.render.resolution_x,
+        "resolution_y": scene.render.resolution_y,
+        "resolution_percentage": scene.render.resolution_percentage,
+        "film_transparent": scene.render.film_transparent,
         "view_transform": scene.view_settings.view_transform,
         "look": scene.view_settings.look,
         "exposure": scene.view_settings.exposure,
         "gamma": scene.view_settings.gamma,
-        "object_hide_render": {obj.name: obj.hide_render for obj in scene.objects},
-        "collection_hide_render": {collection.name: collection.hide_render for collection in bpy.data.collections},
+        "hide": {obj.name: obj.hide_get() for obj in scene.objects},
     }
-    result = None
+
+
+def _restore_render_state(scene, saved):
+    scene.render.engine = saved["engine"]
+    scene.render.filepath = saved["filepath"]
+    scene.render.image_settings.file_format = saved["format"]
+    scene.render.image_settings.color_mode = saved["color_mode"]
+    scene.render.image_settings.color_depth = saved["color_depth"]
+    scene.render.resolution_x = saved["resolution_x"]
+    scene.render.resolution_y = saved["resolution_y"]
+    scene.render.resolution_percentage = saved["resolution_percentage"]
+    scene.render.film_transparent = saved["film_transparent"]
+    scene.view_settings.view_transform = saved["view_transform"]
+    scene.view_settings.look = saved["look"]
+    scene.view_settings.exposure = saved["exposure"]
+    scene.view_settings.gamma = saved["gamma"]
+    for name, hidden in saved["hide"].items():
+        obj = bpy.data.objects.get(name)
+        if obj is not None:
+            obj.hide_set(hidden)
+
+
+def _render_viewport_view(context, splat, output_black, output_white, area, region):
+    """Render through the exact viewport and recover alpha from black/white."""
+    scene = context.scene
+    space = area.spaces.active
+    output_black = Path(output_black)
+    output_white = Path(output_white)
+    output_black.parent.mkdir(parents=True, exist_ok=True)
+    output_white.parent.mkdir(parents=True, exist_ok=True)
+    saved = _save_render_state(scene)
+    saved.update(
+        {
+            "shading_type": space.shading.type,
+            "background_type": space.shading.background_type,
+            "show_overlays": space.overlay.show_overlays,
+            "world": scene.world,
+        }
+    )
+    from .projection_area import state as projection_area
+
+    theme = bpy.context.preferences.themes[0]
+    gradient = theme.view_3d.space.gradients
+    saved_theme = {
+        "background_type": gradient.background_type,
+        "high_gradient": tuple(gradient.high_gradient),
+        "gradient": tuple(gradient.gradient),
+    }
+    was_suspended = projection_area.suspended
     try:
-        scene.camera = camera
-        engines = {item.identifier for item in bpy.types.RenderSettings.bl_rna.properties["engine"].enum_items}
-        scene.render.engine = "BLENDER_EEVEE" if "BLENDER_EEVEE" in engines else "BLENDER_EEVEE_NEXT"
+        projection_area.suspended = True
+        space.shading.type = "MATERIAL"
+        space.shading.background_type = "THEME"
+        space.overlay.show_overlays = False
+        scene.render.image_settings.file_format = "PNG"
+        scene.render.image_settings.color_mode = "RGB"
+        scene.render.image_settings.color_depth = "8"
+        scene.render.resolution_x = int(region.width)
+        scene.render.resolution_y = int(region.height)
+        scene.render.resolution_percentage = 100
         scene.view_settings.view_transform = "Standard"
         scene.view_settings.look = "None"
         scene.view_settings.exposure = 0.0
         scene.view_settings.gamma = 1.0
-        scene.render.resolution_x = width
-        scene.render.resolution_y = height
-        scene.render.resolution_percentage = 100
-        scene.render.film_transparent = True
-        scene.render.image_settings.file_format = "PNG"
-        scene.render.image_settings.color_mode = "RGBA"
-        scene.render.filepath = str(output)
-        if saved["samples"] is not None:
-            scene.eevee.taa_render_samples = 16
-        for collection in bpy.data.collections:
-            collection.hide_render = False
         for obj in scene.objects:
-            obj.hide_render = obj != splat
-        splat.hide_render = False
-        bpy.ops.render.render(write_still=True)
+            obj.hide_set(obj != splat)
+        splat.hide_set(False)
 
-        if not output.is_file():
-            raise RuntimeError("The viewport splat render did not produce an image")
-        depsgraph = context.evaluated_depsgraph_get()
-        projection = camera.calc_matrix_camera(
-            depsgraph, x=width, y=height, scale_x=1.0, scale_y=1.0
-        )
-        view = camera.matrix_world.inverted()
-        result = {
-            "image": str(output),
+        gradient.background_type = "SINGLE_COLOR"
+        gradient.high_gradient = (0.0, 0.0, 0.0)
+        scene.render.filepath = str(output_black)
+        _render_opengl(context, area, region, output_black)
+
+        gradient.high_gradient = (1.0, 1.0, 1.0)
+        scene.render.filepath = str(output_white)
+        _render_opengl(context, area, region, output_white)
+
+        view = region.data.view_matrix.copy()
+        combined = region.data.perspective_matrix.copy()
+        projection = combined @ view.inverted()
+        return {
+            "image": str(output_black),
+            "background": str(output_white),
             "view_matrix": [list(row) for row in view],
             "projection_matrix": [list(row) for row in projection],
-            "width": width,
-            "height": height,
+            "width": int(region.width),
+            "height": int(region.height),
         }
     finally:
-        scene.camera = saved["camera"]
-        scene.render.engine = saved["engine"]
-        scene.render.resolution_x = saved["x"]
-        scene.render.resolution_y = saved["y"]
-        scene.render.resolution_percentage = saved["percentage"]
-        scene.render.film_transparent = saved["transparent"]
-        scene.render.filepath = saved["filepath"]
-        scene.render.image_settings.file_format = saved["format"]
-        scene.render.image_settings.color_mode = saved["color_mode"]
-        if saved["samples"] is not None and getattr(scene, "eevee", None) is not None:
-            scene.eevee.taa_render_samples = saved["samples"]
-        scene.view_settings.view_transform = saved["view_transform"]
-        scene.view_settings.look = saved["look"]
-        scene.view_settings.exposure = saved["exposure"]
-        scene.view_settings.gamma = saved["gamma"]
-        camera.data.clip_start = saved["clip_start"]
-        camera.data.clip_end = saved["clip_end"]
-        for name, value in saved["object_hide_render"].items():
-            obj = bpy.data.objects.get(name)
-            if obj is not None:
-                obj.hide_render = value
-        for name, value in saved["collection_hide_render"].items():
-            collection = bpy.data.collections.get(name)
-            if collection is not None:
-                collection.hide_render = value
-        if temporary_camera:
-            camera_data = camera.data
-            bpy.data.objects.remove(camera, do_unlink=True)
-            if camera_data.users == 0:
-                bpy.data.cameras.remove(camera_data)
-    return result
+        projection_area.suspended = was_suspended
+        space.shading.type = saved["shading_type"]
+        space.shading.background_type = saved["background_type"]
+        space.overlay.show_overlays = saved["show_overlays"]
+        scene.world = saved["world"]
+        gradient.background_type = saved_theme["background_type"]
+        gradient.high_gradient = saved_theme["high_gradient"]
+        gradient.gradient = saved_theme["gradient"]
+        _restore_render_state(scene, saved)
+
+
+def render_splat_view(context, splat, output, output_white=None):
+    """Render only the splat through the current viewport."""
+    area, region = viewport_region(context)
+    if area is None or region is None:
+        raise RuntimeError("Project from View must be run from a 3D Viewport")
+    if region.width < 16 or region.height < 16:
+        raise RuntimeError("The 3D Viewport is too small to project from")
+    if output_white is None:
+        raise RuntimeError("Viewport splat rendering needs a background pass")
+    return _render_viewport_view(context, splat, output, output_white, area, region)

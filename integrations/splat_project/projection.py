@@ -634,7 +634,38 @@ def _sample_view(image, x, y):
     )
 
 
-def _polygon_mask(width, height, polygon):
+def _srgb_to_linear(values):
+    return np.where(
+        values <= 0.04045,
+        values / 12.92,
+        ((values + 0.055) / 1.055) ** 2.4,
+    )
+
+
+def _linear_to_srgb(values):
+    return np.where(
+        values <= 0.0031308,
+        values * 12.92,
+        1.055 * np.power(values, 1.0 / 2.4) - 0.055,
+    )
+
+
+def unblend_view(black, white):
+    """Recover straight RGBA from two viewport renders over black and white."""
+    black = np.asarray(black, dtype=np.float32)
+    white = np.asarray(white, dtype=np.float32)
+    if black.shape[:2] != white.shape[:2]:
+        raise ValueError("View render pair has inconsistent dimensions")
+    b = _srgb_to_linear(np.clip(black[..., :3], 0.0, 1.0))
+    w = _srgb_to_linear(np.clip(white[..., :3], 0.0, 1.0))
+    alpha = np.clip(1.0 - np.mean(w - b, axis=-1), 0.0, 1.0)
+    color = b / np.maximum(alpha[..., None], 1e-6)
+    color = _linear_to_srgb(np.clip(color, 0.0, 1.0))
+    color[alpha <= 1e-4] = 0.0
+    return np.concatenate((color.astype(np.float32), alpha[..., None].astype(np.float32)), axis=-1)
+
+
+def _polygon_mask(width, height, polygon, feather=0.0):
     """Rasterize a normalized lasso polygon (bottom-left origin) to a mask."""
     from PIL import Image, ImageDraw, ImageFilter
 
@@ -644,7 +675,8 @@ def _polygon_mask(width, height, polygon):
         for x, y in polygon
     ]
     ImageDraw.Draw(mask).polygon(points, fill=255)
-    mask = mask.filter(ImageFilter.GaussianBlur(0.8))
+    if feather > 0:
+        mask = mask.filter(ImageFilter.GaussianBlur(float(feather)))
     return np.asarray(mask, dtype=np.float32) / 255.0
 
 
@@ -658,6 +690,7 @@ def project_from_view(
     alpha_threshold=0.01,
     depth_epsilon=1e-4,
     view_mask=None,
+    view_mask_feather=24.0,
 ):
     """Project a rendered camera view onto the UV-mapped mesh.
 
@@ -683,7 +716,7 @@ def project_from_view(
 
     area_mask = None
     if view_mask is not None and len(view_mask) >= 3:
-        area_mask = _polygon_mask(width, height, view_mask)
+        area_mask = _polygon_mask(width, height, view_mask, view_mask_feather)
         image[..., 3] *= area_mask
 
     positions, normals, _tangents, _sign, covered = rasterize_uv(

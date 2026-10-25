@@ -70,7 +70,6 @@ settings = bpy.context.scene.remi_generation
 settings.python = args.python or settings.python
 texture = bpy.context.scene.remi_texture
 texture.texture_size = "1024"
-texture.view_resolution = "1024"
 texture.pack_images = True
 texture.output = str((args.output / "textures").resolve())
 state = bpy.context.window_manager.remi_texture
@@ -96,7 +95,7 @@ def finish():
     pixels = np.empty(len(image.pixels), dtype=np.float32)
     image.pixels.foreach_get(pixels)
     masked_texels = int(np.count_nonzero(pixels.reshape(-1, 4)[:, 3] > 0.01))
-    assert 1000 < masked_texels < 160000, masked_texels
+    assert 1000 < masked_texels < 500000, masked_texels
     assert not projection_area.has_points()
     (args.output / "texture_view_modal_smoke_passed.txt").write_text(
         f"View projection passed: {len(mesh.remi_texture_layers)} layer(s)\n"
@@ -113,6 +112,7 @@ def begin():
         area = next(area for area in bpy.context.screen.areas if area.type == "VIEW_3D")
         region = next(region for region in area.regions if region.type == "WINDOW")
         with bpy.context.temp_override(area=area, region=region):
+            bpy.ops.wm.redraw_timer(type="DRAW_WIN_SWAP", iterations=1)
             projection_area.begin(bpy.context, area, region, mesh)
             projection_area.points = [
                 (0.0, 0.0),

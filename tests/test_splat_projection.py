@@ -155,11 +155,28 @@ class ProjectionTests(unittest.TestCase):
         self.assertEqual(float(result.layer[10, 10, 3]), 0.0)
 
     def test_polygon_mask_uses_bottom_left_viewport_coordinates(self):
-        mask = projection._polygon_mask(
-            128, 128, [(0.0, 0.5), (1.0, 0.5), (1.0, 1.0), (0.0, 1.0)]
-        )
+        polygon = [(0.0, 0.5), (1.0, 0.5), (1.0, 1.0), (0.0, 1.0)]
+        mask = projection._polygon_mask(128, 128, polygon)
         self.assertGreater(mask[:64].mean(), 0.9)
         self.assertLess(mask[64:].mean(), 0.1)
+
+        soft = projection._polygon_mask(128, 128, polygon, feather=8.0)
+        self.assertGreater(soft[:64].mean(), 0.8)
+        self.assertLess(soft[70:].mean(), 0.2)
+        # The feathered boundary is not a hard step.
+        self.assertTrue(np.any((soft > 0.05) & (soft < 0.95)))
+
+    def test_unblend_view_recovers_straight_alpha(self):
+        black = np.zeros((8, 8, 3), dtype=np.float32)
+        white = np.zeros((8, 8, 3), dtype=np.float32)
+        red_linear = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+        alpha = np.float32(0.5)
+        black[:] = projection._linear_to_srgb(red_linear * alpha)
+        white[:] = projection._linear_to_srgb(red_linear * alpha + (1.0 - alpha))
+        rgba = projection.unblend_view(black, white)
+        self.assertAlmostEqual(float(rgba[0, 0, 3]), 0.5, places=2)
+        self.assertGreater(float(rgba[0, 0, 0]), 0.9)
+        self.assertLess(float(rgba[0, 0, 1]), 0.1)
 
         mesh = plane_mesh()
         mesh["positions"] = mesh["positions"] - np.array([0.5, 0.5, 0.0], dtype=np.float32)
@@ -187,6 +204,7 @@ class ProjectionTests(unittest.TestCase):
             projection_matrix,
             texture_size=128,
             view_mask=[(0.0, 0.0), (0.5, 0.0), (0.5, 1.0), (0.0, 1.0)],
+            view_mask_feather=0.0,
         )
         self.assertTrue(left.report["area_mask"])
         self.assertLess(left.report["visible_texels"], full.report["visible_texels"])

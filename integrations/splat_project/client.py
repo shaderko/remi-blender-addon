@@ -111,9 +111,11 @@ class ProjectionJob:
         view_matrix,
         projection_matrix,
         output,
+        view_background=None,
         texture_size=2048,
         alpha_threshold=0.01,
         view_mask=None,
+        view_mask_feather=24.0,
         source=None,
     ):
         executable = shutil.which(python) if python else None
@@ -124,10 +126,16 @@ class ProjectionJob:
             raise ValueError(f"Mesh archive not found: {mesh}")
         if not view_image.is_file():
             raise ValueError(f"View image not found: {view_image}")
+        if view_background is not None:
+            view_background = Path(view_background)
+            if not view_background.is_file():
+                raise ValueError(f"View background image not found: {view_background}")
         if int(texture_size) not in (512, 1024, 2048, 4096, 8192):
             raise ValueError("Unsupported texture size")
         if not 0.0 <= float(alpha_threshold) <= 1.0:
             raise ValueError("Alpha threshold must be in [0, 1]")
+        if not 0.0 <= float(view_mask_feather) <= 256.0:
+            raise ValueError("Area feather must be between 0 and 256 pixels")
         if view_mask is not None:
             if not isinstance(view_mask, (list, tuple)):
                 raise ValueError("View mask must be a polygon point list")
@@ -152,12 +160,14 @@ class ProjectionJob:
                     "mode": "view",
                     "mesh": str(mesh.resolve()),
                     "view_image": str(view_image.resolve()),
+                    "view_background": str(view_background.resolve()) if view_background is not None else None,
                     "view_matrix": view_matrix,
                     "projection_matrix": projection_matrix,
                     "source": str(source or ""),
                     "texture_size": int(texture_size),
                     "alpha_threshold": float(alpha_threshold),
                     "view_mask": view_mask,
+                    "view_mask_feather": float(view_mask_feather),
                 },
                 indent=2,
             ),

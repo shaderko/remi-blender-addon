@@ -335,8 +335,9 @@ class Remi_OT_ProjectView(Operator):
 
             temporary = Path(bpy.app.tempdir or tempfile.gettempdir())
             mesh_archive = temporary / f"remi_texture_mesh_{uuid.uuid4().hex}.npz"
-            view_image = temporary / f"remi_texture_view_{uuid.uuid4().hex}.png"
-            runtime.temp_paths = (mesh_archive, view_image)
+            view_black = temporary / f"remi_texture_view_black_{uuid.uuid4().hex}.png"
+            view_white = temporary / f"remi_texture_view_white_{uuid.uuid4().hex}.png"
+            runtime.temp_paths = (mesh_archive, view_black, view_white)
 
             render_splat = source_object
             if render_splat is None:
@@ -349,13 +350,16 @@ class Remi_OT_ProjectView(Operator):
             state.status = "Rendering splat from current view…"
             state.status_kind = "PROGRESS"
             context.view_layer.update()
-            with bpy.context.temp_override(area=area, region=region):
-                view = render_splat_view(
-                    context,
-                    render_splat,
-                    view_image,
-                    base_resolution=int(settings.view_resolution),
-                    mesh=mesh,
+            view = render_splat_view(
+                context,
+                render_splat,
+                view_black,
+                view_white,
+            )
+            if view_mask is not None and not projection_area.valid(context):
+                raise RuntimeError(
+                    "The view changed while rendering the splat. "
+                    "Keep the view still and project again."
                 )
             # The render call hides and restores render visibility; restore the
             # artist's selection before the modal worker starts.
@@ -374,13 +378,15 @@ class Remi_OT_ProjectView(Operator):
             runtime.job = ProjectionJob.start_view(
                 python=python,
                 mesh=mesh_archive,
-                view_image=view_image,
+                view_image=view["image"],
+                view_background=view["background"],
                 view_matrix=view["view_matrix"],
                 projection_matrix=view["projection_matrix"],
                 output=output,
                 texture_size=int(settings.texture_size),
                 alpha_threshold=float(settings.view_alpha_threshold),
                 view_mask=view_mask,
+                view_mask_feather=float(settings.view_mask_feather),
                 source=label,
             )
             runtime.manager = context.window_manager

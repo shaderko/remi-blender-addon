@@ -65,10 +65,9 @@ def _draw_source(layout, mesh, settings):
 def _draw_settings(layout, settings, mesh):
     row = layout.row(align=True)
     row.prop(settings, "texture_size", text="Texture")
-    row.prop(settings, "view_resolution", text="View")
-    row = layout.row(align=True)
     row.prop(settings, "view_alpha_threshold", text="View Alpha")
-    row.prop(settings, "pack_images", text="Pack Images")
+    layout.prop(settings, "view_mask_feather", text="Area Feather")
+    layout.prop(settings, "pack_images", text="Pack Images")
     layout.prop(settings, "smooth_mesh", text="Smooth Mesh")
 
     bake = layout.box()

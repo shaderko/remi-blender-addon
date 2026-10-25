@@ -78,15 +78,6 @@ class RemiTextureSettings(PropertyGroup):
         ],
         default="2048",
     )
-    view_resolution: EnumProperty(
-        name="View Render",
-        description="Resolution used to render the splats from the viewport camera",
-        items=[
-            ("1024", "1K", "Faster viewport splat render"),
-            ("2048", "2K", "Sharper viewport splat render"),
-        ],
-        default="1024",
-    )
     view_alpha_threshold: FloatProperty(
         name="View Alpha",
         description="Minimum rendered splat alpha included in a view layer",
@@ -94,6 +85,14 @@ class RemiTextureSettings(PropertyGroup):
         min=0.0,
         max=1.0,
         subtype="FACTOR",
+    )
+    view_mask_feather: FloatProperty(
+        name="Area Feather",
+        description="Softness of the drawn projection area edge, in viewport pixels",
+        default=24.0,
+        min=0.0,
+        max=128.0,
+        subtype="PIXEL",
     )
     samples: IntProperty(
         name="Samples",

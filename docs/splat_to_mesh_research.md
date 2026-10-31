@@ -1,10 +1,13 @@
 # 3DGS to mesh: research and experiment log
 
-> **Update:** the shipped path is now the Modly/ComfyUI `SplatToMesh` density +
-> Surface Nets mesher, vendored under `integrations/splat_mesh/vendor/`. It
-> produces a much cleaner result than the TSDF experiments below and is the
-> current **Create Mesh** implementation. The experiments remain documented as
-> the reason depth/TSDF fusion was rejected.
+> **Update (2.7.0-beta.2):** Create Mesh now uses camera-aware opacity extraction
+> and training-silhouette constraints, with Dense surface optimization by default
+> and a Fast direct mode. See [setup](image_generation.md#create-a-mesh).
+> The Modly/ComfyUI density + Surface Nets mesher is retained as a research
+> baseline, not the active backend. The notes below are a historical experiment
+> log: statements about leaving Create Mesh unchanged describe those earlier
+> experiments, not the current beta. A better ship result is not a general
+> guarantee of mesh validity or reconstruction quality.
 
 ## Goal
 
@@ -18,6 +21,24 @@ tests RGB stereo depth estimation, not the native splat-depth fusion below.
 It compares shipped density, density without component cleanup/mesh smoothing,
 and learned-stereo fusion from identical held-out cameras. Create Mesh is
 unchanged until this experiment demonstrates a quality improvement.
+
+The [posed DA3 multiview experiment](multiview_mesh_reconstruction.md) adds a
+separate geometry-first candidate: jointly inferred RGB depths with known
+cameras, dense 512-grid fusion without decimation/smoothing, explicit raw-depth
+ablation, and clay geometry comparisons. It does not reuse native splat Z or
+change Create Mesh.
+
+Its [two recorded ship runs](multiview_mesh_pilot_results.md) fail the quality
+gate, including a 2.53-million-triangle surface-band ablation. The next offline
+candidate is [surface-aware reoptimization](surface_mesh_reconstruction.md)
+using a native Windows external tool, not density extraction or another
+unvalidated increase in voxel resolution.
+
+The [surface pilot results](surface_mesh_pilot_results.md) now record a real
+improvement on the ship: camera-aware opacity extraction plus explicit
+training-silhouette constraints, with both a ~943k-triangle direct candidate and
+a ~7.02M-triangle surface-optimized candidate. This is still one object and does
+not qualify a new default or a production-ready mesh.
 
 ## Why post-hoc extraction is not enough
 

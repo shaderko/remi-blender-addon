@@ -167,6 +167,15 @@ def export_mesh_archive(context, obj, path):
         uv_values = np.empty(loop_count * 2, dtype=np.float32)
         uv_layer.data.foreach_get("uv", uv_values)
         uvs = uv_values.reshape(-1, 2)[triangle_loops]
+        # Match Blender's normal-map shader basis rather than deriving one
+        # independently per triangle (which creates seams on coarse meshes).
+        mesh.calc_tangents(uvmap=uv_layer.name)
+        loop_tangents = np.empty(loop_count * 3, dtype=np.float32)
+        mesh.loops.foreach_get("tangent", loop_tangents)
+        tangents = loop_tangents.reshape(-1, 3)[triangle_loops]
+        loop_signs = np.empty(loop_count, dtype=np.float32)
+        mesh.loops.foreach_get("bitangent_sign", loop_signs)
+        tangent_signs = loop_signs[triangle_loops]
 
         corner_normals = getattr(mesh, "corner_normals", None)
         if corner_normals is not None:
@@ -194,6 +203,10 @@ def export_mesh_archive(context, obj, path):
         face = np.cross(positions[:, 1] - positions[:, 0], positions[:, 2] - positions[:, 0])
         face = face / np.maximum(np.linalg.norm(face, axis=1, keepdims=True), 1e-8)
         normals = np.where(lengths > 1e-8, normals / np.maximum(lengths, 1e-8), face[:, None, :])
+        tangents = tangents @ linear.T
+        tangents -= normals * np.sum(tangents * normals, axis=-1, keepdims=True)
+        tangents /= np.maximum(np.linalg.norm(tangents, axis=-1, keepdims=True), 1e-8)
+        tangent_signs *= -1.0 if np.linalg.det(linear) < 0 else 1.0
 
         if not np.isfinite(positions).all() or not np.isfinite(normals).all():
             raise ValueError("Mesh exchange contains non-finite geometry")
@@ -205,6 +218,10 @@ def export_mesh_archive(context, obj, path):
             schema=np.array(1, dtype=np.int32),
             positions=positions,
             normals=normals.astype(np.float32),
+            tangents=tangents.astype(np.float32),
+            tangent_signs=tangent_signs.astype(np.float32),
+            vertex_indices=triangle_vertices.astype(np.int32),
+            orientation_sign=np.array(-1.0 if np.linalg.det(linear) < 0 else 1.0, dtype=np.float32),
             uvs=uvs,
             source_object=np.array(str(obj.name)),
             triangle_count=np.array(triangle_count, dtype=np.int32),
@@ -219,13 +236,14 @@ def _load_image(name, path, colorspace, pack):
     path = str(path)
     if not Path(path).is_file():
         raise ValueError(f"Projected image not found: {path}")
-    image = bpy.data.images.get(name)
-    if image is None:
-        image = bpy.data.images.load(path, check_existing=False)
-        image.name = name
-    else:
-        image.filepath = path
-        image.reload()
+    # Reloading an already-packed image reads its OLD packed pixels, even after
+    # changing filepath. New runs must get fresh datablocks; never overwrite a
+    # previous packed/painted image that might still be used elsewhere.
+    image = bpy.data.images.load(path, check_existing=False)
+    image.name = name
+    image["remi_projection_image"] = True
+    image["remi_projection_kind"] = ("NORMAL" if name.endswith(" · projected normal") else
+                                     "DATA" if colorspace == "Non-Color" else "COLOR")
     image.colorspace_settings.name = colorspace
     image.file_format = "PNG"
     image.use_fake_user = True
@@ -392,7 +410,8 @@ def import_projection_result(
     if normal_mode == "EXISTING":
         existing, existing_uv = existing_normal_map(mesh)
         # Do not mistake a previous projection's normal for an authored bake.
-        if existing is not None and existing.name == f"{mesh.name} · projected normal":
+        if existing is not None and (existing.get("remi_projection_kind") in {"NORMAL", "VIEW_NORMAL"}
+                                     or existing.name == f"{mesh.name} · projected normal"):
             existing = None
         if existing is not None:
             existing.colorspace_settings.name = "Non-Color"

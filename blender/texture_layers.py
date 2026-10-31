@@ -22,13 +22,10 @@ def _load_image(name, path, *, pack=True):
     path = str(path)
     if not Path(path).is_file():
         raise ValueError(f"Projection layer image not found: {path}")
-    image = bpy.data.images.get(name)
-    if image is None:
-        image = bpy.data.images.load(path, check_existing=False)
-        image.name = name
-    else:
-        image.filepath = path
-        image.reload()
+    image = bpy.data.images.load(path, check_existing=False)
+    image.name = name
+    image["remi_projection_image"] = True
+    image["remi_projection_kind"] = "VIEW_COLOR"
     image.colorspace_settings.name = "sRGB"
     image.file_format = "PNG"
     image.use_fake_user = True
@@ -41,13 +38,10 @@ def _load_normal_image(name, path, *, pack=True):
     path = str(path)
     if not Path(path).is_file():
         raise ValueError(f"Projection normal image not found: {path}")
-    image = bpy.data.images.get(name)
-    if image is None:
-        image = bpy.data.images.load(path, check_existing=False)
-        image.name = name
-    else:
-        image.filepath = path
-        image.reload()
+    image = bpy.data.images.load(path, check_existing=False)
+    image.name = name
+    image["remi_projection_image"] = True
+    image["remi_projection_kind"] = "VIEW_NORMAL"
     image.colorspace_settings.name = "Non-Color"
     image.file_format = "PNG"
     image.use_fake_user = True
@@ -197,7 +191,7 @@ def rebuild_layer_material(mesh):
     if normal_image is None:
         normal_path = mesh.get("remi_texture_normal")
         if normal_path and Path(str(normal_path)).is_file():
-            normal_image = _load_image(
+            normal_image = _load_normal_image(
                 f"{mesh.name} · projected normal", normal_path, pack=False
             )
     if normal_image is not None:

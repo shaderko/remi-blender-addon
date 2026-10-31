@@ -58,7 +58,7 @@ def _place_with_source(obj, source_object):
         target.objects.link(obj)
 
 
-def import_reconstructed_mesh(context, path, *, source_object=None, report=None):
+def import_reconstructed_mesh(context, path, *, source_object=None, report=None, source_matrix=None):
     path = Path(path).resolve()
     if not path.is_file():
         raise ValueError(f"Mesh file not found: {path}")
@@ -80,8 +80,11 @@ def import_reconstructed_mesh(context, path, *, source_object=None, report=None)
                 bpy.data.objects.remove(obj, do_unlink=True)
             raise ValueError("Meshed PLY did not produce exactly one non-empty mesh")
         obj = meshes[0]
-        # Surface Nets output is a smooth organic shell. Smooth shading keeps
-        # both the viewport and the high-poly normal bake from encoding facets.
+        if source_object is not None:
+            obj.matrix_world = source_object.matrix_world.copy()
+        elif source_matrix is not None:
+            obj.matrix_world = source_matrix
+        # Smooth shading does not alter dense reconstruction geometry.
         for polygon in obj.data.polygons:
             polygon.use_smooth = True
         layer = next(iter(obj.data.color_attributes), None)

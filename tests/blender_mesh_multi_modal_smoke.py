@@ -43,15 +43,14 @@ splat2 = import_splats(bpy.context, archive2, display="NATIVE")
 archive1.unlink()
 archive2.unlink()
 settings = bpy.context.scene.remi_generation
-settings.mesh_detail = "160"
-settings.mesh_smoothing = "6"
+settings.mesh_quality = "FAST"
 settings.mesh_output = str((args.output / "meshes").resolve())
 state = bpy.context.window_manager.remi_generation
 started = time.monotonic()
 phase = 0
 
 
-def finish():
+def _finish():
     global phase
     if time.monotonic() - started > 300:
         raise TimeoutError("multi-model mesh smoke timed out")
@@ -85,6 +84,16 @@ def finish():
     print(f"MESH MULTI-MODEL SMOKE PASSED: {args.output}", flush=True)
     bpy.ops.wm.quit_blender()
     return None
+
+
+def finish():
+    try:
+        return _finish()
+    except Exception:
+        traceback.print_exc()
+        mesh_runtime.stop()
+        import os
+        os._exit(1)
 
 
 def begin():

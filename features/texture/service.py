@@ -56,6 +56,12 @@ def import_result(
         mesh["remi_texture_texels"] = int(report.get("covered_texels", 0))
         mesh["remi_texture_size"] = int(report.get("texture_size", 0))
         mesh["remi_texture_flatness"] = float(report.get("flatness_mean", 0.0))
+        mesh["remi_texture_method"] = str(report.get("method", "FIELD"))
+        mesh["remi_texture_ray_misses"] = int(report.get("misses", 0))
+        mesh["remi_texture_ray_steps_limited"] = int(report.get("step_limit_rays", 0))
+        mesh["remi_texture_ray_clipped"] = int(report.get("cage_clipped_rays", 0))
+        mesh["remi_texture_gap_rejected"] = int(report.get("gap_rejected_rays", 0))
+        mesh["remi_texture_source_normal_texels"] = int(report.get("source_normal_texels", 0))
     return result
 
 

@@ -59,7 +59,7 @@ class MeshWorkerTests(unittest.TestCase):
             }), encoding="utf-8")
             result = subprocess.run(
                 [sys.executable, "-I", "-B", "-u",
-                 str(ROOT / "integrations" / "splat_mesh" / "worker.py"),
+                  str(ROOT / "integrations" / "splat_mesh" / "density_worker.py"),
                  "--request", str(request)],
                 capture_output=True, text=True, timeout=180,
             )
@@ -80,7 +80,7 @@ class MeshWorkerTests(unittest.TestCase):
             request.write_text(json.dumps({"archive": str(root / "missing.npz")}))
             result = subprocess.run(
                 [sys.executable, "-I", "-B", "-u",
-                 str(ROOT / "integrations" / "splat_mesh" / "worker.py"),
+                  str(ROOT / "integrations" / "splat_mesh" / "density_worker.py"),
                  "--request", str(request)],
                 capture_output=True, text=True, timeout=30,
             )

@@ -29,6 +29,7 @@ from remi.blender.splat_projection import (
     resolve_splat_source,
     source_label,
     write_world_splat_archive,
+    _load_image,
 )
 from remi.features.texture.projection_area import state as projection_area
 from remi.blender.texture_layers import (
@@ -46,13 +47,14 @@ from remi.integrations.triposplat.splat_data import save
 
 
 class Layout:
-    def __init__(self):
-        self.operators = []
-        self.labels = []
-        self.props = []
+    def __init__(self, parent=None):
+        self.operators = parent.operators if parent is not None else []
+        self.labels = parent.labels if parent is not None else []
+        self.props = parent.props if parent is not None else []
+        self.enabled = parent.enabled if parent is not None else True
 
     def column(self, **kwargs):
-        return self
+        return Layout(self)
 
     row = column
     box = column
@@ -67,7 +69,7 @@ class Layout:
         pass
 
     def operator(self, name, **kwargs):
-        value = SimpleNamespace(**kwargs)
+        value = SimpleNamespace(enabled=self.enabled, **kwargs)
         self.operators.append((name, kwargs, value))
         return value
 
@@ -148,6 +150,7 @@ try:
         bpy.context.scene.remi_generation.python = sys.executable
         bpy.context.scene.remi_texture.pack_images = False
         assert can_project(bpy.context)
+        assert bpy.context.scene.remi_texture.bake_method == "OCTREE"
 
         layout = Layout()
         draw_texture(layout, bpy.context)
@@ -155,6 +158,8 @@ try:
         assert "remi.project_splats" in names
         project_operator = next(value for name, _kwargs, value in layout.operators if name == "remi.project_splats")
         assert project_operator.enabled
+        assert project_operator.text == "Bake Whole Mesh · Octree"
+        assert any(name == "match_distance" for _owner, name, _kwargs in layout.props)
         assert "remi.texture_preview" not in names
         assert not bpy.ops.remi.texture_preview.poll()
 
@@ -164,8 +169,22 @@ try:
             assert data["positions"].shape == (2, 3, 3)
             assert data["normals"].shape == (2, 3, 3)
             assert data["uvs"].shape == (2, 3, 2)
+            assert data["tangents"].shape == (2, 3, 3)
+            assert data["tangent_signs"].shape == (2, 3)
+            assert data["vertex_indices"].shape == (2, 3)
+            assert np.allclose(data["tangents"], [1, 0, 0])
+            assert np.allclose(data["tangent_signs"], 1)
             assert data["triangle_count"] == 2
             assert np.allclose(data["positions"][0, 0], (0, 0, 0))
+        mesh.scale = (-1, 1, 1)
+        bpy.context.view_layer.update()
+        export_mesh_archive(bpy.context, mesh, directory / "mirrored_mesh.npz")
+        with np.load(directory / "mirrored_mesh.npz", allow_pickle=False) as data:
+            assert np.allclose(data["tangents"], [-1, 0, 0])
+            assert np.allclose(data["tangent_signs"], -1)
+            assert data["orientation_sign"] == -1
+        mesh.scale = (1, 1, 1)
+        bpy.context.view_layer.update()
 
         # The screen-space projection area is a simple transient lasso.
         projection_area.clear()
@@ -175,6 +194,10 @@ try:
         projection_area.width = 10
         projection_area.height = 10
         assert projection_area.has_points()
+        area_layout = Layout()
+        draw_texture(area_layout, bpy.context)
+        whole_bake = next(value for name, _kwargs, value in area_layout.operators if name == "remi.project_splats")
+        assert not whole_bake.enabled
         assert projection_area.normalized() == [
             (0.0, 0.0), (1.0, 0.0), (1.0, 1.0)
         ]
@@ -187,6 +210,22 @@ try:
             "confidence": str(make_png(directory / "confidence.png", (0.8, 0.8, 0.8, 1.0))),
             "report": str(directory / "report.json"),
         }
+        # A new filepath must not reload the old packed bytes into the new bake.
+        old_png = make_png(directory / "packed_old.png", (1.0, 0.0, 0.0, 1.0))
+        new_png = make_png(directory / "packed_new.png", (0.0, 1.0, 0.0, 1.0))
+        old_image = _load_image("Packed rebake regression", old_png, "sRGB", True)
+        new_image = _load_image("Packed rebake regression", new_png, "sRGB", True)
+        assert old_image is not new_image
+        assert old_image.pixels[0] > 0.9 and old_image.pixels[1] < 0.01
+        assert new_image.pixels[1] > 0.9 and new_image.pixels[0] < 0.01
+        assert old_image.packed_file is not None and new_image.packed_file is not None
+        from remi.blender.texture_layers import _load_image as layer_image, _load_normal_image
+        old_layer = layer_image("Packed view rebake", old_png, pack=True)
+        new_layer = layer_image("Packed view rebake", new_png, pack=True)
+        assert old_layer is not new_layer and new_layer.pixels[1] > 0.9
+        old_normal = _load_normal_image("Packed normal rebake", old_png, pack=True)
+        new_normal = _load_normal_image("Packed normal rebake", new_png, pack=True)
+        assert old_normal is not new_normal and new_normal.pixels[1] > 0.9
         (directory / "report.json").write_text("{}", encoding="utf-8")
         material = import_projection_result(
             mesh, paths, source_label_value=splat.name, pack_images=False
@@ -232,6 +271,27 @@ try:
         normal_node = next(node for node in projected.node_tree.nodes if node.name == "remi_projected_normal")
         assert normal_node.image == baked_image
         assert mesh["remi_texture_normal_mode"] == "EXISTING"
+
+        # Import two whole-mesh packed bakes through the full material/layer path.
+        # Both color and normal must move to the new datablocks on the second run.
+        first_paths = dict(paths, albedo=str(old_png), normal=str(old_png))
+        second_paths = dict(paths, albedo=str(new_png), normal=str(new_png))
+        import_projection_result(mesh, first_paths, pack_images=True)
+        sync_base_layer(mesh)
+        rebuild_layer_material(mesh)
+        first_color = bpy.data.images[mesh["remi_texture_albedo_image"]]
+        first_normal = bpy.data.images[mesh["remi_texture_normal_image"]]
+        import_projection_result(mesh, second_paths, pack_images=True)
+        sync_base_layer(mesh)
+        rebuild_layer_material(mesh)
+        second_color = bpy.data.images[mesh["remi_texture_albedo_image"]]
+        second_normal = bpy.data.images[mesh["remi_texture_normal_image"]]
+        assert second_color is not first_color and second_normal is not first_normal
+        assert first_color.pixels[0] > 0.9 and second_color.pixels[1] > 0.9
+        assert second_normal.pixels[1] > 0.9 and second_normal.packed_file is not None
+        material_images = {node.image for node in mesh.data.materials[0].node_tree.nodes if node.type == "TEX_IMAGE"}
+        assert second_color in material_images and second_normal in material_images
+        assert first_color not in material_images and first_normal not in material_images
 
         # A 3D projection becomes the bottom/base layer, and view layers can be
         # added, hidden, and deleted without rebuilding pixels.
@@ -305,6 +365,19 @@ try:
             else:
                 raise AssertionError("missing archive accepted")
             spawn.assert_not_called()
+
+        for options in ({"method": "unknown"}, {"ray_distance": float("nan")},
+                        {"surface_density": 0.0}, {"ray_steps": 1},
+                        {"match_distance": float("nan")}, {"layer_width": 0}, {"local_normal_mode": "bad"}):
+            with mock.patch("remi.integrations.splat_project.client.subprocess.Popen") as spawn:
+                try:
+                    ProjectionJob.start(python=sys.executable, archive=splat_archive, mesh=exchange,
+                                        output=directory, **options)
+                except ValueError:
+                    pass
+                else:
+                    raise AssertionError(f"Invalid octree options accepted: {options}")
+                spawn.assert_not_called()
         with mock.patch("remi.integrations.splat_project.client.subprocess.Popen") as spawn:
             try:
                 ProjectionJob.start(

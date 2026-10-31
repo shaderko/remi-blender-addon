@@ -6,9 +6,11 @@ import uuid
 import bpy
 from bpy.types import Operator
 
-from ...blender.gaussian_splats import is_splat_object, write_splat_archive
+from ...blender.gaussian_splats import is_splat_object, native_splats_available, write_splat_archive
 from ...blender.reconstructed_mesh import import_reconstructed_mesh
-from ...integrations.splat_mesh.client import MeshJob
+from ...integrations.splat_mesh.client import MeshJob, SurfaceToolJob
+from ...integrations.splat_mesh.remi_surface.tool import platform_error
+from ...integrations.triposplat.client import shutdown_generation_server
 
 
 class MeshRuntime:
@@ -63,23 +65,19 @@ def can_convert(context):
         and not (generation and generation.mesh_busy)
         and runtime.job is None
         and splat_source(context) is not None
+        and native_splats_available()
+        and not platform_error()
     )
 
 
 def _phase_label(phase):
-    if phase.startswith("Preparing"):
-        return "Reading Gaussians…"
-    if phase.startswith("Building"):
-        return "Building surface…"
-    if phase.startswith("Saving"):
-        return "Saving mesh…"
-    return "Finishing…" if phase == "Complete" else "Starting mesher…"
+    return "Finishing…" if phase == "Complete" else phase
 
 
 class Remi_OT_CreateMesh(Operator):
     bl_idname = "remi.create_mesh"
     bl_label = "Create Mesh"
-    bl_description = "Reconstruct a vertex-colored mesh from the active Gaussian splats"
+    bl_description = "Create a camera-aware surface constrained by rendered Gaussian silhouettes; preserve dense detail"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -104,13 +102,14 @@ class Remi_OT_CreateMesh(Operator):
             temporary = temporary / f"remi_mesh_source_{uuid.uuid4().hex}.npz"
             runtime.temp_archive = temporary
             write_splat_archive(source, temporary)
+            shutdown_generation_server()  # Release this add-on's warm model before GPU reconstruction.
             runtime.job = MeshJob.start(
                 python=bpy.path.abspath(settings.python),
                 archive=temporary,
                 output=bpy.path.abspath(settings.mesh_output),
-                resolution=int(settings.mesh_detail),
-                taubin=int(settings.mesh_smoothing),
-                min_component=500,
+                blender=bpy.app.binary_path,
+                tool_folder=bpy.path.abspath(settings.surface_tools),
+                quality=settings.mesh_quality,
                 source=source.name,
             )
             runtime.manager = context.window_manager
@@ -122,6 +121,8 @@ class Remi_OT_CreateMesh(Operator):
             state.mesh_source_object = source.name
             state.mesh_directory = str(runtime.job.directory)
             self._source_name = source.name
+            self._source_object = source
+            self._source_matrix = source.matrix_world.copy()
             self._scene = context.scene
             context.window_manager.modal_handler_add(self)
         except Exception as exc:
@@ -153,14 +154,18 @@ class Remi_OT_CreateMesh(Operator):
             path = runtime.job.result()
             if context.scene != self._scene or context.mode != "OBJECT":
                 raise RuntimeError("Mesh saved, but the scene or mode changed. Import mesh.ply when ready")
-            source = bpy.data.objects.get(self._source_name)
-            if source is not None and not is_splat_object(source):
+            try:
+                source = self._source_object
+                if not is_splat_object(source):
+                    source = None
+            except ReferenceError:
                 source = None
             obj = import_reconstructed_mesh(
                 context, path, source_object=source,
                 report=runtime.job.directory / "report.json",
+                source_matrix=self._source_matrix,
             )
-            state.mesh_source_object = self._source_name
+            state.mesh_source_object = source.name if source is not None else self._source_name
             state.mesh_status = f"Mesh ready · {len(obj.data.polygons):,} triangles"
             state.mesh_status_kind = "SUCCESS"
             self._scene.remi_flow.preset = "RECONSTRUCTED"
@@ -191,3 +196,95 @@ class Remi_OT_CancelMesh(Operator):
     def execute(self, context):
         runtime.cancel_requested = True
         return {"FINISHED"}
+
+
+class Remi_OT_InstallSurfaceTool(Operator):
+    bl_idname = "remi.install_surface_tool"
+    bl_label = "Install Surface Tool"
+    bl_description = "Download and verify the optional GPL-3.0 surface tool (49 MB); no images are uploaded"
+
+    @classmethod
+    def poll(cls, context):
+        session = getattr(context.window_manager, "remi_session", None)
+        generation = getattr(context.window_manager, "remi_generation", None)
+        return bool(not platform_error() and not (session and session.active)
+                    and not (generation and (generation.busy or generation.mesh_busy)) and runtime.job is None)
+
+    @staticmethod
+    def _check_access():
+        if not bpy.app.online_access:
+            raise ValueError("Enable Allow Online Access in Blender Preferences to install the optional surface tool")
+
+    def invoke(self, context, event):
+        try:
+            self._check_access()
+            if not context.scene.remi_generation.surface_tools:
+                raise ValueError("Choose a Surface Tool Folder first")
+        except Exception as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        return context.window_manager.invoke_props_dialog(self, width=480)
+
+    def draw(self, context):
+        self.layout.label(text="Download the optional Spirula surface tool (49 MB)?", icon="IMPORT")
+        self.layout.label(text="GPL-3.0 · downloaded directly from its upstream GitHub release.")
+        self.layout.label(text="The executable is SHA-256 verified. No images are uploaded.")
+        self.layout.label(text="Requires Windows x64 and a Vulkan-capable GPU.")
+        self.layout.label(text=bpy.path.abspath(context.scene.remi_generation.surface_tools))
+
+    def execute(self, context):
+        settings = context.scene.remi_generation
+        state = context.window_manager.remi_generation
+        try:
+            self._check_access()
+            if context.window is None or not settings.surface_tools or not settings.mesh_output:
+                raise ValueError("Choose Surface Tool and Mesh Output folders in an interactive Blender window")
+            runtime.job = SurfaceToolJob.start(python=bpy.path.abspath(settings.python),
+                                               folder=bpy.path.abspath(settings.surface_tools),
+                                               output=bpy.path.abspath(settings.mesh_output))
+            runtime.manager = context.window_manager
+            runtime.timer = runtime.manager.event_timer_add(0.25, window=context.window)
+            runtime.cancel_requested = False
+            state.mesh_busy = True
+            state.mesh_status = "Installing surface tool…"
+            state.mesh_status_kind = "PROGRESS"
+            source = splat_source(context)
+            state.mesh_source_object = source.name if source else ""
+            state.mesh_directory = str(runtime.job.directory)
+            context.window_manager.modal_handler_add(self)
+            return {"RUNNING_MODAL"}
+        except Exception as exc:
+            runtime.stop()
+            state.mesh_status, state.mesh_status_kind = str(exc), "ERROR"
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+
+    def modal(self, context, event):
+        state = context.window_manager.remi_generation
+        if runtime.job is None:
+            return {"CANCELLED"}
+        if runtime.cancel_requested or (event.type == "ESC" and event.value == "PRESS"):
+            runtime.stop()
+            state.mesh_status, state.mesh_status_kind = "Surface-tool installation cancelled", "CANCELLED"
+            return {"CANCELLED"}
+        if event.type != "TIMER":
+            return {"PASS_THROUGH"}
+        state.mesh_status = runtime.job.status().get("phase", "Installing surface tool…")
+        if context.area:
+            context.area.tag_redraw()
+        if runtime.job.poll() is None:
+            return {"RUNNING_MODAL"}
+        try:
+            runtime.job.result()
+            state.mesh_status, state.mesh_status_kind = "Surface tool ready", "SUCCESS"
+            self.report({"INFO"}, state.mesh_status)
+            return {"FINISHED"}
+        except Exception as exc:
+            state.mesh_status, state.mesh_status_kind = str(exc), "ERROR"
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        finally:
+            runtime.stop()
+
+    def cancel(self, context):
+        runtime.stop()

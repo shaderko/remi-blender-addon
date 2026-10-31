@@ -45,7 +45,7 @@ class TSDF:
         self.observations = np.zeros(self.shape, dtype=np.uint16)
         self.integrated = 0
 
-    def integrate(self, depth, confidence, camera_to_world, intrinsics, chunk=4):
+    def integrate(self, depth, confidence, camera_to_world, intrinsics, chunk=4, surface_band_only=False):
         depth, confidence = np.asarray(depth), np.asarray(confidence)
         if depth.ndim != 2 or confidence.shape != depth.shape:
             raise ValueError("Expected matching depth/confidence maps")
@@ -66,6 +66,10 @@ class TSDF:
             d, weight = depth[v[selected], u[selected]], confidence[v[selected], u[selected]]
             sdf = d - z[selected]
             keep = (d > 0) & (weight > 0) & (sdf >= -self.truncation)
+            if surface_band_only:
+                # Diagnostic only: isolate distant inconsistent depths carving
+                # away a surface. This can retain doubled/internal surfaces.
+                keep &= sdf <= self.truncation
             selected, sdf, weight = selected[keep], sdf[keep], weight[keep]
             if not len(selected):
                 continue

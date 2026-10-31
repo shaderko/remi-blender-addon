@@ -25,19 +25,19 @@ from splat_reconstruction.metrics import image_metrics, topology_metrics
 SCRIPTS = Path(__file__).resolve().parent
 
 
-def run(command, log):
+def run(command, log, env=None):
     print(f"Running {log.stem}", flush=True)
     with log.open("w", encoding="utf-8") as stream:
-        result = subprocess.run([str(part) for part in command], stdout=stream, stderr=subprocess.STDOUT)
+        result = subprocess.run([str(part) for part in command], stdout=stream, stderr=subprocess.STDOUT, env=env)
     if result.returncode:
         tail = "\n".join(log.read_text(encoding="utf-8", errors="replace").splitlines()[-20:])
         raise RuntimeError(f"Stage failed; see {log}\n{tail}")
 
 
-def make_report(views, methods, renders, output):
+def make_report(views, methods, renders, output, geometry_only=False):
     import trimesh
     dataset = json.loads((views / "dataset.json").read_text())
-    report = {"schema": 1, "source_sha256": dataset["source_sha256"],
+    report = {"schema": 1, "source_sha256": dataset["source_sha256"], "geometry_only": geometry_only,
               "reference": "held-out renders of source splat, NOT ground-truth geometry",
               "held_out_views": len(dataset["evaluation_views"]), "methods": {}}
     cells = []
@@ -47,7 +47,8 @@ def make_report(views, methods, renders, output):
     draw = ImageDraw.Draw(sheet)
     for method, mesh_path in methods.items():
         mesh = trimesh.load(mesh_path, process=False, force="mesh")
-        report["methods"][method] = {"mesh": str(mesh_path), "topology": topology_metrics(mesh), "views": []}
+        report["methods"][method] = {"mesh": str(mesh_path), "mesh_sha256": sha256(mesh_path),
+                                     "topology": topology_metrics(mesh), "views": []}
     for row, view in enumerate(dataset["evaluation_views"]):
         reference_path = views / view["rgb"]
         with Image.open(reference_path) as image:
@@ -69,7 +70,10 @@ def make_report(views, methods, renders, output):
                               f'<img width="320" alt="{html.escape(label)} view {view["index"]}" '
                               f'src="data:image/png;base64,{base64.b64encode(stream.getvalue()).decode()}"></button></td>')
                 if col:
-                    report["methods"][label]["views"].append({"index": view["index"], **image_metrics(reference, np.asarray(rgba))})
+                    metrics = image_metrics(reference, np.asarray(rgba))
+                    if geometry_only:
+                        metrics.pop("common_foreground_psnr_db", None)
+                    report["methods"][label]["views"].append({"index": view["index"], **metrics})
         cells.append("<tr>" + "".join(images) + "</tr>")
     summary = []
     for method, record in report["methods"].items():
@@ -86,7 +90,8 @@ def make_report(views, methods, renders, output):
     document += '<style>body{background:#17191e;color:#eee;font:16px system-ui}td{padding:2px}th{text-align:left}'
     document += 'button{border:0;padding:0;background:none;cursor:zoom-in}.zoom{cursor:zoom-out}.zoom img{width:auto}</style>'
     document += '<h1>Held-out splat → mesh comparison</h1><p>Reference agreement, not ground-truth accuracy. '
-    document += 'PSNR is restricted to common foreground and cannot compensate for missing geometry. '
+    document += ('Clay geometry inspection; no RGB similarity score. ' if geometry_only else
+                 'PSNR is restricted to common foreground and cannot compensate for missing geometry. ')
     document += 'No blanket hole filling; legitimate open surfaces must remain open. Click an image for full resolution.</p><ul>' + "".join(summary) + '</ul>'
     document += '<table><tr>' + ''.join(f'<th>{html.escape(label)}</th>' for label in labels) + '</tr>' + ''.join(cells) + '</table>'
     (output / "comparison.html").write_text(document, encoding="utf-8")

@@ -13,8 +13,7 @@ addon = importlib.import_module(module_name)
 archive = Path(sys.argv[sys.argv.index("--") + 1]).resolve()
 output = Path(tempfile.mkdtemp(prefix="remi-installed-mesh-opt-", dir=bpy.app.tempdir))
 settings = bpy.context.scene.remi_generation
-settings.mesh_detail = "160"
-settings.mesh_smoothing = "6"
+settings.mesh_quality = "FAST"
 settings.mesh_output = str(output)
 client = importlib.import_module(module_name + ".integrations.splat_mesh.client")
 adapter = importlib.import_module(module_name + ".blender.reconstructed_mesh")
@@ -22,10 +21,10 @@ splats = importlib.import_module(module_name + ".blender.gaussian_splats")
 splat = splats.import_splats(bpy.context, archive, display="NATIVE")
 job = client.MeshJob.start(
     python=bpy.path.abspath(settings.python), archive=archive, output=output,
-    resolution=160, taubin=6, min_component=500,
+    blender=bpy.app.binary_path, tool_folder=bpy.path.abspath(settings.surface_tools), quality=settings.mesh_quality,
 )
 try:
-    deadline = time.monotonic() + 180
+    deadline = time.monotonic() + 600
     while job.poll() is None and time.monotonic() < deadline:
         time.sleep(1)
     mesh = job.result()

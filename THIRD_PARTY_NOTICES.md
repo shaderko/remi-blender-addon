@@ -22,14 +22,30 @@ and UI are separate code. Large model weights are not bundled. Local setup
 copies the selected research checkpoint and frozen components; it does not
 grant additional redistribution rights for image encoders or other weights.
 
-## Modly SplatToMesh adapter
+## Spirula Studio (optional external surface tool)
+
+- Project: [harry7557558/spirula-studio](https://github.com/harry7557558/spirula-studio)
+- Supported release: `v2026.10.16`, Windows Vulkan x86_64
+- License: GPL-3.0
+- Corresponding source/license: <https://github.com/harry7557558/spirula-studio/tree/v2026.10.16>
+- Official archive SHA-256: `9b83ba6d78a4ace562d2ad2f964d2e3eb15aaa7a78918eab54e44d8a98a649d0`
+- Executable SHA-256: `eb57050c90fc046f079d2b788eb62f0cf9639afbe50941ecb4f945d52876bd14`
+
+The executable is **not bundled or redistributed in Remi's extension archive**.
+An explicit, online-access-gated installer retrieves the official GitHub release
+directly and checks both hashes. The installation retains source/license links
+and checksums in `provenance.json`. Remi invokes the tool as a local subprocess;
+no scene images are uploaded. Rendering uses Blender; the separate Python worker
+uses external numpy, scipy, Pillow, trimesh, and torch (not bundled).
+
+## Modly SplatToMesh adapter (legacy research baseline)
 
 - Project: [lightningpixel/modly-triposplat-extension](https://github.com/lightningpixel/modly-triposplat-extension)
 - Commit: `6fabeffbaf2b3c4d43b1b4e8f94d46068e8e18a5`
 - License: MIT; retained at `integrations/splat_mesh/vendor/MODLY_LICENSE.txt`
 - Vendored file: `integrations/splat_mesh/vendor/splat_mesh.py`
 
-The adapter is a port of ComfyUI's native `SplatToMesh`
+This is no longer the Create Mesh backend. The adapter is a port of ComfyUI's native `SplatToMesh`
 (`comfy_extras/nodes_gaussian_splat.py`, VAST-AI / Comfy-Org), which is
 distributed under GPL-3.0. Remi is GPL-3.0-or-later, so the combination is
 license-compatible. The vendored file is unmodified. Its runtime dependencies
@@ -40,7 +56,11 @@ license-compatible. The vendored file is unmodified. Its runtime dependencies
 - Files: `integrations/splat_project/` and `blender/splat_projection.py`
 - Runtime dependencies: `numpy`, `scipy`, and `Pillow` in the external Python
   environment configured for generation. They are external and not bundled.
-- Algorithm: UV-space evaluation of the Gaussian field, normal estimation from
+- Optional CPU acceleration: `numba` (BSD-2-Clause) and its `llvmlite` dependency
+  in that external environment. Neither package, LLVM runtime, nor generated
+  machine-code cache is bundled. Source: <https://github.com/numba/numba>.
+- Algorithm: UV-space evaluation and optional sparse-octree first-hit ray baking
+  of the Gaussian field, normal estimation from
   covariance/density, confidence masking, and texture-space filling. No
   third-party rasterizer or reconstruction implementation is vendored.
 

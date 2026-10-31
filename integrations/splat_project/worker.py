@@ -15,11 +15,11 @@ import traceback
 
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from splat_project.projection import (  # noqa: E402
+from integrations.splat_project.projection import (  # noqa: E402
     project,
     project_from_view,
     save_textures,
@@ -56,6 +56,13 @@ def _load_mesh(path):
             "normals": np.asarray(archive["normals"], dtype=np.float32),
             "uvs": np.asarray(archive["uvs"], dtype=np.float32),
         }
+        for name in ("tangents", "tangent_signs"):
+            if name in archive:
+                mesh[name] = np.asarray(archive[name], dtype=np.float32)
+        if "vertex_indices" in archive:
+            mesh["vertex_indices"] = np.asarray(archive["vertex_indices"], dtype=np.int32)
+        if "orientation_sign" in archive:
+            mesh["orientation_sign"] = np.asarray(archive["orientation_sign"], dtype=np.float32)
     if mesh["positions"].ndim != 3 or mesh["positions"].shape[1:] != (3, 3):
         raise ValueError("Mesh positions must be a (triangles, 3, 3) array")
     if mesh["normals"].shape != mesh["positions"].shape:
@@ -64,6 +71,19 @@ def _load_mesh(path):
         raise ValueError("Mesh UVs must be a (triangles, 3, 2) array")
     if len(mesh["positions"]) == 0:
         raise ValueError("Mesh has no triangles")
+    for name, value in mesh.items():
+        if not np.isfinite(value).all():
+            raise ValueError(f"Mesh contains non-finite {name}")
+    if "tangents" in mesh and mesh["tangents"].shape != mesh["positions"].shape:
+        raise ValueError("Mesh tangents must match positions")
+    if "tangent_signs" in mesh and mesh["tangent_signs"].shape != mesh["positions"].shape[:2]:
+        raise ValueError("Mesh tangent signs must match triangle corners")
+    if "vertex_indices" in mesh and (mesh["vertex_indices"].shape != mesh["positions"].shape[:2]
+                                      or np.any(mesh["vertex_indices"] < 0)):
+        raise ValueError("Mesh vertex indices must match triangle corners")
+    if "orientation_sign" in mesh and (mesh["orientation_sign"].shape != ()
+                                        or float(mesh["orientation_sign"]) not in {-1.0, 1.0}):
+        raise ValueError("Mesh orientation sign must be +1 or -1")
     return mesh
 
 
@@ -105,6 +125,8 @@ def run(request, output):
         raise FileNotFoundError(mesh_path)
 
     mode = str(request.get("mode", "field"))
+    if mode not in {"field", "octree", "octree_local", "view"}:
+        raise ValueError("Unknown projection mode")
     size = int(request.get("texture_size", 2048))
 
     write_status(output, "Loading mesh")
@@ -195,20 +217,36 @@ def run(request, output):
         splats = _load_splats(archive_path)
 
         write_status(output, "Rasterizing texture")
-        result = project(
-            mesh,
-            splats,
-            texture_size=size,
-            samples=samples,
-            normal_source=normal_source,
-            normal_strength=normal_strength,
-            normal_smoothing=normal_smoothing,
-            fill_holes=fill_holes,
-            fill_background=fill_background,
-            margin_px=margin_px,
-        )
+        options = dict(texture_size=size, normal_strength=normal_strength,
+                       normal_smoothing=normal_smoothing, fill_holes=fill_holes,
+                       fill_background=fill_background, margin_px=margin_px)
+        if mode in {"octree", "octree_local"}:
+            from integrations.splat_project.octree import project_octree
+
+            def cancelled():
+                if (output / "cancel.request").exists():
+                    raise InterruptedError("Texture projection cancelled")
+
+            if mode == "octree_local":
+                from integrations.splat_project.local_gaussian import project_local
+                result = project_local(
+                    mesh, splats, match_distance=float(request.get("match_distance", 0.02)),
+                    layer_width=float(request.get("layer_width", 0.005)),
+                    normal_mode=request.get("local_normal_mode", "AUTO"),
+                    smooth_rays=bool(request.get("smooth_rays", True)),
+                    progress=lambda phase: write_status(output, phase), cancelled=cancelled, **options)
+            else:
+                result = project_octree(
+                    mesh, splats, ray_distance=float(request.get("ray_distance", 0.1)),
+                    density=float(request.get("surface_density", 0.5)),
+                    max_steps=int(request.get("ray_steps", 512)),
+                    progress=lambda phase: write_status(output, phase), cancelled=cancelled, **options)
+        else:
+            result = project(mesh, splats, samples=samples, normal_source=normal_source, **options)
 
         write_status(output, "Saving textures")
+        if (output / "cancel.request").exists():
+            raise InterruptedError("Texture projection cancelled")
         paths = save_textures(result, output)
         report = dict(result.report)
         report.update(
@@ -222,9 +260,13 @@ def run(request, output):
                 "confidence": paths["confidence"],
                 "device": "cpu",
                 "elapsed_seconds": float(time.perf_counter() - started),
-                "projector": "UV-space Gaussian field projection",
+                "projector": ("Source-local Gaussian alpha compositing" if mode == "octree_local" else
+                              "Octree density-surface ray bake (legacy)" if mode == "octree" else
+                              "UV-space Gaussian field projection"),
             }
         )
+    if (output / "cancel.request").exists():
+        raise InterruptedError("Texture projection cancelled")
     (output / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     (output / "complete.json").write_text(
         json.dumps({"schema": 1, "complete": True}), encoding="utf-8",

@@ -65,6 +65,16 @@ source.select_set(True)
 print("REMI_INSTALLED_ALPHA_GUIDED_REPAIR_OK")
 assert hasattr(bpy.ops.remi, "create_mesh")
 assert hasattr(bpy.ops.remi, "cancel_mesh")
+assert hasattr(bpy.ops.remi, "install_surface_tool")
+assert bpy.context.scene.remi_generation.mesh_quality == "DENSE"
+assert bpy.context.scene.remi_texture.bake_method == "OCTREE"
+assert bpy.context.scene.remi_texture.ray_steps == "512"
+from pathlib import Path
+assert (Path(addon.__file__).parent / "integrations/splat_project/octree.py").is_file()
+assert (Path(addon.__file__).parent / "integrations/splat_project/octree_native.py").is_file()
+assert (Path(addon.__file__).parent / "integrations/splat_project/local_gaussian.py").is_file()
+assert (Path(addon.__file__).parent / "integrations/splat_project/local_gaussian_native.py").is_file()
+assert bpy.context.scene.remi_texture.match_distance > 0
 assert hasattr(bpy.types, "Remi_PT_GenerationSettings")
 assert bpy.ops.remi.start_session.poll(), "Installed Start Remi is disabled"
 assert bpy.ops.remi.run_full_flow.poll(), "Installed Full Flow is disabled"

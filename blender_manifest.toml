@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "remi"
-version = "2.7.0-beta.1"
+version = "2.7.0-beta.5"
 name = "Remi"
 tagline = "Repair, optimize, retopologize, texture, and bake meshes"
 maintainer = "Remi"
@@ -32,7 +32,7 @@ wheels = [
 ]
 
 [permissions]
-network = "Download optional model weights from HTTPS storage"
+network = "Download optional models and a verified surface tool over HTTPS"
 files = "Import and process meshes, textures, images, and Gaussian splats"
 
 [build]

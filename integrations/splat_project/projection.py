@@ -112,7 +112,8 @@ def prepare_splats(arrays):
     }
 
 
-def rasterize_uv(positions, normals, uvs, size):
+def rasterize_uv(positions, normals, uvs, size, *, corner_tangents=None, tangent_signs=None,
+                 corner_ray_normals=None):
     """Rasterize per-triangle positions/normals/UVs into texture-space fields.
 
     Inputs are per-corner triangle arrays:
@@ -130,12 +131,25 @@ def rasterize_uv(positions, normals, uvs, size):
         raise ValueError("Mesh normals must match positions")
     if uvs.shape != (len(positions), 3, 2):
         raise ValueError("Mesh UVs must be a (triangles, 3, 2) array")
+    if not all(np.isfinite(value).all() for value in (positions, normals, uvs)):
+        raise ValueError("Mesh fields must be finite")
+    if corner_tangents is not None:
+        corner_tangents = np.asarray(corner_tangents, dtype=np.float32)
+        tangent_signs = np.asarray(tangent_signs, dtype=np.float32)
+        if (corner_tangents.shape != positions.shape or tangent_signs.shape != positions.shape[:2]
+                or not np.isfinite(corner_tangents).all() or not np.isfinite(tangent_signs).all()):
+            raise ValueError("Invalid per-corner mesh tangent basis")
+    if corner_ray_normals is not None:
+        corner_ray_normals = np.asarray(corner_ray_normals, dtype=np.float32)
+        if corner_ray_normals.shape != positions.shape or not np.isfinite(corner_ray_normals).all():
+            raise ValueError("Invalid per-corner ray directions")
     size = int(size)
     if not 64 <= size <= 8192:
         raise ValueError("Texture size must be between 64 and 8192")
 
     pos_img = np.zeros((size, size, 3), dtype=np.float32)
     nrm_img = np.zeros((size, size, 3), dtype=np.float32)
+    ray_img = np.zeros_like(nrm_img) if corner_ray_normals is not None else None
     tan_img = np.zeros((size, size, 3), dtype=np.float32)
     sign_img = np.ones((size, size), dtype=np.int8)
     covered = np.zeros((size, size), dtype=bool)
@@ -170,10 +184,10 @@ def rasterize_uv(positions, normals, uvs, size):
         determinant = duv1[0] * duv2[1] - duv2[0] * duv1[1]
         if abs(determinant) > 1e-12:
             tangent_triangle = (dp1 * duv2[1] - dp2 * duv1[1]) / determinant
-            uv_sign = 1 if determinant > 0.0 else -1
+            bitangent_triangle = (dp2 * duv1[0] - dp1 * duv2[0]) / determinant
         else:
             tangent_triangle = np.array((1.0, 0.0, 0.0), dtype=np.float32)
-            uv_sign = 1
+            bitangent_triangle = np.array((0.0, 1.0, 0.0), dtype=np.float32)
 
         # A single quad can cover the whole texture. Rasterize in row bands so
         # its intermediate arrays stay bounded at 4K instead of allocating the
@@ -195,21 +209,30 @@ def rasterize_uv(positions, normals, uvs, size):
             normal = np.einsum("...k,kj->...j", bary, tri_n)
             normal = _normalize(normal)
 
-            tangent = tangent_triangle - normal * np.sum(
-                tangent_triangle * normal, axis=-1, keepdims=True
-            )
+            tangent = (tangent_triangle if corner_tangents is None
+                       else np.einsum("...k,kj->...j", bary, corner_tangents[index]))
+            tangent = tangent - normal * np.sum(tangent * normal, axis=-1, keepdims=True)
             tangent = _normalize(tangent)
+            if corner_tangents is None:
+                handedness = np.sum(np.cross(normal, tangent) * bitangent_triangle, axis=-1)
+            else:
+                handedness = np.einsum("...k,k->...", bary, tangent_signs[index])
+            uv_sign = np.where(handedness < 0, -1, 1)
 
             yy, xx = np.nonzero(inside)
             gy = yy + band_start
             gx = xx + xmin
             pos_img[gy, gx] = point[inside]
             nrm_img[gy, gx] = normal[inside]
+            if ray_img is not None:
+                ray_normal = _normalize(np.einsum("...k,kj->...j", bary, corner_ray_normals[index]))
+                ray_img[gy, gx] = ray_normal[inside]
             tan_img[gy, gx] = tangent[inside]
-            sign_img[gy, gx] = uv_sign
+            sign_img[gy, gx] = uv_sign[inside]
             covered[gy, gx] = True
 
-    return pos_img, nrm_img, tan_img, sign_img, covered
+    result = (pos_img, nrm_img, tan_img, sign_img, covered)
+    return (*result, ray_img) if ray_img is not None else result
 
 
 def sample_surface(
@@ -468,7 +491,8 @@ def project(
 
     prepared = prepare_splats(splats)
     positions, normals, tangents, uv_sign, covered = rasterize_uv(
-        mesh["positions"], mesh["normals"], mesh["uvs"], texture_size
+        mesh["positions"], mesh["normals"], mesh["uvs"], texture_size,
+        corner_tangents=mesh.get("tangents"), tangent_signs=mesh.get("tangent_signs"),
     )
     if not covered.any():
         raise ValueError("The UV map covers no texels")
@@ -482,6 +506,24 @@ def project(
         normal_source=normal_source,
         normal_strength=normal_strength,
     )
+
+    return finish_projection(
+        mesh, normals, tangents, uv_sign, covered, sampled,
+        texture_size=texture_size, normal_smoothing=normal_smoothing,
+        fill_holes=fill_holes, fill_background=fill_background,
+        margin_px=margin_px, coverage_threshold=coverage_threshold,
+        report={"gaussians": int(len(prepared["positions"])), "samples": samples,
+                "normal_source": normal_source, "normal_strength": float(normal_strength),
+                "method": "FIELD"}, started=started,
+    )
+
+
+def finish_projection(mesh, normals, tangents, uv_sign, covered, sampled, *,
+                      texture_size, normal_smoothing=2, fill_holes=True,
+                      fill_background=True, margin_px=8, coverage_threshold=0.05,
+                      report=None, started=None):
+    """Shared image assembly; filling never turns missing evidence into confidence."""
+    started = time.perf_counter() if started is None else started
 
     colors = np.zeros((texture_size, texture_size, 3), dtype=np.float32)
     world_normals = np.zeros_like(colors)
@@ -523,12 +565,8 @@ def project(
     filled_count = int(filled.sum())
     report = {
         "schema": 1,
-        "gaussians": int(len(prepared["positions"])),
         "triangles": int(len(mesh["positions"])),
         "texture_size": texture_size,
-        "samples": samples,
-        "normal_source": normal_source,
-        "normal_strength": float(normal_strength),
         "normal_smoothing": normal_smoothing,
         "covered_texels": covered_count,
         "valid_texels": valid_count,
@@ -537,8 +575,9 @@ def project(
         "padding_texels": padding,
         "coverage_mean": float(coverage[covered].mean()) if covered_count else 0.0,
         "normal_agreement_mean": float(agreement[valid].mean()) if valid_count else 0.0,
-        "flatness_mean": float(sampled["flatness"].mean()) if len(sampled["flatness"]) else 0.0,
+        "flatness_mean": float(np.mean(sampled.get("flatness", [0.0]))),
         "elapsed_seconds": float(time.perf_counter() - started),
+        **(report or {}),
     }
     return ProjectionResult(
         albedo=colors,
@@ -747,7 +786,8 @@ def project_from_view(
             normal_values[..., 3] *= area_mask
 
     positions, normals, tangents, uv_sign, covered = rasterize_uv(
-        mesh["positions"], mesh["normals"], mesh["uvs"], texture_size
+        mesh["positions"], mesh["normals"], mesh["uvs"], texture_size,
+        corner_tangents=mesh.get("tangents"), tangent_signs=mesh.get("tangent_signs"),
     )
     depth_buffer = _rasterize_depth(mesh["positions"], matrix, width, height)
 

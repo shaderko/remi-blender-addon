@@ -54,11 +54,11 @@ The Blender add-on remains free and open source for local work and manual tools.
 
 ### Model generation beta
 
-The `model-generation` branch is published separately as **2.7.0-beta.1**.
+The `model-generation` branch is developed separately as **2.7.0-beta.5**.
 It includes image-to-splats generation, mesh reconstruction, layered texture
 projection and on-demand model downloads. This is a **prerelease**, not a
 replacement for the stable release. Back up your `.blend` files before testing.
-See [beta release notes and setup](docs/releases/2.7.0-beta.1.md).
+See [beta release notes and setup](docs/releases/2.7.0-beta.5.md).
 
 **Supported packages:** Blender 5.1 or 5.2 on **Windows x64** and **macOS Apple Silicon**.
 
@@ -79,9 +79,12 @@ Open **N-panel → Remi → Generate** to generate with the local
 `rand6_100_ncm` model. This uses an external CUDA/PyTorch environment, saves
 native Gaussian-splat PLY files, and imports lossless splat data with a
 **native Gaussian point cloud on Blender 5.3+**. Blender 5.1/5.2 use a
-non-destructive ellipsoid preview instead. **Create Mesh** reconstructs a
-vertex-colored surface using anisotropic density + Surface Nets, then switches
-to Optimize with the **Reconstructed · Decimate** preset. Each splat object
+non-destructive ellipsoid preview instead. **Create Mesh** now requires Blender
+5.3+ on Windows x64 with a Vulkan GPU and the optional verified surface tool.
+It reconstructs a vertex-colored, camera-aware surface constrained by rendered
+silhouettes. **Dense** surface optimization is the default; **Fast** skips the
+optimization. It switches to Optimize without automatically reducing geometry.
+Each splat object
 keeps its own result; multiple models in one file are supported without an
 archive cache. This is a
 lossy approximation of the splats, not a native splat render. The external
@@ -94,7 +97,15 @@ existing mesh workflow.
 
 ### Experimental: project splats from the current view
 
-After **Create Mesh** and any Remi cleanup, switch to **Texture**. Click
+After **Create Mesh** and Remi cleanup, switch to **Texture**. Keep the low-poly
+mesh active and clear any drawn area, then **Bake Whole Mesh · Octree** to match
+and alpha-composite local Gaussian layers into color, normal, and confidence maps.
+Conservative source-depth estimates supply normal detail where reliable, with a
+clean-geometry fallback instead of density-shell normals. Check alignment and
+**Maximum Source Gap**; inspect unmatched regions in Confidence. This does not
+restore geometry or silhouette lost through extreme simplification.
+
+For view-specific layers, click
 **Draw Area** and drag a loop around the region you want on the model, then
 click **Project from View**. Remi renders the linked splats from that camera and
 projects that view only inside the drawn region, as a layer. Move the view and

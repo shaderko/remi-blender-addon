@@ -12,6 +12,7 @@ def main():
     parser.add_argument("--views", type=Path, required=True)
     parser.add_argument("--methods", type=Path, required=True, help="JSON mapping of method names to PLY paths")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--clay", action="store_true", help="Untextured geometry inspection with camera-aligned light")
     args = parser.parse_args(sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else [])
     import bpy
     from mathutils import Matrix
@@ -49,6 +50,11 @@ def main():
     scene.collection.objects.link(camera)
     scene.camera = camera
     flip = np.diag([1.0, -1.0, -1.0, 1.0])
+    if args.clay:
+        light_data = bpy.data.lights.new("Geometry inspection light", "SUN")
+        light_data.energy = 3.0
+        light = bpy.data.objects.new("Geometry inspection light", light_data)
+        scene.collection.objects.link(light)
     for method, mesh_path in methods.items():
         if not method or any(c not in "abcdefghijklmnopqrstuvwxyz0123456789_-" for c in method):
             raise ValueError(f"Unsafe method name: {method}")
@@ -61,9 +67,12 @@ def main():
         material.use_nodes = True
         nodes, links = material.node_tree.nodes, material.node_tree.links
         nodes.clear()
-        emission = nodes.new("ShaderNodeEmission")
-        emission.inputs["Color"].default_value = (0.5, 0.5, 0.5, 1)
-        if obj.data.color_attributes:
+        emission = nodes.new("ShaderNodeBsdfPrincipled" if args.clay else "ShaderNodeEmission")
+        color_input = "Base Color" if args.clay else "Color"
+        emission.inputs[color_input].default_value = (0.5, 0.5, 0.5, 1)
+        if args.clay:
+            emission.inputs["Roughness"].default_value = 0.85
+        if obj.data.color_attributes and not args.clay:
             color = nodes.new("ShaderNodeVertexColor")
             color.layer_name = obj.data.color_attributes[0].name
             links.new(color.outputs["Color"], emission.inputs["Color"])
@@ -75,6 +84,8 @@ def main():
         directory.mkdir()
         for view in dataset["evaluation_views"]:
             camera.matrix_world = Matrix((np.asarray(view["camera_to_world_opencv"]) @ flip).tolist())
+            if args.clay:
+                light.rotation_euler = camera.matrix_world.to_euler()
             bpy.context.view_layer.update()
             scene.render.filepath = str(directory / f"view_{view['index']:04d}.png")
             bpy.ops.render.render(write_still=True)

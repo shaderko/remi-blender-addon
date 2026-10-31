@@ -76,16 +76,31 @@ def _draw_settings(layout, settings, mesh):
     layout.prop(settings, "smooth_mesh", text="Smooth Mesh")
 
     bake = layout.box()
-    bake.label(text="3D Bake (optional)", icon="MOD_REMESH")
-    bake.prop(settings, "samples", text="Samples")
+    bake.label(text="Whole Mesh Bake", icon="MOD_REMESH")
+    bake.prop(settings, "bake_method", text="Method")
+    if settings.bake_method == "OCTREE":
+        bake.prop(settings, "match_distance", text="Maximum Source Gap")
+        bake.prop(settings, "layer_width", text="Layer Width")
+        bake.label(text="Closest local layer — not the first surface in front", icon="INFO")
+    elif settings.bake_method == "DENSITY":
+        bake.prop(settings, "ray_distance", text="Ray Distance")
+        bake.prop(settings, "surface_density", text="Surface Density")
+        bake.prop(settings, "ray_steps", text="Trace Steps")
+        bake.label(text="Legacy density normals can produce false detail", icon="ERROR")
+    else:
+        bake.prop(settings, "samples", text="Samples")
     bake.prop(settings, "normal_map_mode", text="Normal Map")
     if settings.normal_map_mode == "PROJECTED":
-        bake.prop(settings, "normal_source", text="Normals")
+        if settings.bake_method == "OCTREE":
+            bake.prop(settings, "local_normal_mode", text="Normals")
+        elif settings.bake_method == "FIELD":
+            bake.prop(settings, "normal_source", text="Normals")
         bake.prop(settings, "normal_strength", text="Normal Strength")
-        bake.prop(settings, "normal_smoothing", text="Normal Smoothing")
+        bake.prop(settings, "normal_smoothing", text="Depth Neighborhood" if settings.bake_method == "OCTREE" else "Normal Smoothing")
     else:
         existing, _uv = existing_normal_map(mesh)
-        if existing is not None and existing.name == f"{mesh.name} · projected normal":
+        if existing is not None and (existing.get("remi_projection_kind") in {"NORMAL", "VIEW_NORMAL"}
+                                     or existing.name == f"{mesh.name} · projected normal"):
             existing = None
         if existing is None:
             bake.label(text="No existing normal; projected normals will be used", icon="INFO")
@@ -109,9 +124,9 @@ def _draw_area(layout, context, mesh):
         row.operator("remi.draw_projection_area", text="Redraw Area", icon="BRUSH_DATA")
         row.operator("remi.clear_projection_area", text="Clear", icon="X")
     else:
-        box.label(text="Whole visible view", icon="INFO")
+        box.label(text="No area — whole-mesh bake available", icon="INFO")
         box.operator("remi.draw_projection_area", text="Draw Area", icon="BRUSH_DATA")
-    box.label(text="Drag a loop in the 3D Viewport", icon="INFO")
+    box.label(text="Draw a loop to project just one view area", icon="INFO")
 
 
 def _draw_layers(layout, mesh):
@@ -165,6 +180,22 @@ def _draw_projection_state(layout, mesh, state):
                 box.label(text="Use Keep Baked or force Gradient for more detail", icon="INFO")
         if filled:
             box.label(text=f"Filled {filled:,} low-evidence texels", icon="INFO")
+        if mesh.get("remi_texture_method") == "OCTREE_LOCAL":
+            misses = int(mesh.get("remi_texture_ray_misses", 0))
+            gaps = int(mesh.get("remi_texture_gap_rejected", 0))
+            box.label(text=f"Local layers · {misses:,} unmatched texels", icon="INFO")
+            if gaps:
+                box.label(text=f"{gaps:,} texels outside Maximum Source Gap", icon="INFO")
+            box.label(text="Normals are estimates; uncertain depth uses clean geometry", icon="INFO")
+        elif mesh.get("remi_texture_method") == "OCTREE":
+            misses = int(mesh.get("remi_texture_ray_misses", 0))
+            limited = int(mesh.get("remi_texture_ray_steps_limited", 0))
+            clipped = int(mesh.get("remi_texture_ray_clipped", 0))
+            box.label(text=f"Octree bake · {misses:,} ray misses", icon="INFO")
+            if limited:
+                box.label(text=f"{limited:,} rays reached Trace Steps — increase the budget", icon="ERROR")
+            if clipped:
+                box.label(text=f"{clipped:,} rays start inside the field — increase Ray Distance", icon="INFO")
 
     mode = projection_preview(mesh)
     row = box.row(align=True)
@@ -200,29 +231,24 @@ def draw_texture(layout, context):
     viewport_ready = viewport_region(context)[0] is not None
 
     layout.separator()
+    bake_action = layout.column()
+    bake_action.scale_y = 1.5 if not projection_area.has_points() else 1.0
+    bake_action.enabled = bool(can_project(context) and source_ready and python_ready
+                               and (settings.bake_method == "FIELD" or not projection_area.has_points()))
+    bake_action.operator("remi.project_splats",
+                         text={"OCTREE": "Bake Whole Mesh · Octree", "DENSITY": "Density Bake · Legacy", "FIELD": "Project 3D · Field"}[settings.bake_method],
+                         icon="MOD_REMESH")
     view_action = layout.column()
-    view_action.scale_y = 1.5
-    view_operator = view_action.operator(
+    view_action.scale_y = 1.5 if projection_area.has_points() else 1.0
+    area_ready = not projection_area.has_points() or projection_area.valid(context)
+    view_action.enabled = bool(
+        can_project(context) and source_ready and python_ready and native_ready
+        and viewport_ready and area_ready)
+    view_action.operator(
         "remi.project_view",
         text="Project from View",
         icon="CAMERA_DATA",
     )
-    area_ready = not projection_area.has_points() or projection_area.valid(context)
-    view_operator.enabled = bool(
-        can_project(context)
-        and source_ready
-        and python_ready
-        and native_ready
-        and viewport_ready
-        and area_ready
-    )
-    bake_action = layout.row(align=True)
-    bake_operator = bake_action.operator(
-        "remi.project_splats",
-        text="Project 3D",
-        icon="MOD_REMESH",
-    )
-    bake_operator.enabled = bool(can_project(context) and source_ready and python_ready)
     if not native_ready:
         layout.label(text="View projection requires Blender 5.3+ native splats", icon="INFO")
         layout.label(text="Project 3D remains available on this version", icon="INFO")

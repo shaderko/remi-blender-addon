@@ -143,13 +143,13 @@ def _phase_label(phase):
         return "Saving textures…"
     if text.startswith("Complete"):
         return "Finishing…"
-    return "Projecting splats…"
+    return text or "Projecting splats…"
 
 
 class Remi_OT_ProjectSplats(Operator):
     bl_idname = "remi.project_splats"
     bl_label = "Project Splats"
-    bl_description = "Bake Gaussian-splat appearance and normals onto the active mesh"
+    bl_description = "Bake the source layer closest to each mesh texel, excluding unrelated foreground layers; keep missing evidence explicit"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -169,6 +169,8 @@ class Remi_OT_ProjectSplats(Operator):
             return {"CANCELLED"}
 
         try:
+            if settings.bake_method != "FIELD" and projection_area.has_points():
+                raise RuntimeError("Clear the drawn area for a whole-mesh octree bake, or use Project from View for that area")
             if context.window_manager.remi_session.active:
                 raise RuntimeError("Finish or cancel the Remi mesh session before projecting textures")
             generation = getattr(context.window_manager, "remi_generation", None)
@@ -212,6 +214,14 @@ class Remi_OT_ProjectSplats(Operator):
                 fill_holes=bool(settings.fill_holes),
                 fill_background=bool(settings.fill_background),
                 margin_px=int(settings.margin_px),
+                method=settings.bake_method,
+                ray_distance=float(settings.ray_distance),
+                surface_density=float(settings.surface_density),
+                ray_steps=int(settings.ray_steps),
+                match_distance=float(settings.match_distance),
+                layer_width=float(settings.layer_width),
+                local_normal_mode=settings.local_normal_mode,
+                smooth_rays=bool(settings.smooth_mesh),
                 source=label,
             )
             runtime.manager = context.window_manager
@@ -224,6 +234,9 @@ class Remi_OT_ProjectSplats(Operator):
             state.source_name = label
             state.directory = str(runtime.job.directory)
             self._mesh_name = mesh.name
+            self._mesh_object = mesh
+            self._normal_mode = settings.normal_map_mode
+            self._source_object = source_object
             self._uv_name = uv_name
             self._scene = context.scene
             context.window_manager.modal_handler_add(self)
@@ -257,7 +270,7 @@ class Remi_OT_ProjectSplats(Operator):
             result = runtime.job.result()
             if context.scene != self._scene or context.mode != "OBJECT":
                 raise RuntimeError("Textures saved, but the scene or mode changed. Project again when ready")
-            mesh = bpy.data.objects.get(self._mesh_name)
+            mesh = self._mesh_object
             if mesh is None or mesh.type != "MESH":
                 raise RuntimeError("The projected mesh is no longer available")
             import_result(
@@ -265,15 +278,23 @@ class Remi_OT_ProjectSplats(Operator):
                 result,
                 source_name=state.source_name,
                 pack_images=bool(context.scene.remi_texture.pack_images),
-                normal_mode=context.scene.remi_texture.normal_map_mode,
+                normal_mode=self._normal_mode,
                 uv_name=self._uv_name,
             )
             sync_base_layer(mesh)
             rebuild_layer_material(mesh)
+            try:
+                if self._source_object is not None:
+                    mesh["remi_splat_source"] = self._source_object
+            except ReferenceError:
+                pass
             state.directory = result["directory"]
             state.status = (
                 f"Projected {result.get('report_data', {}).get('covered_texels', 0):,} texels"
             )
+            report = result.get("report_data", {})
+            if report.get("method") in {"OCTREE", "OCTREE_LOCAL"}:
+                state.status = f"Ray baked · {report.get('hits', 0):,} hits · {report.get('misses', 0):,} misses"
             state.status_kind = "SUCCESS"
             if context.area:
                 context.area.tag_redraw()

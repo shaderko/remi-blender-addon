@@ -124,6 +124,39 @@ class RemiTextureSettings(PropertyGroup):
         min=4,
         max=32,
     )
+    bake_method: EnumProperty(
+        name="Whole Mesh Method",
+        items=[("OCTREE", "Octree · Local Layers", "Alpha-composite the source layer closest to each texel, without unrelated foreground layers or density-shell normals", 0),
+               ("DENSITY", "Density Surface (Legacy)", "Earlier first-hit density-shell experiment; can choose unrelated layers and generate unreliable normals", 2),
+               ("FIELD", "Surface Sampling (Legacy)", "Evaluate nearby Gaussians directly at the mesh surface, without ray tracing", 1)],
+        default="OCTREE",
+    )
+    match_distance: FloatProperty(
+        name="Maximum Source Gap", default=0.02, min=0.0001, max=0.25, subtype="PERCENTAGE",
+        description="Maximum distance between target and its local Gaussian layer, as a fraction of source bounds diagonal; larger gaps can match the wrong part",
+    )
+    layer_width: FloatProperty(
+        name="Layer Width", default=0.005, min=0.0001, max=0.05, subtype="PERCENTAGE",
+        description="Depth bandwidth for the matched local Gaussian layer; unrelated foreground/background layers outside it cannot paint this texel",
+    )
+    local_normal_mode: EnumProperty(
+        name="Local Normals", items=[
+            ("AUTO", "Conservative Source Detail", "Clean geometry normals with confidence-weighted chart-local plane fits of source depth; no density gradient normals"),
+            ("MESH", "Clean Geometry Only", "Use clean geometric normals without estimated Gaussian detail"),
+        ], default="AUTO",
+    )
+    ray_distance: FloatProperty(
+        name="Ray Distance", description="Projection cage distance on each side of the mesh, as a fraction of the Gaussian bounds diagonal",
+        default=0.1, min=0.001, max=1.0, subtype="PERCENTAGE",
+    )
+    surface_density: FloatProperty(
+        name="Surface Density", description="First-hit threshold of the summed Gaussian opacity field; this is not native renderer alpha",
+        default=0.5, min=0.01, max=5.0,
+    )
+    ray_steps: EnumProperty(
+        name="Trace Steps", items=[(str(n), str(n), "Maximum adaptive steps per ray; unfinished rays remain missing evidence")
+                                   for n in (128, 256, 512, 1024)], default="512",
+    )
     normal_map_mode: EnumProperty(
         name="Normal Map",
         description="Choose between the splat-derived normal map and an existing baked normal map",
@@ -154,7 +187,7 @@ class RemiTextureSettings(PropertyGroup):
     )
     normal_smoothing: IntProperty(
         name="Normal Smoothing",
-        description="Texture-space smoothing radius for splat normals in pixels; suppresses per-texel jitter",
+        description="Local layers: source-depth plane-fit neighborhood in pixels (minimum one); legacy methods: normal smoothing radius",
         default=2,
         min=0,
         max=8,
@@ -167,7 +200,7 @@ class RemiTextureSettings(PropertyGroup):
     )
     fill_holes: BoolProperty(
         name="Fill Holes",
-        description="Fill low-coverage texels from the nearest valid projected texel",
+        description="Local layers: fill at most two pixels from the same UV island, retaining zero confidence; legacy methods: nearest valid projected color",
         default=True,
     )
     fill_background: BoolProperty(

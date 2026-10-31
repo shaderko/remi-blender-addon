@@ -5,11 +5,11 @@ from Blender. No mesh needs to be selected. A generated splat can then be
 reconstructed into a **vertex-colored polygon mesh** with **Create Mesh** and
 passed directly into Optimize.
 
-The mesher is a vendored, MIT-licensed port of Modly's `SplatToMesh` adapter:
-each Gaussian is rasterized as an oriented anisotropic density kernel, an Otsu
-level is extracted with Surface Nets, thin filaments are recovered, the surface
-is Taubin-smoothed, and vertex colors are sampled from a co-splatted color
-volume. It needs only PyTorch/scipy/NumPy/trimesh; no compiled CUDA extensions.
+Create Mesh uses camera-aware opacity extraction with constraints from rendered
+foreground silhouettes. The default **Dense** mode first optimizes the surface
+against 72 calibrated Gaussian renders. **Fast** extracts directly from the
+selected Gaussians, using the same cameras and silhouette gate. Both retain
+vertex colors and dense geometry without automatic simplification.
 
 Both output files use Blender Z-up coordinates (the model's native frame).
 Remi bypasses upstream's default viewer-oriented, Y-down PLY transform, rather
@@ -101,6 +101,15 @@ session, so progress and session-recovery controls remain visible.
 
 ### Create a mesh
 
+Requires **Blender 5.3+ with native Gaussian rendering, Windows x64, and a
+Vulkan-capable GPU**. Generation and the other mesh tools retain their separate
+platform requirements; an older ellipsoid preview is not a reconstruction renderer.
+In **Generate → gear**, choose **Surface Tool Folder**, then **Install Surface
+Tool**. Confirm the 49 MB download from the upstream Spirula GitHub release
+(`v2026.10.16`, GPL-3.0). Blender's **Allow Online Access** must be enabled for
+installation only. The archive and executable are SHA-256 verified; the tool is
+external, not bundled in the extension. No input images or scene data are uploaded.
+
 After generation, the active splat shows **Create Mesh** in the Generate tab.
 Click it; the external worker builds the surface and imports a new
 vertex-colored mesh. The source splat is hidden but kept in the scene. The
@@ -110,12 +119,12 @@ file can be converted independently.
 Create Mesh reads the Gaussian data from the selected object, not from the
 generation folder. The original `splats.npz` may be moved or deleted after
 import; the worker receives a temporary exchange archive that is removed when
-the job ends. Remi switches to **Optimize** and selects the
-**Reconstructed · Decimate** preset,
-which reduces the surface to about 120k triangles without the destructive
-initial voxel remesh. The mesh keeps its vertex colors. Run UV and Bake
-manually if the reconstructed topology accepts them; the current Surface Nets
-output is not always suitable for Remi's UV validator.
+the job ends. A separate source snapshot is retained with the reconstruction.
+Object translation, rotation, and scale are preserved. Remi switches to
+**Optimize** and selects the **Reconstructed · Decimate** preset, but **does not
+run it**. Keep the dense result or explicitly run reduction after inspection.
+Run UV and Bake manually if the reconstructed topology accepts them; fragments,
+sliver triangles, and open/non-manifold regions can still need cleanup.
 
 For a source-faithful look, finish the geometry in **Optimize**, then switch to
 **Texture**. The Texture workspace projects the linked splat's base color and
@@ -123,17 +132,35 @@ surface-derived normal onto the cleaned mesh, with a confidence map for holes.
 It is re-runnable after remesh/UV changes and does not depend on the mesh's
 vertex colors. See [texture_projection.md](texture_projection.md).
 
-The gear menu contains **Mesh Detail** (Draft 160 / Standard 224 / High 288),
-**Smoothing** (Crisp/Balanced/Smooth), and **Mesh Output**. Typical times on the
-local RTX 5070 for 65k Gaussians are 2–5 seconds at Standard/High, plus process
-startup. A 224-resolution mesh is about 1M triangles before Optimize.
+The gear menu contains **Mesh Quality**, **Surface Tool Folder**, and **Mesh Output**:
 
-This is a **lossy approximation**. It produces a clean, recognizable surface
-with colors, but it cannot reproduce the full fidelity of a native Gaussian
-render; fine rigging can be simplified. Use **High** and **Crisp** for more
-detail, then review before accepting the Optimize result. The worker requires
-`torch`, `scipy`, `numpy`, and `trimesh` in the configured external Python;
-CUDA is used when available.
+- **Dense · Surface Optimized** (default): 72 views at 1512 px, 32 EEVEE samples,
+  8,000 optimization steps, and up to 1,000,000 fitted Gaussians. The local RTX
+  5070 ship test produced about 3.5M vertices / 7M triangles in 162 seconds.
+- **Fast · Direct Surface**: the same views, extraction, and silhouette checks,
+  without surface optimization. The same asset produced about 472k vertices /
+  943k triangles in 32 seconds. Times and topology depend on the asset/GPU.
+
+Neither mode smooths, decimates, fills holes, merges extraction edges, or removes
+components by size. Upstream extraction can still split non-manifold vertices.
+The silhouette gate rejects vertices/face centroids with insufficient foreground
+support or excessive background contradictions, preserving thin structures better
+than the old density baseline without guaranteeing a watertight surface.
+
+The configured external Python requires `torch`, `scipy`, `Pillow`, `numpy`, and
+`trimesh`. Install dependencies into that environment, not Blender's Python.
+CUDA accelerates the silhouette check when available; the surface tool uses
+Vulkan and Gaussian rendering uses EEVEE. Remi releases its own warm generation
+worker before reconstruction to free GPU memory. Blender stays interactive;
+**Cancel** or `Esc` stops the worker and its owned rendering/optimizer processes.
+Progress and stage logs are retained in the unique Mesh Output directory, with
+`raw/mesh.ply`, `constrained/mesh.ply`, the final `mesh.ply`, and `report.json`.
+Failures/cancellation do not replace the source object.
+
+This remains a **lossy reconstruction**, not ground-truth or guaranteed hidden
+geometry. Inspect fine rigging, disconnected fragments, and topology before
+reducing the mesh. See [surface reconstruction details](surface_mesh_reconstruction.md)
+and [pilot comparisons](surface_mesh_pilot_results.md).
 
 Start at 65,536 splats. Larger counts may exhaust GPU memory; a failed worker
 leaves the scene unchanged and reports the error in its log.
@@ -147,11 +174,13 @@ available until its cache timeout.
 
 For installed copies, machine-local defaults can be stored in
 `remi-generation.json` inside that Blender version's user **config** folder,
-with string fields `python`, `models`, `output`, `mesh_output`, and `download_url`. This avoids changing the
+with string fields `python`, `models`, `output`, `mesh_output`, `surface_tools`, and `download_url`. This avoids changing the
 user's `startup.blend` or copying model weights into the extension. Defaults
 are read when Remi loads; saved scene values still take precedence, and
 `REMI_TRIPOSPLAT_MODELS` overrides the configured model default. The local 5.3
 installation uses this file to point at the already-prepared Remi model bundle.
+`REMI_SURFACE_TOOLS` overrides the surface-tool folder default. Saved scene
+settings take precedence over defaults.
 
 By default the external worker keeps the checkpoint, image encoders, and
 decoder loaded for **5 minutes** after a generation. Repeated generations in

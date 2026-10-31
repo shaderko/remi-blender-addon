@@ -54,6 +54,14 @@ class ProjectionJob:
         fill_holes=True,
         fill_background=True,
         margin_px=8,
+        method="FIELD",
+        ray_distance=0.1,
+        surface_density=0.5,
+        ray_steps=512,
+        match_distance=0.02,
+        layer_width=0.005,
+        local_normal_mode="AUTO",
+        smooth_rays=True,
         source=None,
     ):
         executable = shutil.which(python) if python else None
@@ -76,6 +84,18 @@ class ProjectionJob:
             raise ValueError("Normal smoothing must be between 0 and 16 pixels")
         if not 0 <= int(margin_px) <= 256:
             raise ValueError("Margin must be between 0 and 256 pixels")
+        if method not in {"FIELD", "OCTREE", "DENSITY"}:
+            raise ValueError("Unsupported whole-mesh bake method")
+        if not 0 < float(ray_distance) <= 1:
+            raise ValueError("Ray distance must be in (0, 1]")
+        if not 0.01 <= float(surface_density) <= 5:
+            raise ValueError("Surface density must be between 0.01 and 5")
+        if int(ray_steps) not in (128, 256, 512, 1024):
+            raise ValueError("Unsupported ray step budget")
+        if not 0 < float(match_distance) <= 0.25 or not 0 < float(layer_width) <= 0.05:
+            raise ValueError("Invalid local source gap or layer width")
+        if local_normal_mode not in {"AUTO", "MESH"}:
+            raise ValueError("Unsupported local normal mode")
 
         directory = output / (datetime.now().strftime("%Y%m%d_%H%M%S_") + uuid.uuid4().hex[:8])
         directory.mkdir(parents=True, exist_ok=False)
@@ -84,6 +104,7 @@ class ProjectionJob:
             json.dumps(
                 {
                     "archive": str(archive.resolve()),
+                    "mode": {"OCTREE": "octree_local", "DENSITY": "octree", "FIELD": "field"}[method],
                     "mesh": str(mesh.resolve()),
                     "source": str(source or ""),
                     "texture_size": int(texture_size),
@@ -94,6 +115,13 @@ class ProjectionJob:
                     "fill_holes": bool(fill_holes),
                     "fill_background": bool(fill_background),
                     "margin_px": int(margin_px),
+                    "ray_distance": float(ray_distance),
+                    "surface_density": float(surface_density),
+                    "ray_steps": int(ray_steps),
+                    "match_distance": float(match_distance),
+                    "layer_width": float(layer_width),
+                    "local_normal_mode": local_normal_mode,
+                    "smooth_rays": bool(smooth_rays),
                 },
                 indent=2,
             ),
@@ -255,6 +283,7 @@ class ProjectionJob:
 
     def cancel(self):
         if self.process.poll() is None:
+            (self.directory / "cancel.request").touch()
             self.process.terminate()
             try:
                 self.process.wait(timeout=5)

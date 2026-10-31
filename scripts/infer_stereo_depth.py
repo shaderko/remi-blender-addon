@@ -35,6 +35,8 @@ def main():
     parser.add_argument("--lr-tolerance", type=float, default=1.0)
     args = parser.parse_args()
     dataset = json.loads((args.views / "dataset.json").read_text())
+    if dataset.get("training_sides", "both") != "both":
+        raise ValueError("Stereo inference requires both left and right training renders")
     if not (args.views / "render_complete.json").is_file():
         raise ValueError("Stereo render is incomplete")
     if args.output.exists() and any(args.output.iterdir()):

@@ -8,6 +8,7 @@ from unittest import mock
 
 import bpy
 import numpy as np
+from mathutils import Matrix
 
 ROOT = Path(__file__).resolve().parents[1]
 if "remi" not in sys.modules:
@@ -141,10 +142,12 @@ try:
 
         mesh_path = directory / "mesh.ply"
         make_ply(mesh_path)
+        splat.matrix_world = Matrix.Translation((2.0, -3.0, 1.0)) @ Matrix.Diagonal((1.5, 0.5, 2.0, 1.0))
         before = set(bpy.data.objects)
         obj = import_reconstructed_mesh(bpy.context, mesh_path, source_object=splat)
         assert set(bpy.data.objects) == before | {obj}
         assert is_reconstructed_mesh(obj)
+        assert obj.matrix_world == splat.matrix_world
         assert bpy.context.active_object is obj
         assert obj.data.color_attributes.get("Col") is not None
         assert len(obj.data.materials) == 1 and obj.data.materials[0].use_nodes
@@ -199,6 +202,9 @@ try:
         settings_layout = Layout()
         Remi_PT_GenerationSettings.draw(SimpleNamespace(layout=settings_layout), bpy.context)
         settings = bpy.context.scene.remi_generation
+        assert settings.mesh_quality == "DENSE"
+        assert settings.surface_tools
+        assert hasattr(bpy.ops.remi, "install_surface_tool")
         assert settings.mesh_detail in {"160", "224", "288"}
         assert settings.mesh_smoothing in {"6", "12", "20"}
         assert settings.mesh_output

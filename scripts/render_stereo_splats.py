@@ -31,6 +31,8 @@ def main():
                         help="Stereo baseline / bounds diameter")
     parser.add_argument("--distance", type=float, default=3.4)
     parser.add_argument("--samples", type=int, default=32)
+    parser.add_argument("--training-sides", choices=("both", "left"), default="both",
+                        help="Use left only for posed multiview inference; stereo requires both")
     args = parser.parse_args(sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else [])
     import bpy
     from mathutils import Matrix
@@ -58,7 +60,8 @@ def main():
     rig.update({"source_archive": str(archive),
                 "source_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
                 "blender": bpy.app.version_string, "engine": "BLENDER_EEVEE",
-                "samples": args.samples, "depth_source": "RGB stereo only; no rendered depth"})
+                 "samples": args.samples, "training_sides": args.training_sides,
+                 "depth_source": "RGB only; no rendered depth"})
     (output / "dataset.json").write_text(json.dumps(rig, indent=2), encoding="utf-8")
     for obj in list(bpy.data.objects):
         bpy.data.objects.remove(obj, do_unlink=True)
@@ -98,7 +101,7 @@ def main():
         bpy.ops.render.render(write_still=True)
 
     for pair in rig["pairs"]:
-        for side in ("left", "right"):
+        for side in (("left", "right") if args.training_sides == "both" else ("left",)):
             render(pair[side], pair[f"{side}_camera_to_world_opencv"])
         print(f"Stereo pair {pair['index'] + 1}/{len(rig['pairs'])}", flush=True)
     for view in rig["evaluation_views"]:

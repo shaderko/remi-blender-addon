@@ -1,0 +1,21 @@
+# Use an isolated environment with CUDA torch/torchvision already available.
+# DA3 source/weights are fetched and verified by prepare_multiview.py, not pip.
+numpy
+scipy
+scikit-image
+trimesh
+Pillow
+torch>=2
+torchvision
+einops
+huggingface_hub
+safetensors
+omegaconf
+evo
+e3nn
+plyfile
+moviepy==1.0.3
+pycolmap
+pillow_heif
+opencv-python
+imageio

@@ -9,7 +9,9 @@
 #include "subdivide.h"
 
 #include <cmath>
+#include <algorithm>
 #include <map>
+#include <limits>
 #include <numeric>
 #include <unordered_map>
 #include <unordered_set>
@@ -17,6 +19,56 @@
 int nprocs = -1;
 
 namespace {
+
+// Sparse, confidence-weighted suggestions should not turn into a hard global
+// direction when the hierarchy collapses an entire circular feature to a node.
+// Keep upstream propagation unchanged for legacy/manual-only sessions.
+void propagate_soft_constraints(MultiResolutionHierarchy &res, int rosy, int posy) {
+    auto orient = rosy == 2 ? compat_orientation_extrinsic_2 :
+                  rosy == 4 ? compat_orientation_extrinsic_4 : compat_orientation_extrinsic_6;
+    auto position = posy == 4 ? compat_position_extrinsic_4 : compat_position_extrinsic_3;
+    for (int level = 0; level + 1 < res.levels(); ++level) {
+        for (uint32_t i = 0; i < res.size(level + 1); ++i) {
+            Vector2u upper = res.toUpper(level).col(i);
+            uint32_t a = upper[0], b = upper[1];
+            Float qa = res.CQw(level)[a], qb = b == INVALID ? 0.f : res.CQw(level)[b];
+            Float oa = res.COw(level)[a], ob = b == INVALID ? 0.f : res.COw(level)[b];
+            // An explicit/boundary constraint takes priority over suggestions.
+            if (qa == 1.f || qb == 1.f) {
+                if (qa < 1.f) qa = 0;
+                if (qb < 1.f) qb = 0;
+            }
+            if (oa == 1.f || ob == 1.f) {
+                if (oa < 1.f) oa = 0;
+                if (ob < 1.f) ob = 0;
+            }
+            Vector3f q = Vector3f::Zero(), o = Vector3f::Zero();
+            if (qa > 0 && qb > 0) {
+                auto pair = orient(res.CQ(level).col(a), res.N(level).col(a),
+                                   res.CQ(level).col(b), res.N(level).col(b));
+                q = pair.first * qa + pair.second * qb;
+            } else if (qa > 0) q = res.CQ(level).col(a);
+            else if (qb > 0) q = res.CQ(level).col(b);
+            Float qw = std::max(qa, qb), ow = std::max(oa, ob);
+            const Vector3f n = res.N(level + 1).col(i), v = res.V(level + 1).col(i);
+            q -= n.dot(q) * n;
+            if (q.squaredNorm() > RCPOVERFLOW) q.normalize();
+            else qw = 0;
+            if (oa > 0 && ob > 0) {
+                auto pair = position(res.V(level).col(a), res.N(level).col(a), res.CQ(level).col(a), res.CO(level).col(a),
+                                     res.V(level).col(b), res.N(level).col(b), res.CQ(level).col(b), res.CO(level).col(b),
+                                     res.scale(), 1.f / res.scale());
+                o = (pair.first * oa + pair.second * ob) / (oa + ob);
+            } else if (oa > 0) o = res.CO(level).col(a);
+            else if (ob > 0) o = res.CO(level).col(b);
+            o -= n.dot(o - v) * n;
+            res.CQ(level + 1).col(i) = q;
+            res.CO(level + 1).col(i) = o;
+            res.CQw(level + 1)[i] = qw < 1.f ? qw * 0.5f : qw;
+            res.COw(level + 1)[i] = ow < 1.f ? ow * 0.5f : ow;
+        }
+    }
+}
 
 uint64_t edge_key(uint32_t first, uint32_t second) {
     if (first > second)
@@ -264,13 +316,32 @@ void InteractiveSession::set_strokes(std::vector<RemiStroke> strokes) {
     stop_locked();
     mPositionSolutionValid = false;
     for (auto &stroke : strokes) {
+        if (stroke.type != 0 && stroke.type != 1)
+            throw std::runtime_error("Unknown field stroke type");
+        if (!std::isfinite(stroke.weight) || stroke.weight <= 0 || stroke.weight > 1)
+            throw std::runtime_error("Stroke weights must be in (0, 1]");
+        if (stroke.automatic)
+            stroke.weight = std::min(stroke.weight, (Float) 0.95);
         if (stroke.points.size() < 2)
             throw std::runtime_error("Each field stroke requires at least two surface points");
         for (const auto &point : stroke.points) {
+            if (!point.p.allFinite() || !point.n.allFinite() || point.n.squaredNorm() < RCPOVERFLOW)
+                throw std::runtime_error("Stroke points and normals must be finite and normals nonzero");
             if (point.f >= mRes.F().cols())
                 throw std::runtime_error("Stroke references an invalid surface face");
         }
-        if (!smooth_curve(mBVH.get(), mRes.E2E(), stroke.points, false))
+        // A periodic guide is not a shortest-path annotation. The upstream
+        // open-stroke smoother shrinks circles and rejects matching end faces.
+        // Closed/fitted paths arrive surface-sampled and must retain their shape.
+        Float epsilon = std::max((Float) 1e-12, average_edge_length() * (Float) 1e-4);
+        if ((stroke.points.front().p - stroke.points.back().p).norm() < epsilon) {
+            stroke.closed = true;
+            stroke.points.pop_back();
+        }
+        if (stroke.closed && stroke.points.size() < 3)
+            throw std::runtime_error("A closed guide requires at least three distinct surface points");
+        if (!stroke.closed && !stroke.automatic &&
+            !smooth_curve(mBVH.get(), mRes.E2E(), stroke.points, false))
             throw std::runtime_error("A field stroke could not be projected across the surface");
     }
     mStrokes = std::move(strokes);
@@ -291,6 +362,74 @@ void InteractiveSession::apply_constraints_locked() {
     const MatrixXf &normals = mRes.N();
     const VectorXu &e2e = mRes.E2E();
     mRes.clearConstraints();
+    mRes.CQ().setZero();
+    mRes.CO().setZero();
+
+    // Automatic guides are soft suggestions. Accumulate compatible directions
+    // instead of allowing sample order to choose the field at shared vertices.
+    VectorXf anchor_distance = VectorXf::Constant(vertices.cols(), std::numeric_limits<Float>::infinity());
+    MatrixXf automatic_sum = MatrixXf::Zero(2, vertices.cols());
+    auto apply_stroke = [&](const RemiStroke &stroke) {
+        const auto &curve = stroke.points;
+        for (uint32_t i = 0; i < curve.size(); ++i) {
+            Vector3f tangent;
+            if (stroke.closed)
+                tangent = curve[(i + 1) % curve.size()].p - curve[(i + curve.size() - 1) % curve.size()].p;
+            else if (i == 0)
+                tangent = curve[1].p - curve[0].p;
+            else if (i + 1 == curve.size())
+                tangent = curve[i].p - curve[i - 1].p;
+            else
+                tangent = curve[i + 1].p - curve[i - 1].p;
+            if (tangent.squaredNorm() <= RCPOVERFLOW)
+                continue;
+            tangent.normalize();
+
+            for (int corner = 0; corner < 3; ++corner) {
+                uint32_t vertex = faces(corner, curve[i].f);
+                Vector3f local = tangent - tangent.dot(normals.col(vertex)) * normals.col(vertex);
+                if (local.squaredNorm() <= RCPOVERFLOW)
+                    continue;
+                local.normalize();
+                if (stroke.automatic) {
+                    // Average in RoSy space: q and its 90-degree rotation are
+                    // equivalent for quads. This is independent of stroke order.
+                    Vector3f n = normals.col(vertex);
+                    int axis = 0;
+                    if (std::abs(n[1]) < std::abs(n[axis])) axis = 1;
+                    if (std::abs(n[2]) < std::abs(n[axis])) axis = 2;
+                    Vector3f u = Vector3f::Zero();
+                    u[axis] = 1;
+                    u = (u - n.dot(u) * n).normalized();
+                    Vector3f v = n.cross(u);
+                    Float angle = mRosy * std::atan2(local.dot(v), local.dot(u));
+                    automatic_sum(0, vertex) += stroke.weight * std::cos(angle);
+                    automatic_sum(1, vertex) += stroke.weight * std::sin(angle);
+                    if (automatic_sum.col(vertex).squaredNorm() < RCPOVERFLOW) {
+                        mRes.CQw()[vertex] = 0;
+                        continue;
+                    }
+                    angle = std::atan2(automatic_sum(1, vertex), automatic_sum(0, vertex)) / mRosy;
+                    local = u * std::cos(angle) + v * std::sin(angle);
+                }
+                mRes.CQ().col(vertex) = local;
+                mRes.CQw()[vertex] = stroke.automatic
+                    ? std::max(mRes.CQw()[vertex], stroke.weight) : 1.f;
+                if (!stroke.automatic && stroke.type == 0 && mRes.COw()[vertex] < 1.f)
+                    mRes.COw()[vertex] = 0.f; // manual comb supersedes an automatic edge
+                Float distance = (vertices.col(vertex) - curve[i].p).squaredNorm();
+                if (stroke.type == 1 && (!stroke.automatic || distance < anchor_distance[vertex])) {
+                    mRes.CO().col(vertex) = curve[i].p;
+                    mRes.COw()[vertex] = stroke.automatic ? stroke.weight : 1.f;
+                    anchor_distance[vertex] = distance;
+                }
+            }
+        }
+    };
+
+    for (const auto &stroke : mStrokes)
+        if (stroke.automatic)
+            apply_stroke(stroke);
 
     if (mAlignBoundaries) {
         for (uint32_t edge_index = 0; edge_index < 3 * faces.cols(); ++edge_index) {
@@ -311,37 +450,14 @@ void InteractiveSession::apply_constraints_locked() {
         }
     }
 
-    for (const auto &stroke : mStrokes) {
-        const auto &curve = stroke.points;
-        for (uint32_t i = 0; i < curve.size(); ++i) {
-            Vector3f tangent;
-            if (i == 0)
-                tangent = curve[1].p - curve[0].p;
-            else if (i + 1 == curve.size())
-                tangent = curve[i].p - curve[i - 1].p;
-            else
-                tangent = curve[i + 1].p - curve[i - 1].p;
-            if (tangent.squaredNorm() <= RCPOVERFLOW)
-                continue;
-            tangent.normalize();
-
-            for (int corner = 0; corner < 3; ++corner) {
-                uint32_t vertex = faces(corner, curve[i].f);
-                Vector3f local_tangent = tangent;
-                local_tangent -= local_tangent.dot(normals.col(vertex)) * normals.col(vertex);
-                if (local_tangent.squaredNorm() <= RCPOVERFLOW)
-                    continue;
-                local_tangent.normalize();
-                mRes.CQ().col(vertex) = local_tangent;
-                mRes.CQw()[vertex] = 1.f;
-                if (stroke.type == 1) {
-                    mRes.CO().col(vertex) = curve[i].p;
-                    mRes.COw()[vertex] = 1.f;
-                }
-            }
-        }
-    }
-    mRes.propagateConstraints(mRosy, mPosy);
+    for (const auto &stroke : mStrokes)
+        if (!stroke.automatic)
+            apply_stroke(stroke);
+    bool automatic = std::any_of(mStrokes.begin(), mStrokes.end(), [](const RemiStroke &s) { return s.automatic; });
+    if (automatic)
+        propagate_soft_constraints(mRes, mRosy, mPosy);
+    else
+        mRes.propagateConstraints(mRosy, mPosy);
 }
 
 void InteractiveSession::start_orientation() {
@@ -377,6 +493,68 @@ std::vector<uint32_t> InteractiveSession::sample_indices(
 std::tuple<MatrixXf, MatrixXu, MatrixXf> InteractiveSession::surface_snapshot() {
     std::lock_guard<ordered_lock> lock(mRes.mutex());
     return std::make_tuple(mRes.V(), mRes.F(), mRes.N());
+}
+
+void InteractiveSession::save_solution() {
+    std::lock_guard<ordered_lock> lock(mRes.mutex());
+    update_solve_state_locked();
+    if (mOptimizer->active() || !mPositionSolutionValid)
+        throw std::runtime_error("Only a completed field solution can be saved");
+    mSavedQ.clear();
+    mSavedO.clear();
+    for (int level = 0; level < mRes.levels(); ++level) {
+        mSavedQ.push_back(mRes.Q(level));
+        mSavedO.push_back(mRes.O(level));
+    }
+    mSavedTopology = mOutputTopology;
+    mSavedWarnings = mOutputWarnings;
+}
+
+void InteractiveSession::restore_solution() {
+    std::lock_guard<ordered_lock> lock(mRes.mutex());
+    if (mOptimizer->active() || mSavedQ.size() != (size_t) mRes.levels())
+        throw std::runtime_error("No compatible saved field solution is available");
+    for (int level = 0; level < mRes.levels(); ++level) {
+        mRes.Q(level) = std::move(mSavedQ[level]);
+        mRes.O(level) = std::move(mSavedO[level]);
+    }
+    mSavedQ.clear();
+    mSavedO.clear();
+    mOutputTopology = mSavedTopology;
+    mOutputWarnings = std::move(mSavedWarnings);
+    mPositionSolutionValid = true;
+    mSolvingOrientation = mSolvingPosition = false;
+    mRes.setFrozenQ(false);
+    mRes.setFrozenO(false);
+}
+
+void InteractiveSession::discard_saved_solution() {
+    std::lock_guard<ordered_lock> lock(mRes.mutex());
+    mSavedQ.clear();
+    mSavedO.clear();
+    mSavedWarnings.clear();
+}
+
+std::tuple<MatrixXf, MatrixXf, VectorXu> InteractiveSession::stroke_snapshot(uint32_t index) {
+    std::lock_guard<ordered_lock> lock(mRes.mutex());
+    if (index >= mStrokes.size())
+        throw std::runtime_error("Invalid guide index");
+    const auto &points = mStrokes[index].points;
+    MatrixXf positions(3, points.size()), normals(3, points.size());
+    VectorXu faces(points.size());
+    for (uint32_t i = 0; i < points.size(); ++i) {
+        positions.col(i) = points[i].p;
+        normals.col(i) = points[i].n;
+        faces[i] = points[i].f;
+    }
+    return std::make_tuple(positions, normals, faces);
+}
+
+std::tuple<MatrixXf, VectorXf, MatrixXf, VectorXf> InteractiveSession::constraint_snapshot(int level) {
+    std::lock_guard<ordered_lock> lock(mRes.mutex());
+    if (level < 0 || level >= mRes.levels())
+        throw std::runtime_error("Invalid hierarchy level");
+    return std::make_tuple(mRes.CQ(level), mRes.CQw(level), mRes.CO(level), mRes.COw(level));
 }
 
 std::tuple<MatrixXf, MatrixXf, MatrixXf>

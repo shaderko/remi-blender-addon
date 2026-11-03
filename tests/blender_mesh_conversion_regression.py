@@ -32,6 +32,7 @@ from remi.features.generation.mesh_operators import (
 )
 from remi.features.generation.panel import draw_generation
 from remi.integrations.splat_mesh.client import MeshJob
+from remi.integrations.splat_mesh.remi_surface.tool import platform_error
 from remi.integrations.triposplat.splat_data import load, save
 from remi.workflow.session import runtime as session_runtime
 
@@ -101,6 +102,7 @@ def arrays(offset=0.0):
 
 remi.register()
 try:
+    mesh_supported = native_splats_available() and not platform_error()
     assert not bpy.ops.remi.create_mesh.poll()
     assert not bpy.ops.remi.cancel_mesh.poll()
     with tempfile.TemporaryDirectory(prefix="remi-mesh-test-") as directory:
@@ -110,9 +112,13 @@ try:
         display = "NATIVE" if native_splats_available() else "ELLIPSOID"
         splat = import_splats(bpy.context, archive, display=display)
         assert splat_source(bpy.context) is splat
-        assert bpy.ops.remi.create_mesh.poll()
+        assert bpy.ops.remi.create_mesh.poll() == mesh_supported
         layout = draw()
-        assert "remi.create_mesh" in layout.operators
+        if mesh_supported:
+            assert "remi.create_mesh" in layout.operators
+        else:
+            assert "remi.create_mesh" not in layout.operators
+            assert any("Create Mesh" in label for label in layout.labels)
 
         # The object itself carries the complete Gaussian data. It can be
         # meshed after the generation archive is moved/deleted.
@@ -125,7 +131,7 @@ try:
             assert np.array_equal(load(ephemeral)[name], value), name
         archive.unlink()
         assert splat_source(bpy.context) is splat
-        assert bpy.ops.remi.create_mesh.poll()
+        assert bpy.ops.remi.create_mesh.poll() == mesh_supported
 
         state = bpy.context.window_manager.remi_generation
         state.mesh_busy = True
@@ -168,13 +174,16 @@ try:
         state.mesh_status_kind = "SUCCESS"
         state.mesh_source_object = splat.name
         layout = draw()
-        assert "remi.create_mesh" in layout.operators
+        if mesh_supported:
+            assert "remi.create_mesh" in layout.operators
+        else:
+            assert "remi.create_mesh" not in layout.operators
         assert "Recreate Mesh" not in layout.labels
-        assert bpy.ops.remi.create_mesh.poll()
+        assert bpy.ops.remi.create_mesh.poll() == mesh_supported
         bpy.context.view_layer.objects.active = splat
         assert mesh_for_splat(splat) is obj
         layout = draw()
-        assert "remi.create_mesh" in layout.operators
+        assert ("remi.create_mesh" in layout.operators) == mesh_supported
         bpy.context.view_layer.objects.active = splat2
 
         # A failed import must not leave a mesh or material behind.

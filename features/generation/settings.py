@@ -5,7 +5,7 @@ from pathlib import Path
 import shutil
 
 import bpy
-from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
+from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty, StringProperty
 from bpy.types import PropertyGroup
 
 from ...integrations.triposplat.download import DEFAULT_MODEL_BASE
@@ -121,6 +121,8 @@ class RemiGenerationState(PropertyGroup):
     status_kind: EnumProperty(items=[(key, key.title(), "") for key in
                                    ("IDLE", "PROGRESS", "SUCCESS", "ERROR", "CANCELLED")],
                               default="IDLE", options={"SKIP_SAVE"})
+    progress: FloatProperty(default=0.0, min=0.0, max=1.0, options={"SKIP_SAVE"})
+    source_image: StringProperty(default="", subtype="FILE_PATH", options={"SKIP_SAVE"})
     directory: StringProperty(subtype="DIR_PATH", options={"SKIP_SAVE"})
     mesh_busy: BoolProperty(default=False, options={"SKIP_SAVE"})
     mesh_status: StringProperty(default="", options={"SKIP_SAVE"})

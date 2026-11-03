@@ -1,0 +1,10 @@
+# External CUDA/PyTorch environment for Remi's Iris-3B image generation.
+# Install the CUDA build of torch first from https://pytorch.org, then:
+#   pip install -r requirements-iris.txt
+torch>=2.7.1
+transformers>=4.57.0
+safetensors>=0.4
+huggingface_hub>=0.26
+Pillow>=10.0
+numpy>=1.26
+PyYAML>=6.0

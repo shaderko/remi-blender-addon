@@ -38,6 +38,7 @@ The Blender add-on remains free and open source for local work and manual tools.
 
 | Need | Tool |
 |---|---|
+| Generate images and 3D sources | **Generate** tab with local Iris-3B and a single image/3D gallery |
 | Process a model end to end | Preset-driven **Run Full Flow** |
 | Recover without scene duplicates | Single-mesh sessions with **Back**, **Redo**, and **Start** |
 | Close holes, cracks, or fragmented surfaces | Manual patches, Boundary, Hybrid, Alpha-Guided, or Closing Volume repair |
@@ -52,6 +53,13 @@ The Blender add-on remains free and open source for local work and manual tools.
 
 ## Install
 
+### Automatic retopology guides (development)
+
+Interactive retopology now also offers opt-in **Automatic Feature Guides** for
+circular rims, cylindrical flow, and reliable curvature directions, plus true
+closed-loop manual guides and a measured ordinary/guided preview comparison.
+See [automatic Instant Meshes guidance](docs/instant_meshes_guidance.md).
+
 ### Model generation beta
 
 The `model-generation` branch is developed separately as **2.7.0-beta.5**.
@@ -59,6 +67,18 @@ It includes image-to-splats generation, mesh reconstruction, layered texture
 projection and on-demand model downloads. This is a **prerelease**, not a
 replacement for the stable release. Back up your `.blend` files before testing.
 See [beta release notes and setup](docs/releases/2.7.0-beta.5.md).
+
+### Local image and 3D generation (beta)
+
+The **Generate** tab combines local text-to-image with **Iris-3B** and
+**Iris-3B Turbo** and 3D generation in one card grid. Downloadable weights,
+prompt controls, uploads, and generation settings live under one gear. Each
+image card has a play action that generates its 3D source in place, with
+progress shown on the card. Iris is text-to-image only; reference-image
+conditioning is not supported. Turbo needs about 15 GB on disk (6 GB model +
+9 GB Qwen text encoder), runs on a 12 GB CUDA GPU in low-memory mode, and is
+much faster than the 12 GB base model. See
+[local image generation](docs/iris_image_generation.md).
 
 **Supported packages:** Blender 5.1 or 5.2 on **Windows x64** and **macOS Apple Silicon**.
 

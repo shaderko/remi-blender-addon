@@ -15,6 +15,28 @@ def _target_faces_updated(settings, _context):
 
 
 class RemiInstantMeshesSettings(PropertyGroup):
+    auto_guides: BoolProperty(
+        name="Automatic Feature Guides", default=False,
+        description="Recognize reliable circular features and rounded-surface flow before solving; regenerate to apply changed options",
+    )
+    auto_circles: BoolProperty(name="Circular Rims", default=True)
+    auto_cylinders: BoolProperty(name="Cylindrical Flow", default=True)
+    auto_curvature: BoolProperty(
+        name="Curvature Flow", default=False,
+        description="Add soft directional hints only where principal curvature is reliable; experimental on noisy scans",
+    )
+    auto_quality_guard: BoolProperty(
+        name="Keep Better Preview", default=True,
+        description="Compare ordinary and guided candidates at the same target, retaining the better measured result; two solves, bypassed for manual guides",
+    )
+    auto_guide_strength: FloatProperty(name="Guide Strength", default=0.65, min=0.05, max=0.95,
+                                      description="Soft automatic constraint weight; manual guides always take priority")
+    auto_guide_tolerance: FloatProperty(name="Fit Tolerance", default=0.035, min=0.005, max=0.1,
+                                       description="Maximum relative circle/cylinder fitting error", subtype="FACTOR")
+    auto_guide_limit: IntProperty(name="Guide Limit", default=64, min=1, max=256)
+    guide_page: IntProperty(name="Guide Page", default=0, min=0, max=31)
+    show_auto_guides: BoolProperty(name="Show Automatic Guides", default=True)
+    show_quality: BoolProperty(name="Topology Diagnostics", default=False)
     target_faces: IntProperty(
         name="Target Faces",
         description="Approximate final face count; pure-quad subdivision is accounted for automatically. "

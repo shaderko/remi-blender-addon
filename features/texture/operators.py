@@ -176,6 +176,9 @@ class Remi_OT_ProjectSplats(Operator):
             generation = getattr(context.window_manager, "remi_generation", None)
             if generation is not None and (generation.busy or generation.mesh_busy):
                 raise RuntimeError("Finish image generation or mesh conversion before projecting textures")
+            images = getattr(context.window_manager, "remi_image", None)
+            if images is not None and images.busy:
+                raise RuntimeError("Finish image generation before projecting textures")
             python = external_python(context)
             if not python:
                 raise RuntimeError("Choose the external Python in Generate settings first")
@@ -354,6 +357,9 @@ class Remi_OT_ProjectView(Operator):
             generation = getattr(context.window_manager, "remi_generation", None)
             if generation is not None and (generation.busy or generation.mesh_busy):
                 raise RuntimeError("Finish image generation or mesh conversion before projecting textures")
+            images = getattr(context.window_manager, "remi_image", None)
+            if images is not None and images.busy:
+                raise RuntimeError("Finish image generation before projecting textures")
             python = external_python(context)
             if not python:
                 raise RuntimeError("Choose the external Python in Generate settings first")

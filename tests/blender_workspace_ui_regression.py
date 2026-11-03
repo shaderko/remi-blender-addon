@@ -53,6 +53,12 @@ class Layout:
         self.entries.append(("operator", name, kwargs, self))
         return SimpleNamespace()
 
+    def template_icon(self, icon_value=0, scale=1.0):
+        self.entries.append(("icon", icon_value, scale, self))
+
+    def progress(self, factor=0.0, type="BAR", text=""):
+        self.entries.append(("progress", factor, text, self))
+
 
 def draw():
     layout = Layout()
@@ -67,32 +73,35 @@ def entries_of(entries, kind):
 remi.register()
 try:
     wm = bpy.context.window_manager
-    state = wm.remi_generation
+    image_state = wm.remi_image
+    image_settings = bpy.context.scene.remi_image
+    image_settings.output = str(ROOT / "tests" / "__no_generated_images__")
     assert wm.remi_ui.workspace == "GENERATE"
     original = bpy.context.active_object
     bpy.context.view_layer.objects.active = None
     entries = draw()
-    assert {entry[1] for entry in entries_of(entries, "prop")} == {"image"}
+    assert {entry[1] for entry in entries_of(entries, "prop")} == {"prompt"}
     operators = {entry[1]: entry for entry in entries_of(entries, "operator")}
     assert "remi.start_session" not in operators
     assert "remi.run_full_flow" not in operators
-    assert operators["remi.generate_splats"][2]["text"] == "Generate"
-    assert not operators["remi.generate_splats"][3].enabled  # No image chosen.
-    assert operators["remi.generate_splats"][3].parent.scale_y == 1.6
-    assert operators["remi.import_splats"][2] == {"text": "", "icon": "IMPORT"}
+    assert "remi.generate_image" in operators
+    assert "remi.add_image" in operators
+    assert not operators["remi.generate_image"][3].enabled  # Empty prompt.
     gear = entries_of(entries, "popover")
-    assert len(gear) == 1 and gear[0][1] == "Remi_PT_GenerationSettings"
+    assert len(gear) == 1 and gear[0][1] == "Remi_PT_ImageSettings"
     assert gear[0][2]["text"] == "" and gear[0][2]["icon"] == "PREFERENCES"
-    assert [entry[1] for entry in entries_of(entries, "label")] == ["Image"]
+    assert "Prompt" in [entry[1] for entry in entries_of(entries, "label")]
     assert not Remi_PT_EditToolsPanel.poll(bpy.context)
 
-    bpy.context.scene.remi_generation.image = "test-image.png"
+    image_settings.prompt = "A test image"
     operators = {entry[1]: entry for entry in entries_of(draw(), "operator")}
-    assert operators["remi.generate_splats"][3].enabled
+    assert "remi.generate_image" in operators
 
     settings_layout = Layout()
-    Remi_PT_GenerationSettings.draw(SimpleNamespace(layout=settings_layout), bpy.context)
+    from remi.features.images.panel import Remi_PT_ImageSettings
+    Remi_PT_ImageSettings.draw(SimpleNamespace(layout=settings_layout), bpy.context)
     properties = {entry[1] for entry in entries_of(settings_layout.entries, "prop")}
+    assert {"python", "models", "output", "gaussians", "seed", "model", "size", "prompt"} & properties
     assert {"python", "models", "output", "gaussians", "seed"} <= properties
     assert ("preview_limit" in properties) != native_splats_available()
     with mock.patch.dict(generation_settings._LOCAL_DEFAULTS, {"python": "configured-python"}, clear=True):
@@ -101,21 +110,10 @@ try:
          mock.patch.object(generation_settings.shutil, "which", return_value="detected-python"):
         assert generation_settings.default_python() == "detected-python"
 
-    state.status_kind = "SUCCESS"
-    state.status = "Generated 65,536 Gaussians · native Gaussian rendering"
-    state.directory = str(ROOT)
-    entries = draw()
-    labels = [entry[1] for entry in entries_of(entries, "label")]
-    assert "Model ready" in labels and state.status not in labels
-    folder = next(entry for entry in entries_of(entries, "operator") if entry[1] == "wm.path_open")
-    assert folder[2]["text"] == ""
-    state.status_kind = "ERROR"
-    state.status = "Input image not found"
-    assert state.status in [entry[1] for entry in entries_of(draw(), "label")]
-
-    state.busy = True
-    state.status_kind = "PROGRESS"
-    state.status = "Generating…"
+    image_state.busy = True
+    image_state.progress = 0.4
+    image_state.status_kind = "PROGRESS"
+    image_state.status = "Generating…"
     bpy.context.view_layer.objects.active = original
     wm.remi_ui.workspace = "OPTIMIZE"
     assert active_workspace(bpy.context) == "GENERATE"
@@ -126,23 +124,25 @@ try:
     try:
         session_runtime.begin(bpy.context, original)
     except RuntimeError as exc:
-        assert "cancel image generation" in str(exc)
+        assert "image generation" in str(exc)
     else:
-        raise AssertionError("A mesh session must not hide an active generation")
+        raise AssertionError("A mesh session must not hide an active image generation")
     assert not Remi_PT_EditToolsPanel.poll(bpy.context)
     entries = draw()
     operators = {entry[1] for entry in entries_of(entries, "operator")}
-    assert "remi.cancel_generation" in operators and "remi.start_session" not in operators
-    state.busy = False
-    state.status = ""
-    state.status_kind = "IDLE"
+    assert "remi.cancel_image" in operators and "remi.start_session" not in operators
+    assert any(entry[0] == "progress" for entry in entries)
+    image_state.busy = False
+    image_state.progress = 0.0
+    image_state.status = ""
+    image_state.status_kind = "IDLE"
 
     bpy.context.view_layer.objects.active = original
     assert bpy.ops.remi.select_workspace(workspace="OPTIMIZE") == {"FINISHED"}
     assert Remi_PT_EditToolsPanel.poll(bpy.context)
     operators = {entry[1] for entry in entries_of(draw(), "operator")}
     assert {"remi.start_session", "remi.run_full_flow"} <= operators
-    assert "remi.generate_splats" not in operators and "remi.import_splats" not in operators
+    assert "remi.generate_image" not in operators and "remi.add_image" not in operators
 
     wm.remi_ui.workspace = "GENERATE"
     wm.remi_session.active = True

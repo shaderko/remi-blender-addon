@@ -51,10 +51,12 @@ class RemiSessionController:
     def poll(cls, context):
         state = getattr(context.window_manager, "remi_session", None)
         generation = getattr(context.window_manager, "remi_generation", None)
+        images = getattr(context.window_manager, "remi_image", None)
         return bool(
             state is not None
             and not state.active
             and not (generation and (generation.busy or generation.mesh_busy))
+            and not (images and images.busy)
             and context.mode == "OBJECT"
             and context.active_object
             and context.active_object.type == "MESH"

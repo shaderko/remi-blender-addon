@@ -3,7 +3,13 @@ import bpy
 from bpy.app.handlers import persistent
 from bpy.props import PointerProperty
 
-from .operators import Remi_OT_GenerateSplats, Remi_OT_CancelGeneration, Remi_OT_ImportSplats, runtime
+from .operators import (
+    Remi_OT_GenerateSplats,
+    Remi_OT_CancelGeneration,
+    Remi_OT_ImportSplats,
+    Remi_OT_ActivateSplat,
+    runtime,
+)
 from .mesh_operators import Remi_OT_CreateMesh, Remi_OT_CancelMesh, Remi_OT_InstallSurfaceTool, runtime as mesh_runtime
 from .model_operators import Remi_OT_DownloadModels
 from .panel import Remi_PT_GenerationSettings
@@ -12,7 +18,8 @@ from ...integrations.triposplat.client import shutdown_generation_server
 
 
 CLASSES = (RemiGenerationSettings, RemiGenerationState, Remi_OT_GenerateSplats,
-           Remi_OT_CancelGeneration, Remi_OT_ImportSplats, Remi_OT_CreateMesh,
+           Remi_OT_CancelGeneration, Remi_OT_ImportSplats, Remi_OT_ActivateSplat,
+           Remi_OT_CreateMesh,
             Remi_OT_CancelMesh, Remi_OT_InstallSurfaceTool, Remi_OT_DownloadModels, Remi_PT_GenerationSettings)
 
 

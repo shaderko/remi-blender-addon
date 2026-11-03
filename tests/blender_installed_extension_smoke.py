@@ -4,6 +4,7 @@ import bmesh
 import importlib
 import os
 import site
+import time
 
 module_name = "bl_ext.user_default.remi"
 result = bpy.ops.preferences.addon_enable(module=module_name)
@@ -20,8 +21,18 @@ assert os.path.realpath(pymeshlab.__file__).startswith(
 ), pymeshlab.__file__
 assert "generate_alpha_wrap" in set(pymeshlab.filter_list())
 print("REMI_INSTALLED_PYMESHLAB_WHEEL_OK")
+image_panel = importlib.import_module(module_name + ".features.images.panel")
+iris_worker = importlib.import_module(module_name + ".integrations.iris3b.worker")
+assert hasattr(bpy.context.scene, "remi_image")
+assert bpy.context.scene.remi_image.model in {"base", "turbo"}
+assert hasattr(bpy.ops.remi, "generate_image")
+assert hasattr(bpy.ops.remi, "download_iris")
+assert (iris_worker.VENDOR / "iris3b" / "config.py").is_file()
+assert image_panel.gallery is not None
+print("REMI_INSTALLED_IRIS_IMAGES_OK")
 instant_native = importlib.import_module(module_name + ".features.retopology.instant_meshes._native")
 assert instant_native.Session is not None
+assert instant_native.GUIDE_API_VERSION == 1
 uv_engine = importlib.import_module(module_name + ".features.uv.engine")
 uv_native = importlib.import_module(module_name + ".features.uv.engine._native")
 assert os.path.realpath(uv_native.__file__).startswith(os.path.realpath(os.environ["BLENDER_USER_EXTENSIONS"]) + os.sep)
@@ -35,6 +46,34 @@ uv_result = uv_engine.ensure_remi_uv(
 assert uv_result.success and uv_result.stats.valid, uv_result.error
 assert 3.999 <= uv_result.stats.minimum_gap_px < 4.1, uv_result.stats.minimum_gap_px
 print("REMI_INSTALLED_UV_GAP_SMOKE_OK")
+# Exercise the new binding and packaged detector without user site-packages.
+instant_runtime = importlib.import_module(module_name + ".features.retopology.instant_meshes.runtime").runtime
+instant_settings = bpy.context.scene.remi_instant_meshes
+assert not instant_settings.auto_guides and instant_settings.auto_quality_guard
+bpy.ops.mesh.primitive_cylinder_add(vertices=32)
+guide_source = bpy.context.object
+object_count = len(bpy.context.scene.objects)
+instant_settings.target_faces = 1000
+instant_settings.auto_guides = True
+instant_settings.deterministic = True
+instant_runtime.start(guide_source, instant_settings)
+deadline = time.monotonic() + 60
+while instant_runtime.solve_stage or instant_runtime.session.active:
+    assert time.monotonic() < deadline, instant_runtime.last_error
+    instant_runtime.poll()
+    time.sleep(0.01)
+assert not instant_runtime.last_error, instant_runtime.last_error
+assert instant_runtime.preview is not None and len(instant_runtime.automatic_guides) >= 3
+assert instant_runtime.guidance_decision
+assert len(bpy.context.scene.objects) == object_count
+instant_runtime.shutdown()
+guide_mesh = guide_source.data
+bpy.data.objects.remove(guide_source, do_unlink=True)
+bpy.data.meshes.remove(guide_mesh)
+instant_settings.auto_guides = False
+instant_settings.target_faces = 20000
+instant_settings.deterministic = False
+print("REMI_INSTALLED_AUTOMATIC_GUIDES_OK")
 source = bpy.data.objects.get("Cube")
 assert source is not None
 source.select_set(False)

@@ -16,8 +16,11 @@ class Remi_PT_EditToolsPanel(Panel):
         ui = getattr(context.window_manager, "remi_ui", None)
         session = getattr(context.window_manager, "remi_session", None)
         generation = getattr(context.window_manager, "remi_generation", None)
-        return not (generation and (generation.busy or generation.mesh_busy)) and bool(
-            (session and session.active) or ui is None or ui.workspace == "OPTIMIZE"
+        images = getattr(context.window_manager, "remi_image", None)
+        return (
+            not (generation and (generation.busy or generation.mesh_busy))
+            and not (images and images.busy)
+            and bool((session and session.active) or ui is None or ui.workspace == "OPTIMIZE")
         )
 
     def draw(self, context):

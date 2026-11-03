@@ -104,7 +104,10 @@ static void set_strokes(
     py::array_t<int, py::array::c_style | py::array::forcecast> offsets,
     py::array_t<float, py::array::c_style | py::array::forcecast> positions,
     py::array_t<float, py::array::c_style | py::array::forcecast> normals,
-    py::array_t<int, py::array::c_style | py::array::forcecast> faces) {
+    py::array_t<int, py::array::c_style | py::array::forcecast> faces,
+    py::object closed,
+    py::object weights,
+    py::object automatic) {
     auto type_data = types.unchecked<1>();
     auto offset_data = offsets.unchecked<1>();
     auto position_data = positions.unchecked<2>();
@@ -116,13 +119,40 @@ static void set_strokes(
         position_data.shape(0) != normal_data.shape(0) ||
         position_data.shape(0) != face_data.shape(0))
         throw std::runtime_error("Stroke point arrays have inconsistent shapes");
+    if (offset_data(0) != 0 || offset_data(type_data.shape(0)) != position_data.shape(0))
+        throw std::runtime_error("Stroke offsets must span the complete point arrays");
 
+    auto flags = [&](py::object value, int fallback) {
+        std::vector<int> values(type_data.shape(0), fallback);
+        if (!value.is_none()) {
+            auto array = py::array_t<int, py::array::c_style | py::array::forcecast>::ensure(value);
+            if (!array || array.ndim() != 1 || array.size() != type_data.shape(0))
+                throw std::runtime_error("Guide flags must contain one value per stroke");
+            auto data = array.unchecked<1>();
+            for (py::ssize_t i = 0; i < data.shape(0); ++i)
+                values[i] = data(i);
+        }
+        return values;
+    };
+    auto closed_values = flags(closed, 0), automatic_values = flags(automatic, 0);
+    std::vector<float> weight_values(type_data.shape(0), 1.f);
+    if (!weights.is_none()) {
+        auto array = py::array_t<float, py::array::c_style | py::array::forcecast>::ensure(weights);
+        if (!array || array.ndim() != 1 || array.size() != type_data.shape(0))
+            throw std::runtime_error("Guide weights must contain one value per stroke");
+        auto data = array.unchecked<1>();
+        for (py::ssize_t i = 0; i < data.shape(0); ++i)
+            weight_values[i] = data(i);
+    }
     std::vector<RemiStroke> result(type_data.shape(0));
     for (py::ssize_t stroke_index = 0; stroke_index < type_data.shape(0); ++stroke_index) {
         int begin = offset_data(stroke_index), end = offset_data(stroke_index + 1);
         if (begin < 0 || end < begin || end > position_data.shape(0))
             throw std::runtime_error("Invalid stroke offsets");
         result[stroke_index].type = type_data(stroke_index);
+        result[stroke_index].closed = closed_values[stroke_index] != 0;
+        result[stroke_index].automatic = automatic_values[stroke_index] != 0;
+        result[stroke_index].weight = weight_values[stroke_index];
         result[stroke_index].points.reserve(end - begin);
         for (int point_index = begin; point_index < end; ++point_index) {
             CurvePoint point;
@@ -142,6 +172,7 @@ static void set_strokes(
 
 PYBIND11_MODULE(_remi_instant_meshes, module) {
     module.doc() = "Headless interactive Instant Meshes session for Remi";
+    module.attr("guide_api_version") = 1;
     py::class_<InteractiveSession>(module, "Session")
         .def(py::init([](
             py::array_t<float, py::array::c_style | py::array::forcecast> vertices,
@@ -173,8 +204,14 @@ PYBIND11_MODULE(_remi_instant_meshes, module) {
             py::arg("rosy") = 4,
             py::arg("posy") = 4,
             py::arg("smooth_iterations") = 2)
-        .def("set_strokes", &set_strokes)
+        .def("set_strokes", &set_strokes,
+             py::arg("types"), py::arg("offsets"), py::arg("positions"),
+             py::arg("normals"), py::arg("faces"), py::arg("closed") = py::none(),
+             py::arg("weights") = py::none(), py::arg("automatic") = py::none())
         .def("clear_strokes", &InteractiveSession::clear_strokes, py::call_guard<py::gil_scoped_release>())
+        .def("save_solution", &InteractiveSession::save_solution, py::call_guard<py::gil_scoped_release>())
+        .def("restore_solution", &InteractiveSession::restore_solution, py::call_guard<py::gil_scoped_release>())
+        .def("discard_saved_solution", &InteractiveSession::discard_saved_solution, py::call_guard<py::gil_scoped_release>())
         .def("start_orientation", &InteractiveSession::start_orientation)
         .def("start_position", &InteractiveSession::start_position)
         .def("stop", &InteractiveSession::stop)
@@ -191,6 +228,16 @@ PYBIND11_MODULE(_remi_instant_meshes, module) {
         .def_property_readonly("average_edge_length", &InteractiveSession::average_edge_length)
         .def_property_readonly("stroke_count", &InteractiveSession::stroke_count)
         .def("surface_snapshot", &surface_snapshot)
+        .def("stroke_snapshot", [](InteractiveSession &session, uint32_t index) {
+            auto value = session.stroke_snapshot(index);
+            return py::make_tuple(matrix_array(std::get<0>(value)),
+                                  matrix_array(std::get<1>(value)), matrix_array(std::get<2>(value)));
+        })
+        .def("constraint_snapshot", [](InteractiveSession &session, int level) {
+            auto value = session.constraint_snapshot(level);
+            return py::make_tuple(matrix_array(std::get<0>(value)), matrix_array(std::get<1>(value)),
+                                  matrix_array(std::get<2>(value)), matrix_array(std::get<3>(value)));
+        }, py::arg("level") = 0)
         .def("orientation_snapshot", &orientation_snapshot, py::arg("max_points") = 5000)
         .def("position_snapshot", &position_snapshot, py::arg("max_points") = 5000)
         .def("orientation_singularities", &orientation_singularities)

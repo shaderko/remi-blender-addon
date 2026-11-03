@@ -227,8 +227,12 @@ def draw_overlay():
             n = _world_vectors(normals, matrix, normal=True)
             _draw_points(p + n * 0.001, (0.3, 1.0, 0.45, 0.75), 3.0)
 
-        for stroke in runtime.strokes:
-            color = (1.0, 0.55, 0.1, 1.0) if stroke.stroke_type == 1 else (0.1, 0.9, 1.0, 1.0)
+        automatic = runtime.automatic_guides if settings.auto_guides and settings.show_auto_guides else []
+        for stroke in automatic + runtime.strokes:
+            if not stroke.enabled:
+                continue
+            color = ((0.65, 0.95, 0.15, 0.85) if stroke.automatic else
+                     (1.0, 0.55, 0.1, 1.0) if stroke.stroke_type == 1 else (0.1, 0.9, 1.0, 1.0))
             p = _world_points(stroke.positions, matrix)
             n = _world_vectors(stroke.normals, matrix, normal=True)
             object_scale = max(abs(value) for value in matrix.to_scale())
@@ -238,7 +242,10 @@ def draw_overlay():
                 * max(0.06, float(settings.preview_offset)),
                 1e-6,
             )
-            _draw_line_strip(p + n * offset, color, 4.0)
+            coordinates = p + n * offset
+            if stroke.closed:
+                coordinates = np.concatenate((coordinates, coordinates[:1]))
+            _draw_line_strip(coordinates, color, 2.5 if stroke.automatic else 4.0)
 
         if settings.show_singularities:
             if runtime.orientation_singularities is not None:

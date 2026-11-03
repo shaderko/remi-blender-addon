@@ -26,6 +26,16 @@ vendored Instant Meshes algorithms. `bindings.cpp` exposes direct NumPy array
 input, surface guide constraints, asynchronous field solves, visualization
 snapshots, singularities, and direct quad extraction.
 
+Remi's wrapper also supports periodic shape-preserving guides, confidence-weighted
+automatic directions with manual/boundary priority, and saving/restoring field
+arrays for the ordinary/guided quality comparison. Optional `closed`, `weights`,
+and `automatic` arrays in `set_strokes` have one entry per stroke. Existing
+five-array callers retain open manual-stroke behavior (duplicated endpoints are
+recognized as closed). `stroke_snapshot` and `constraint_snapshot(level=0)` expose
+diagnostic copies, not mutable solver storage. Automatic paths are pre-sampled on
+the current surface and are not processed by the upstream open-stroke smoother.
+See [the guidance guide](../../../../docs/instant_meshes_guidance.md).
+
 See [UPSTREAM.md](UPSTREAM.md), the vendored licenses, and the repository-level
 `THIRD_PARTY_NOTICES.md` for exact provenance and redistribution terms.
 

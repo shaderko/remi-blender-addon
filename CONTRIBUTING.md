@@ -30,6 +30,7 @@ workflow action.
 | Application assembly and registration | `app/` |
 | Generic panel shell | `app/ui/` |
 | Interactive Instant Meshes implementation | `features/retopology/instant_meshes/` |
+| Local image generation UI, gallery, and Iris worker | `features/images/`, `integrations/iris3b/` |
 | UV algorithms and native xatlas bridge | `features/uv/engine/` |
 | Bridge and inner-shell edit tools | `features/edit_tools/` |
 | Legacy operator compatibility only | `compat/` |

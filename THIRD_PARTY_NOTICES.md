@@ -22,6 +22,27 @@ and UI are separate code. Large model weights are not bundled. Local setup
 copies the selected research checkpoint and frozen components; it does not
 grant additional redistribution rights for image encoders or other weights.
 
+## Iris-3B local image generation
+
+- Project: [speridlabs/iris-3b](https://github.com/speridlabs/iris-3b)
+- Snapshot: `adc05b909fb05d4276d26aae5a52b36406b2ef26`
+- License: Apache-2.0; retained at `integrations/iris3b/vendor/LICENSE`
+- Vendored inference subset: `integrations/iris3b/vendor/iris3b/`
+  (config, models under the local `net` package name, flow, text encoder, and
+  sampling). The config loader uses PyYAML instead of the training stack's
+  OmegaConf dependency; the rest keeps the upstream inference behavior.
+- Weights: `speridlabs/iris-3b` on Hugging Face, Apache-2.0. Not bundled; the
+  add-on downloads them explicitly.
+- Text encoder: [Qwen/Qwen3-VL-4B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct),
+  revision `ebb281ec70b05090aa6165b016eac8ec08e71b17`, Apache-2.0. Downloaded
+  separately and not bundled.
+- External runtime dependencies: CUDA PyTorch, transformers, safetensors,
+  huggingface_hub, Pillow, numpy, and PyYAML. They are not bundled.
+
+The external worker runs only in the user's configured CUDA/Python environment.
+It writes generated images and JSON metadata to the chosen output folder; no
+prompts or images are uploaded.
+
 ## Spirula Studio (optional external surface tool)
 
 - Project: [harry7557558/spirula-studio](https://github.com/harry7557558/spirula-studio)

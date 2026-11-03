@@ -6,7 +6,7 @@ from bpy.types import Panel
 
 from ..application import get_application
 from ...features.edit_tools.panel import Remi_PT_EditToolsPanel
-from ...features.generation.panel import draw_generation
+from ...features.images.panel import draw_create
 from ...features.texture.panel import draw_texture
 from ...workflow.contracts import FeatureUIContext
 from .history_controls import draw_history_controls
@@ -73,7 +73,7 @@ class Remi_PT_MainPanel(Panel):
         state = getattr(context.window_manager, "remi_session", None)
         workspace = active_workspace(context)
         if workspace == "GENERATE":
-            draw_generation(layout, context)
+            draw_create(layout, context)
         elif workspace == "TEXTURE":
             draw_texture(layout, context)
         elif state is not None and state.active:

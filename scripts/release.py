@@ -30,12 +30,14 @@ TESTS = (
     "blender_edit_tools_regression.py",
     "blender_instant_meshes_smoke.py",
     "blender_instant_meshes_topology_regression.py",
+    "blender_instant_meshes_guides_regression.py",
     "blender_uv_regression.py",
     "blender_bake_material_slots_regression.py",
     "blender_target_decimation_regression.py",
     "blender_uv_small_faces_regression.py",
     "blender_voxel_surface_regression.py",
     "blender_generation_regression.py",
+    "blender_image_generation_regression.py",
     "blender_mesh_conversion_regression.py",
     "blender_workspace_ui_regression.py",
     "blender_texture_projection_regression.py",
@@ -180,6 +182,24 @@ def verify_archive(artifact, target):
         if not {"integrations/splat_project/octree.py", "integrations/splat_project/octree_native.py",
                 "integrations/splat_project/local_gaussian.py", "integrations/splat_project/local_gaussian_native.py"}.issubset(archive.namelist()):
             raise RuntimeError("Archive is missing the whole-mesh octree ray baker")
+        if not {f"features/retopology/instant_meshes/{name}.py" for name in
+                ("guides", "detection", "rounded", "quality")}.issubset(archive.namelist()):
+            raise RuntimeError("Archive is missing the automatic retopology guide modules")
+        iris_required = {
+            "integrations/iris3b/client.py",
+            "integrations/iris3b/constants.py",
+            "integrations/iris3b/download.py",
+            "integrations/iris3b/worker.py",
+            "integrations/iris3b/vendor/LICENSE",
+            "integrations/iris3b/vendor/NOTICE",
+            "integrations/iris3b/vendor/iris3b/config.py",
+            "integrations/iris3b/vendor/iris3b/net/dit.py",
+            "integrations/iris3b/vendor/iris3b/text/qwen3_vl.py",
+            "features/images/panel.py",
+            "features/images/gallery.py",
+        }
+        if not iris_required.issubset(archive.namelist()):
+            raise RuntimeError("Archive is missing the Iris image-generation integration")
         if any(name.startswith("scripts/") or name.lower().endswith("spirula.exe") for name in archive.namelist()):
             raise RuntimeError("Developer scripts and external surface executables must not be bundled")
         if any(name.endswith((".nbc", ".nbi")) for name in archive.namelist()):
@@ -244,7 +264,7 @@ def main():
         installed_smoke(args.blender, args.artifact.resolve())
     else:
         if args.command == "check":
-            for pattern in ("test_platform_support.py", "test_model_download.py"):
+            for pattern in ("test_platform_support.py", "test_model_download.py", "test_iris_setup.py"):
                 run(sys.executable, "-m", "unittest", "discover", "-s", ROOT / "tests",
                     "-p", pattern)
             for test in TESTS:

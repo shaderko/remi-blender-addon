@@ -1,6 +1,6 @@
 import bpy
 import numpy as np
-from bpy.props import EnumProperty
+from bpy.props import BoolProperty, EnumProperty, IntProperty
 from bpy.types import Operator
 
 from .runtime import runtime
@@ -39,6 +39,7 @@ class REMI_OT_instant_meshes_draw(Operator):
         ],
         default="ORIENTATION",
     )
+    closed: BoolProperty(name="Closed Loop", default=False)
 
     @classmethod
     def poll(cls, context):
@@ -95,7 +96,7 @@ class REMI_OT_instant_meshes_draw(Operator):
             self._draw_pending, (), "WINDOW", "POST_PIXEL"
         )
         context.window.cursor_modal_set("CROSSHAIR")
-        tool = "output edge" if self.stroke_type == "EDGE" else "orientation"
+        tool = "closed edge loop" if self.closed else "output edge" if self.stroke_type == "EDGE" else "orientation"
         context.area.header_text_set(
             f"Remi Instant Meshes: draw a {tool} guide on the surface · release to solve · Esc cancels"
         )
@@ -132,7 +133,8 @@ class REMI_OT_instant_meshes_draw(Operator):
                 self.report({"WARNING"}, "Draw a longer stroke on the visible surface")
                 return {"RUNNING_MODAL"}
             try:
-                runtime.add_stroke(1 if self.stroke_type == "EDGE" else 0, self._hits)
+                runtime.add_stroke(1 if self.stroke_type == "EDGE" else 0, self._hits,
+                                   closed=self.closed)
             except Exception as error:
                 self.report({"ERROR"}, str(error))
                 self._cleanup(context)
@@ -142,13 +144,65 @@ class REMI_OT_instant_meshes_draw(Operator):
         return {"RUNNING_MODAL"}
 
 
+class REMI_OT_instant_meshes_detect_guides(Operator):
+    bl_idname = "remi.instant_meshes_detect_guides"
+    bl_label = "Regenerate Automatic Guides"
+    bl_description = "Apply the current detection options, preserving manual guides and disabled suggestions"
+    reset: BoolProperty(default=False)
+
+    @classmethod
+    def poll(cls, context):
+        return runtime.ready and not runtime.session.active
+
+    def execute(self, context):
+        try:
+            runtime.detect_automatic_guides(reset=self.reset)
+        except Exception as error:
+            self.report({"ERROR"}, str(error))
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
+class REMI_OT_instant_meshes_toggle_guide(Operator):
+    bl_idname = "remi.instant_meshes_toggle_guide"
+    bl_label = "Toggle Automatic Guide"
+    bl_description = "Enable or disable this suggestion; disabled guides stay disabled after density changes"
+    index: IntProperty(default=0, min=0)
+
+    @classmethod
+    def poll(cls, context):
+        return runtime.ready and not runtime.session.active
+
+    def execute(self, context):
+        try:
+            runtime.toggle_automatic_guide(self.index)
+        except (IndexError, RuntimeError) as error:
+            self.report({"ERROR"}, str(error))
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
+class REMI_OT_instant_meshes_clear_auto_guides(Operator):
+    bl_idname = "remi.instant_meshes_clear_auto_guides"
+    bl_label = "Remove Automatic Guides"
+    bl_description = "Remove the suggestions without deleting any manual guides"
+
+    @classmethod
+    def poll(cls, context):
+        return runtime.ready and not runtime.session.active and bool(runtime.automatic_guides)
+
+    def execute(self, context):
+        runtime.clear_automatic_guides()
+        return {"FINISHED"}
+
+
 class REMI_OT_instant_meshes_undo_stroke(Operator):
     bl_idname = "remi.instant_meshes_undo_stroke"
     bl_label = "Undo Last Guide"
 
     @classmethod
     def poll(cls, context):
-        return runtime.ready and bool(runtime.strokes)
+        return runtime.ready and not runtime.session.active and bool(runtime.strokes)
 
     def execute(self, context):
         runtime.undo_stroke()
@@ -161,7 +215,7 @@ class REMI_OT_instant_meshes_clear_strokes(Operator):
 
     @classmethod
     def poll(cls, context):
-        return runtime.ready and bool(runtime.strokes)
+        return runtime.ready and not runtime.session.active and bool(runtime.strokes)
 
     def execute(self, context):
         runtime.clear_strokes()
@@ -356,6 +410,9 @@ class REMI_OT_instant_meshes_session_cancel(Operator):
 classes = (
     REMI_OT_instant_meshes_start,
     REMI_OT_instant_meshes_draw,
+    REMI_OT_instant_meshes_detect_guides,
+    REMI_OT_instant_meshes_toggle_guide,
+    REMI_OT_instant_meshes_clear_auto_guides,
     REMI_OT_instant_meshes_undo_stroke,
     REMI_OT_instant_meshes_clear_strokes,
     REMI_OT_instant_meshes_solve_orientation,

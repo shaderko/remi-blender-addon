@@ -20,6 +20,18 @@ def is_splat_object(obj):
     return bool(obj and obj.get(SPLAT_TAG))
 
 
+def splat_for_image(image_path):
+    """Return the imported splat generated from this source image, if any."""
+    try:
+        target = str(Path(image_path).resolve())
+    except (OSError, TypeError, ValueError):
+        return None
+    for obj in bpy.data.objects:
+        if is_splat_object(obj) and obj.get("remi_source_image") == target:
+            return obj
+    return None
+
+
 def _read_attribute(attributes, name, width, property_name="vector"):
     attribute = attributes.get(name)
     if attribute is None:

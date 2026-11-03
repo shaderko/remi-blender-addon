@@ -5,7 +5,7 @@ from bpy.types import Operator, PropertyGroup
 
 
 WORKSPACES = (
-    ("GENERATE", "Generate", "Create a model from an image", "IMAGE_DATA", 0),
+    ("GENERATE", "Generate", "Create images and 3D sources", "IMAGE_DATA", 0),
     ("OPTIMIZE", "Optimize", "Optimize an existing mesh", "MOD_DECIM", 1),
     ("TEXTURE", "Texture", "Project Gaussian appearance onto a mesh", "TEXTURE", 2),
 )
@@ -19,10 +19,12 @@ def workspace_locked(context):
     session = getattr(context.window_manager, "remi_session", None)
     generation = getattr(context.window_manager, "remi_generation", None)
     texture = getattr(context.window_manager, "remi_texture", None)
+    images = getattr(context.window_manager, "remi_image", None)
     return bool(
         (session and session.active)
         or (generation and (generation.busy or generation.mesh_busy))
         or (texture and texture.busy)
+        or (images and images.busy)
     )
 
 
@@ -36,6 +38,9 @@ def active_workspace(context):
     texture = getattr(context.window_manager, "remi_texture", None)
     if texture and texture.busy:
         return "TEXTURE"
+    images = getattr(context.window_manager, "remi_image", None)
+    if images and images.busy:
+        return "GENERATE"
     state = getattr(context.window_manager, "remi_ui", None)
     return state.workspace if state is not None else "OPTIMIZE"
 
@@ -43,7 +48,7 @@ def active_workspace(context):
 class Remi_OT_SelectWorkspace(Operator):
     bl_idname = "remi.select_workspace"
     bl_label = "Switch Remi Workspace"
-    bl_description = "Switch between generation, mesh optimization, and texture projection"
+    bl_description = "Switch between image generation, 3D generation, mesh optimization, and texture projection"
 
     workspace: EnumProperty(items=WORKSPACES)
 

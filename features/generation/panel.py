@@ -45,10 +45,10 @@ def draw_generation(layout, context):
     if context.mode != "OBJECT":
         layout.label(text="Switch to Object Mode to generate", icon="INFO")
     _draw_status(layout, state)
-    _draw_mesh_controls(layout, context, state)
+    draw_mesh_controls(layout, context, state)
 
 
-def _draw_mesh_controls(layout, context, state):
+def draw_mesh_controls(layout, context, state):
     if state.mesh_busy:
         row = layout.row(align=True)
         row.label(text=state.mesh_status or "Creating mesh…", icon="TIME")
@@ -86,6 +86,38 @@ def _draw_mesh_controls(layout, context, state):
         row.operator("remi.create_mesh", text="Recreate Mesh" if mesh else "Create Mesh", icon="MOD_REMESH")
 
 
+def draw_generation_settings(layout, context):
+    layout.use_property_split = True
+    layout.use_property_decorate = False
+    controls = layout.column()
+    controls.enabled = not (
+        context.window_manager.remi_generation.busy
+        or context.window_manager.remi_generation.mesh_busy
+    )
+    settings = context.scene.remi_generation
+    controls.label(text="3D Generation", icon="OUTLINER_OB_POINTCLOUD")
+    controls.prop(settings, "gaussians")
+    controls.prop(settings, "seed")
+    if not native_splats_available():
+        controls.prop(settings, "preview_limit")
+    controls.separator()
+    controls.prop(settings, "python")
+    controls.prop(settings, "models")
+    controls.prop(settings, "download_url")
+    controls.operator("remi.download_models", text="Download Models", icon="IMPORT")
+    controls.prop(settings, "model_cache_minutes", text="Keep Model Loaded (min)")
+    if settings.model_cache_minutes:
+        controls.label(text=f"Warm cache for {settings.model_cache_minutes} min", icon="TIME")
+    controls.prop(settings, "output")
+    controls.separator()
+    controls.label(text="Reconstructed Mesh")
+    controls.prop(settings, "mesh_quality")
+    controls.label(text="Native Gaussian rendering · Blender 5.3+ · Windows x64", icon="INFO")
+    controls.prop(settings, "surface_tools")
+    controls.operator("remi.install_surface_tool", text="Install Surface Tool", icon="IMPORT")
+    controls.prop(settings, "mesh_output")
+
+
 class Remi_PT_GenerationSettings(bpy.types.Panel):
     bl_label = "Generation Settings"
     bl_idname = "Remi_PT_GenerationSettings"
@@ -94,29 +126,4 @@ class Remi_PT_GenerationSettings(bpy.types.Panel):
     bl_ui_units_x = 20
 
     def draw(self, context):
-        layout = self.layout
-        layout.use_property_split = True
-        layout.use_property_decorate = False
-        controls = layout.column()
-        controls.enabled = not (context.window_manager.remi_generation.busy or context.window_manager.remi_generation.mesh_busy)
-        settings = context.scene.remi_generation
-        controls.prop(settings, "gaussians")
-        controls.prop(settings, "seed")
-        if not native_splats_available():
-            controls.prop(settings, "preview_limit")
-        controls.separator()
-        controls.prop(settings, "python")
-        controls.prop(settings, "models")
-        controls.prop(settings, "download_url")
-        controls.operator("remi.download_models", text="Download Models", icon="IMPORT")
-        controls.prop(settings, "model_cache_minutes", text="Keep Model Loaded (min)")
-        if settings.model_cache_minutes:
-            controls.label(text=f"Warm cache for {settings.model_cache_minutes} min", icon="TIME")
-        controls.prop(settings, "output")
-        controls.separator()
-        controls.label(text="Reconstructed Mesh")
-        controls.prop(settings, "mesh_quality")
-        controls.label(text="Native Gaussian rendering · Blender 5.3+ · Windows x64", icon="INFO")
-        controls.prop(settings, "surface_tools")
-        controls.operator("remi.install_surface_tool", text="Install Surface Tool", icon="IMPORT")
-        controls.prop(settings, "mesh_output")
+        draw_generation_settings(self.layout, context)

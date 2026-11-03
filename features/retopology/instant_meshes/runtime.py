@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 import time
 
 import bpy
@@ -6,13 +5,7 @@ import numpy as np
 from mathutils import Vector
 from mathutils.bvhtree import BVHTree
 
-
-@dataclass
-class FieldStroke:
-    stroke_type: int
-    positions: np.ndarray
-    normals: np.ndarray
-    faces: np.ndarray
+from .guides import FieldStroke, project_detected_guides, reproject_guide, send_guides
 
 
 class InteractiveRuntime:
@@ -25,6 +18,14 @@ class InteractiveRuntime:
         self.surface_normals = None
         self.surface_bvh = None
         self.strokes = []
+        self.automatic_guides = []
+        self.disabled_guide_keys = set()
+        self.guide_notes = []
+        self.preview_quality = {}
+        self.preview_guide_quality = []
+        self.guidance_pass = ""
+        self.baseline_preview = None
+        self.guidance_decision = ""
         self.orientation = None
         self.position = None
         self.orientation_singularities = None
@@ -91,6 +92,14 @@ class InteractiveRuntime:
         self.surface_normals = None
         self.surface_bvh = None
         self.strokes = []
+        self.automatic_guides = []
+        self.disabled_guide_keys = set()
+        self.guide_notes = []
+        self.preview_quality = {}
+        self.preview_guide_quality = []
+        self.guidance_pass = ""
+        self.baseline_preview = None
+        self.guidance_decision = ""
         self.orientation = None
         self.position = None
         self.orientation_singularities = None
@@ -130,7 +139,8 @@ class InteractiveRuntime:
         finally:
             evaluated.to_mesh_clear()
 
-    def start(self, obj, settings, *, target_faces=None, triangles=None, strokes=None):
+    def start(self, obj, settings, *, target_faces=None, triangles=None, strokes=None,
+              disabled_guide_keys=None):
         """Build the field session for the given object.
 
         target_faces overrides the scene setting so a density change can
@@ -140,7 +150,10 @@ class InteractiveRuntime:
         """
         self.shutdown()
         self.last_error = ""
-        from ._native import Session
+        from ._native import GUIDE_API_VERSION, Session
+
+        if GUIDE_API_VERSION < 1:
+            raise RuntimeError("The bundled Instant Meshes solver is outdated; rebuild the native module or install a matching Remi package")
 
         if triangles is None:
             vertices, faces = self._evaluated_triangles(obj)
@@ -175,7 +188,13 @@ class InteractiveRuntime:
             [tuple(int(index) for index in face) for face in self.surface_faces],
             all_triangles=True,
         )
-        self.strokes = list(strokes) if strokes else []
+        self.strokes = [reproject_guide(stroke, self.surface_bvh,
+                                       max(self.average_edge_length * 0.5, 1e-12),
+                                       max(self.average_edge_length * 0.1, 1e-10))
+                        for stroke in strokes] if strokes else []
+        self.disabled_guide_keys = set(disabled_guide_keys or ())
+        if settings.auto_guides:
+            self.detect_automatic_guides(solve=False)
         self.orientation = None
         self.position = None
         self.preview = None
@@ -186,7 +205,7 @@ class InteractiveRuntime:
         self.pending_preview = bool(settings.auto_update_preview)
         self.position_ready = False
         settings.session_active = True
-        if self.strokes:
+        if self.strokes or self.automatic_guides:
             self._send_strokes()
         else:
             self.session.start_orientation()
@@ -208,42 +227,107 @@ class InteractiveRuntime:
             return None
         return hit[0].copy(), hit[1].copy(), int(hit[2])
 
-    def _send_strokes(self):
-        if not self.strokes:
-            self.session.clear_strokes()
-        else:
-            types = np.asarray([stroke.stroke_type for stroke in self.strokes], dtype=np.int32)
-            offsets = [0]
-            for stroke in self.strokes:
-                offsets.append(offsets[-1] + len(stroke.positions))
-            positions = np.concatenate([stroke.positions for stroke in self.strokes]).astype(np.float32)
-            normals = np.concatenate([stroke.normals for stroke in self.strokes]).astype(np.float32)
-            faces = np.concatenate([stroke.faces for stroke in self.strokes]).astype(np.int32)
-            self.session.set_strokes(
-                types,
-                np.asarray(offsets, dtype=np.int32),
-                positions,
-                normals,
-                faces,
-            )
+    def _send_strokes(self, *, compare=True):
         settings = self.settings()
+        automatic = self.automatic_guides if settings and settings.auto_guides else []
+        if compare:
+            self.baseline_preview = None
+            self.guidance_decision = ""
+            self.session.discard_saved_solution()
+            self.guidance_pass = ("BASELINE" if settings and settings.auto_quality_guard
+                                  and any(g.enabled for g in automatic) and not self.strokes else "")
+        if self.guidance_pass:
+            # Evaluate both passes from the same seed, not by perturbing the
+            # preceding result. Only field arrays are saved, not a second hierarchy.
+            send_guides(self.session, [])
+            self.session.set_target_faces(self.session.target_faces)
+        applied = [] if self.guidance_pass == "BASELINE" else automatic
+        send_guides(self.session, applied + self.strokes,
+                    strength=settings.auto_guide_strength if settings else 0.65)
         self.pending_position = True
-        self.pending_preview = bool(settings and settings.auto_update_preview)
+        self.pending_preview = bool(self.guidance_pass or (settings and settings.auto_update_preview))
         self.position_ready = False
         self.solve_stage = "ORIENTATION"
+        self.last_error = ""
         self.preview = None
         self.preview_normals = None
         self.preview_topology = None
+        self.preview_quality = {}
+        self.preview_warnings = []
+        self.preview_guide_quality = []
+        self.orientation = self.position = None
+        self.orientation_singularities = self.position_singularities = None
         self.session.start_orientation()
         self.set_status("Applying guides · solving orientation (1/2)…", 0.0)
         ensure_timer()
 
-    def add_stroke(self, stroke_type, hits):
+    def detect_automatic_guides(self, *, solve=True, reset=False):
+        """Replace suggestions, never the user's manually drawn guides."""
+        if self.session is None or self.session.active:
+            raise RuntimeError("Wait for the current field solve to finish")
+        from .detection import detect_guides
+
+        settings = self.settings()
+        if reset:
+            self.disabled_guide_keys.clear()
+        if not settings.auto_guides:
+            self.automatic_guides = []
+            self.guide_notes = []
+        else:
+            self.set_status("Recognizing geometric guides…", 0.0)
+            result = detect_guides(
+                *self.source_triangles, circles=settings.auto_circles,
+                cylinders=settings.auto_cylinders, curvature=settings.auto_curvature,
+                crease_angle=float(np.degrees(settings.crease_angle)),
+                tolerance=settings.auto_guide_tolerance, target_scale=self.target_scale,
+                max_guides=settings.auto_guide_limit,
+            )
+            self.automatic_guides = project_detected_guides(
+                result, self.surface_bvh, max(self.average_edge_length * 0.5, 1e-12),
+                max(self.average_edge_length * 0.35, 1e-10),
+            )
+            for guide in self.automatic_guides:
+                guide.enabled = guide.key not in self.disabled_guide_keys
+            self.guide_notes = list(dict.fromkeys(result.notes))
+        if solve:
+            self._send_strokes()
+
+    def toggle_automatic_guide(self, index):
+        if not self.ready or self.session.active:
+            raise RuntimeError("Wait for the current field solve to finish")
+        guide = self.automatic_guides[index]
+        guide.enabled = not guide.enabled
+        if guide.enabled:
+            self.disabled_guide_keys.discard(guide.key)
+        else:
+            self.disabled_guide_keys.add(guide.key)
+        self._send_strokes()
+
+    def clear_automatic_guides(self):
+        if not self.ready or self.session.active:
+            raise RuntimeError("Wait for the current field solve to finish")
+        self.disabled_guide_keys.update(guide.key for guide in self.automatic_guides)
+        self.automatic_guides = []
+        self._send_strokes()
+
+    def add_stroke(self, stroke_type, hits, *, closed=False):
         positions = np.asarray([tuple(hit[0]) for hit in hits], dtype=np.float32)
         normals = np.asarray([tuple(hit[1]) for hit in hits], dtype=np.float32)
         faces = np.asarray([hit[2] for hit in hits], dtype=np.int32)
-        self.strokes.append(FieldStroke(stroke_type, positions, normals, faces))
-        self._send_strokes()
+        if closed and (len(positions) < 3 or np.linalg.norm(positions[-1] - positions[0]) >
+                       max(self.target_scale * 0.75, self.average_edge_length * 4)):
+            raise ValueError("Finish the closed guide near its starting point")
+        stroke = FieldStroke(stroke_type, positions, normals, faces, closed=closed)
+        if closed:
+            stroke = reproject_guide(stroke, self.surface_bvh,
+                                     max(self.average_edge_length * 0.5, 1e-12),
+                                     max(self.average_edge_length * 0.1, 1e-10))
+        self.strokes.append(stroke)
+        try:
+            self._send_strokes()
+        except Exception:
+            self.strokes.pop()
+            raise
 
     def undo_stroke(self):
         if self.strokes:
@@ -257,17 +341,7 @@ class InteractiveRuntime:
     def solve_orientation(self):
         if not self.ready:
             return
-        settings = self.settings()
-        self.pending_position = True
-        self.pending_preview = bool(settings and settings.auto_update_preview)
-        self.position_ready = False
-        self.preview = None
-        self.preview_normals = None
-        self.preview_topology = None
-        self.solve_stage = "ORIENTATION"
-        self.session.start_orientation()
-        self.set_status("Rebuilding orientation field (1/2)…", 0.0)
-        ensure_timer()
+        self._send_strokes()
 
     def solve_position(self):
         if not self.ready:
@@ -339,6 +413,38 @@ class InteractiveRuntime:
         # Extraction reports quality defects instead of refusing outright, so
         # the user can inspect the result and decide whether to keep it.
         self.preview_warnings = list(self.session.output_warnings)
+        from .quality import guide_quality, mesh_quality, prefer_guided
+
+        self.preview_quality = mesh_quality(*self.preview)
+        if self.guidance_pass:
+            self.preview_guide_quality = guide_quality(*self.preview, self.automatic_guides)
+        if self.guidance_pass == "BASELINE":
+            self.session.save_solution()
+            self.baseline_preview = {
+                name: getattr(self, name) for name in (
+                    "preview", "preview_normals", "preview_topology", "preview_quality",
+                    "preview_warnings", "preview_guide_quality", "orientation", "position",
+                    "orientation_singularities", "position_singularities",
+                )
+            }
+            self.guidance_pass = "GUIDED"
+            self._send_strokes(compare=False)
+            return
+        if self.guidance_pass == "GUIDED" and self.baseline_preview is not None:
+            baseline = self.baseline_preview
+            selected, self.guidance_decision = prefer_guided(
+                baseline["preview_quality"], self.preview_quality,
+                baseline["preview_guide_quality"], self.preview_guide_quality,
+            )
+            if not selected:
+                self.session.clear_strokes()
+                self.session.restore_solution()
+                for name, value in baseline.items():
+                    setattr(self, name, value)
+            else:
+                self.session.discard_saved_solution()
+            self.baseline_preview = None
+            self.guidance_pass = ""
         topology = self.preview_topology
         if topology["boundary_edges"] == 0 and topology["nonmanifold_edges"] == 0:
             integrity = "watertight"
@@ -357,6 +463,23 @@ class InteractiveRuntime:
             f'{topology["components"]:,} component(s) · {integrity}{warning}',
             1.0,
         )
+
+    def _recover_baseline(self, error):
+        baseline = self.baseline_preview
+        if self.guidance_pass != "GUIDED" or baseline is None:
+            return False
+        self.session.stop()
+        self.session.clear_strokes()
+        self.session.restore_solution()
+        for name, value in baseline.items():
+            setattr(self, name, value)
+        self.baseline_preview = None
+        self.guidance_pass = self.solve_stage = ""
+        self.pending_position = self.pending_preview = False
+        self.position_ready = True
+        self.guidance_decision = f"ordinary preview retained: guided candidate failed ({error})"
+        self.set_status("Ordinary preview ready · guided candidate failed; source unchanged", 1.0)
+        return True
 
     def request_target_faces(self, value):
         """Queue a density change, coalescing rapid edits into one re-solve.
@@ -392,10 +515,17 @@ class InteractiveRuntime:
                 target_faces=value,
                 triangles=triangles,
                 strokes=strokes,
+                disabled_guide_keys=self.disabled_guide_keys.copy(),
             )
             self.pending_preview = True
             return
         self.session.set_target_faces(value)
+        self.target_scale = float(self.session.scale)
+        if self.settings().auto_guides:
+            self.detect_automatic_guides(solve=False)
+            self._send_strokes()
+            self.pending_preview = True
+            return
         # Reseeding discards both fields, so the staged solve starts over from
         # the orientation pass. Guide strokes live on the session and survive.
         self.orientation = None
@@ -428,6 +558,8 @@ class InteractiveRuntime:
         try:
             self.apply_target_faces(value)
         except Exception as error:
+            if self._recover_baseline(error):
+                return True
             self.last_error = str(error)
             self.set_status(f"Instant Meshes error: {error}", 0.0)
         return True
@@ -447,7 +579,9 @@ class InteractiveRuntime:
                         self.refresh_position(include_singularities=False)
                     self.last_visual_refresh = now
                 step = "1/2" if self.solve_stage == "ORIENTATION" else "2/2"
-                self.set_status(f"Solving {stage} field ({step})…", self.session.progress)
+                comparison = ("Ordinary candidate · " if self.guidance_pass == "BASELINE" else
+                              "Guided candidate · " if self.guidance_pass == "GUIDED" else "")
+                self.set_status(f"{comparison}Solving {stage} field ({step})…", self.session.progress)
                 return 0.1
 
             if self.solve_stage == "ORIENTATION":
@@ -469,6 +603,8 @@ class InteractiveRuntime:
                 if self.pending_preview:
                     self.pending_preview = False
                     self.update_preview()
+                    if self.solve_stage:
+                        return 0.1
                 else:
                     self.set_status(
                         f"Fields ready · {len(self.strokes)} guide stroke(s) · update preview",
@@ -476,10 +612,15 @@ class InteractiveRuntime:
                     )
             return None
         except Exception as error:
+            if self._recover_baseline(error):
+                return None
             self.last_error = str(error)
             self.solve_stage = ""
             self.pending_position = False
             self.pending_preview = False
+            self.session.discard_saved_solution()
+            self.baseline_preview = None
+            self.guidance_pass = ""
             self.set_status(f"Instant Meshes error: {error}", 0.0)
             return None
 

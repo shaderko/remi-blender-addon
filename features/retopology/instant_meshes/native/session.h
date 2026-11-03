@@ -15,6 +15,9 @@ class Optimizer;
 
 struct RemiStroke {
     int type = 0; // 0 = orientation comb, 1 = output edge guide
+    bool closed = false;
+    bool automatic = false;
+    Float weight = 1.f;
     std::vector<CurvePoint> points;
 };
 
@@ -49,6 +52,9 @@ public:
 
     void set_strokes(std::vector<RemiStroke> strokes);
     void clear_strokes();
+    void save_solution();
+    void restore_solution();
+    void discard_saved_solution();
 
     void start_orientation();
     void start_position();
@@ -58,6 +64,8 @@ public:
     bool position_solved();
 
     std::tuple<MatrixXf, MatrixXu, MatrixXf> surface_snapshot();
+    std::tuple<MatrixXf, MatrixXf, VectorXu> stroke_snapshot(uint32_t index);
+    std::tuple<MatrixXf, VectorXf, MatrixXf, VectorXf> constraint_snapshot(int level = 0);
     std::tuple<MatrixXf, MatrixXf, MatrixXf> orientation_snapshot(uint32_t max_points);
     std::tuple<MatrixXf, MatrixXf> position_snapshot(uint32_t max_points);
     std::tuple<MatrixXf, VectorXi> orientation_singularities();
@@ -91,6 +99,9 @@ private:
     RemiTopologyStats mSourceTopology;
     RemiTopologyStats mOutputTopology;
     std::vector<std::string> mOutputWarnings;
+    std::vector<MatrixXf> mSavedQ, mSavedO;
+    RemiTopologyStats mSavedTopology;
+    std::vector<std::string> mSavedWarnings;
     bool mSolvingOrientation = false;
     bool mSolvingPosition = false;
     bool mPositionSolutionValid = false;

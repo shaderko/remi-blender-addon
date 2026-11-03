@@ -136,6 +136,9 @@ class RemiSessionRuntime:
         generation = getattr(context.window_manager, "remi_generation", None)
         if generation is not None and (generation.busy or generation.mesh_busy):
             raise RuntimeError("Finish or cancel image generation or meshing before starting a mesh session")
+        images = getattr(context.window_manager, "remi_image", None)
+        if images is not None and images.busy:
+            raise RuntimeError("Finish or cancel image generation before starting a mesh session")
         if is_splat_object(obj):
             raise RuntimeError("Gaussian splats are not polygon surfaces; mesh conversion is not available yet")
         if not obj or obj.type != "MESH" or context.mode != "OBJECT":

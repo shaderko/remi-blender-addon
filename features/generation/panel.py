@@ -5,7 +5,6 @@ import bpy
 
 from ...blender.gaussian_splats import native_splats_available
 from ...blender.reconstructed_mesh import is_reconstructed_mesh, mesh_for_splat
-from ...integrations.splat_mesh.remi_surface.tool import executable_path, platform_error
 from .mesh_operators import can_convert, splat_source
 
 
@@ -76,10 +75,6 @@ def draw_mesh_controls(layout, context, state):
     if source is not None:
         if not native_splats_available():
             layout.label(text="Create Mesh requires native Gaussians in Blender 5.3+", icon="INFO")
-        elif platform_error():
-            layout.label(text="Create Mesh currently requires Windows x64", icon="INFO")
-        elif not executable_path(bpy.path.abspath(context.scene.remi_generation.surface_tools)).is_file():
-            layout.label(text="Install the surface tool in generation settings", icon="INFO")
     if can_convert(context):
         row = layout.row()
         row.scale_y = 1.35
@@ -113,8 +108,7 @@ def draw_generation_settings(layout, context):
     controls.label(text="Reconstructed Mesh")
     controls.prop(settings, "mesh_quality")
     controls.label(text="Native Gaussian rendering · Blender 5.3+ · Windows x64", icon="INFO")
-    controls.prop(settings, "surface_tools")
-    controls.operator("remi.install_surface_tool", text="Install Surface Tool", icon="IMPORT")
+    controls.label(text="Needs remi-splat-mesh in the external Python", icon="INFO")
     controls.prop(settings, "mesh_output")
 
 

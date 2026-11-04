@@ -104,7 +104,6 @@ source.select_set(True)
 print("REMI_INSTALLED_ALPHA_GUIDED_REPAIR_OK")
 assert hasattr(bpy.ops.remi, "create_mesh")
 assert hasattr(bpy.ops.remi, "cancel_mesh")
-assert hasattr(bpy.ops.remi, "install_surface_tool")
 assert bpy.context.scene.remi_generation.mesh_quality == "DENSE"
 assert bpy.context.scene.remi_texture.bake_method == "OCTREE"
 assert bpy.context.scene.remi_texture.ray_steps == "512"

@@ -41,7 +41,6 @@ assert len(splat_arrays(splat)["positions"]) > 0
 settings = bpy.context.scene.remi_generation
 settings.python = args.python or settings.python
 settings.mesh_quality = args.quality
-assert settings.surface_tools
 settings.mesh_output = str((args.output / "meshes").resolve())
 splat.matrix_world = Matrix.Translation((1.2, -0.8, 0.4)) @ Matrix.Diagonal((1.1, 0.8, 1.3, 1.0))
 state = bpy.context.window_manager.remi_generation

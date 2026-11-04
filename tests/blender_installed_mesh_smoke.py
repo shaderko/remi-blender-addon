@@ -29,8 +29,7 @@ splat = splats.import_splats(bpy.context, archive, display="NATIVE")
 snapshot = output / "selected_object.npz"
 splats.write_splat_archive(splat, snapshot)
 job = client.MeshJob.start(
-    python=bpy.path.abspath(settings.python), archive=snapshot, output=output,
-    blender=bpy.app.binary_path, tool_folder=bpy.path.abspath(settings.surface_tools), quality=settings.mesh_quality,
+    python=bpy.path.abspath(settings.python), archive=snapshot, output=output, quality=settings.mesh_quality,
 )
 print("INSTALLED MESH JOB", job.directory, flush=True)
 try:

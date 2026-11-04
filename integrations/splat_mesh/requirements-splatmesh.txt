@@ -1,0 +1,3 @@
+# External-Python backend for the "splatmesh" mesher.
+# Pin the tag; bump it deliberately.
+remi-splat-mesh @ git+https://github.com/shaderko/remi-splat-mesh@v0.1.3

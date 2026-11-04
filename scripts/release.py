@@ -173,12 +173,12 @@ def verify_archive(artifact, target):
         if any(name.startswith("models/") or name.endswith((".pt", ".safetensors", ".onnx"))
                for name in archive.namelist()):
             raise RuntimeError("Model weights must be downloaded, not shipped in the extension")
-        required_surface = {"integrations/splat_mesh/worker.py", "integrations/splat_mesh/render_views.py"}
-        required_surface.update("integrations/splat_mesh/remi_surface/" + name + ".py" for name in
-                                ("__init__", "common", "exchange", "geometry", "metrics", "optimizer",
-                                 "pipeline", "processes", "silhouette", "tool"))
+        required_surface = {"integrations/splat_mesh/client.py",
+                            "integrations/splat_mesh/runtime.py",
+                            "integrations/splat_mesh/splatmesh_worker.py",
+                            "integrations/splat_mesh/requirements-splatmesh.txt"}
         if not required_surface.issubset(archive.namelist()):
-            raise RuntimeError("Archive is missing packaged surface-reconstruction modules")
+            raise RuntimeError("Archive is missing packaged splat-to-mesh modules")
         if not {"integrations/splat_project/octree.py", "integrations/splat_project/octree_native.py",
                 "integrations/splat_project/local_gaussian.py", "integrations/splat_project/local_gaussian_native.py"}.issubset(archive.namelist()):
             raise RuntimeError("Archive is missing the whole-mesh octree ray baker")

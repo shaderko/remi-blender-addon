@@ -62,11 +62,11 @@ See [automatic Instant Meshes guidance](docs/instant_meshes_guidance.md).
 
 ### Model generation beta
 
-The `model-generation` branch is developed separately as **2.7.0-beta.5**.
+The `model-generation` branch is developed separately as **2.7.0-beta.6**.
 It includes image-to-splats generation, mesh reconstruction, layered texture
 projection and on-demand model downloads. This is a **prerelease**, not a
 replacement for the stable release. Back up your `.blend` files before testing.
-See [beta release notes and setup](docs/releases/2.7.0-beta.5.md).
+See [beta release notes and setup](docs/releases/2.7.0-beta.6.md).
 
 ### Local image and 3D generation (beta)
 

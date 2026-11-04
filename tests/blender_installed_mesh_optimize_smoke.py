@@ -20,8 +20,7 @@ adapter = importlib.import_module(module_name + ".blender.reconstructed_mesh")
 splats = importlib.import_module(module_name + ".blender.gaussian_splats")
 splat = splats.import_splats(bpy.context, archive, display="NATIVE")
 job = client.MeshJob.start(
-    python=bpy.path.abspath(settings.python), archive=archive, output=output,
-    blender=bpy.app.binary_path, tool_folder=bpy.path.abspath(settings.surface_tools), quality=settings.mesh_quality,
+    python=bpy.path.abspath(settings.python), archive=archive, output=output, quality=settings.mesh_quality,
 )
 try:
     deadline = time.monotonic() + 600

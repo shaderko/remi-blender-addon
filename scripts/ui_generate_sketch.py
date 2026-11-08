@@ -2,18 +2,21 @@
 
     scripts\\run-ui-sketch.bat   (blender --factory-startup --python scripts/ui_generate_sketch.py)
 
-Registers three layouts for the Generate tab under sidebar category "GEN",
-next to the add-on's own "Remi" category:
+Registers four layouts for the Generate tab under sidebar category "GEN":
 
-    A  Big cards       one full-width card per row; 3D starts from the card
-    B  Two-up cards    two cards per row, same per-card action
-    C  Hero + strip    one large preview, thumbnails below to switch
+    A  1-up       one image per row, ~240 px
+    B  2-up       two images per row, ~140 px at the default sidebar width
+    C  3-up       three per row, ~90 px — the densest overview
+    D  2-up wide  two per row at ~230 px — drag the sidebar to ~500 px
 
-The premise: the thumbnail is the control point for 3D generation. Every card
-carries its own primary action and its own progress, so making a 3D source never
-requires going through a separate detail panel. Blender cannot make a scaled
-preview itself clickable, so the action sits directly under the preview at full
-card width — the closest idiom the panel API allows.
+The rule for all of them: the cell is the image. No boxes, no seed line, no
+prompt text, no tool rows inside the cell — just the preview and one slim button
+row underneath (its own 3D action plus a compact menu for the rest). Everything
+else lives once, above the grid.
+
+Blender cannot make a scaled preview clickable, and a preview does not grow with
+the panel, so the image size is `scale` × ~32 px and the column count must match
+the panel width you actually use.
 
 Panels read the real scene and gallery; buttons are the production operators.
 Nothing here is imported by the add-on.
@@ -28,10 +31,12 @@ import textwrap
 from pathlib import Path
 
 import bpy
-from bpy.types import Panel
+from bpy.props import StringProperty
+from bpy.types import Menu, Operator, Panel
 
 MODULE_NAME = "remi_generate_sketch"
 BOOT = {"source": "not loaded", "error": ""}
+MENU_PATH = "gen_cell_path"
 
 
 def _script_location():
@@ -114,10 +119,6 @@ def boot():
 # --------------------------------------------------------------------------
 
 
-def panel_module():
-    return sys.modules["remi.features.images.panel"]
-
-
 def gallery():
     return sys.modules["remi.features.images.gallery"].gallery
 
@@ -145,14 +146,7 @@ def icon(path):
 
 
 def same_path(first, second):
-    return panel_module()._same_path(first, second)
-
-
-def selected_entry(context, items):
-    selected = image_state(context).selected
-    if not selected:
-        return None
-    return next((entry for entry in items if same_path(selected, entry.path)), None)
+    return sys.modules["remi.features.images.panel"]._same_path(first, second)
 
 
 def splat_for(path):
@@ -179,12 +173,7 @@ def ready(context):
     return bool(settings.prompt.strip()) and not model_missing(context) and not state.busy
 
 
-def meta_line(entry):
-    return f"seed {entry.seed}"
-
-
 def state_of(context, entry):
-    """(busy, splat, mesh) for one image — the card's own 3D state."""
     generation = generation_state(context)
     busy = bool(
         generation.busy
@@ -255,77 +244,48 @@ def gallery_header(layout, context, items):
     row.operator("remi.refresh_images", text="", icon="FILE_REFRESH")
 
 
-def card_actions(layout, context, entry, big):
-    """The card's own 3D control: one primary, progress in place."""
-    busy, splat, mesh = state_of(context, entry)
-    generation = generation_state(context)
-    if busy:
-        layout.progress(
-            factor=float(generation.progress),
-            type="BAR",
-            text=generation.status or "Generating 3D…",
-        )
-        layout.operator("remi.cancel_generation", text="Cancel", icon="CANCEL")
-        return
-    row = layout.row(align=True)
-    row.scale_y = 1.45 if big else 1.2
-    if splat is None:
-        play = row.operator("remi.generate_splats", text="Generate 3D", icon="PLAY")
-        play.image_path = str(entry.path)
-    else:
-        use = row.operator("remi.activate_splat", text="Select 3D", icon="RESTRICT_SELECT_OFF")
-        use.image_path = str(entry.path)
-        if mesh is not None:
-            row.operator("remi.select_workspace", text="Optimize", icon="MOD_DECIM").workspace = "OPTIMIZE"
+def result_block(layout, context):
+    module = sys.modules["remi.features.generation.panel"]
+    module.draw_mesh_controls(layout, context, generation_state(context))
 
 
-def card_tools(layout, context, entry):
-    row = layout.row(align=True)
-    row.operator("remi.regenerate_image", text="", icon="FILE_REFRESH").path = str(entry.path)
-    row.operator("remi.copy_image_prompt", text="", icon="COPYDOWN").path = str(entry.path)
-    row.operator("remi.open_image", text="", icon="FILEBROWSER").path = str(entry.path)
-    row.operator("remi.delete_image", text="", icon="TRASH").path = str(entry.path)
-    splat = splat_for(entry.path)
-    if splat is not None and mesh_for(splat) is not None:
-        row.operator("remi.select_workspace", text="", icon="TEXTURE").workspace = "TEXTURE"
+# --------------------------------------------------------------------------
+# The cell: image, then one slim button row
+# --------------------------------------------------------------------------
 
 
-def badge(layout, context, entry):
-    _busy, splat, mesh = state_of(context, entry)
-    if mesh is not None:
-        layout.label(text="Mesh", icon="CHECKMARK")
-    elif splat is not None:
-        layout.label(text="3D", icon="CHECKMARK")
-    else:
-        layout.label(text="", icon="NONE")
-
-
-def deck_card(layout, context, entry, selected, scale, big):
-    box = layout.box()
-    box.alert = selected
+def image_cell(row, context, entry, scale, label="3D"):
+    cell = row.column(align=True)
     preview = icon(entry.path)
     if preview:
-        box.template_icon(icon_value=preview, scale=scale)
+        cell.template_icon(icon_value=preview, scale=scale)
     else:
-        box.label(text="Preview", icon="IMAGE_DATA")
-    head = box.row(align=True)
-    select = head.operator(
-        "remi.select_image",
-        text="",
-        icon="RADIOBUT_ON" if selected else "RADIOBUT_OFF",
-        depress=selected,
-    )
-    select.path = str(entry.path)
-    head.label(text=meta_line(entry))
-    badge(head, context, entry)
-    if big:
-        box.label(text=entry.label)
-    card_actions(box, context, entry, big)
-    if big:
-        card_tools(box, context, entry)
+        cell.label(text="", icon="IMAGE_DATA")
+
+    busy, splat, _mesh = state_of(context, entry)
+    generation = generation_state(context)
+    if busy:
+        cell.progress(
+            factor=float(generation.progress),
+            type="BAR",
+            text="",
+        )
+        cell.operator("remi.cancel_generation", text="", icon="CANCEL")
+        return
+
+    row = cell.row(align=True)
+    split = row.split(factor=0.82)
+    if splat is None:
+        play = split.operator("remi.generate_splats", text=label, icon="PLAY")
+        play.image_path = str(entry.path)
+    else:
+        use = split.operator("remi.activate_splat", text="3D", icon="CHECKMARK")
+        use.image_path = str(entry.path)
+    more = split.operator("gen.cell_menu", text="", icon="COLLAPSEMENU")
+    more.path = str(entry.path)
 
 
-def deck(layout, context, items, columns, scale, page_size):
+def image_grid(layout, context, items, columns, scale, page_size, label="3D"):
     state = image_state(context)
     if not items:
         layout.label(text="No images yet — generate one above.", icon="INFO")
@@ -334,12 +294,11 @@ def deck(layout, context, items, columns, scale, page_size):
     state.page = min(state.page, max_page)
     start = state.page * page_size
     page = items[start:start + page_size]
-    column = layout.column(align=True)
+    grid = layout.column(align=True)
     for offset in range(0, len(page), columns):
-        row = column.row(align=True)
+        row = grid.row(align=True)
         for entry in page[offset:offset + columns]:
-            selected = same_path(state.selected, entry.path) if state.selected else False
-            deck_card(row, context, entry, selected, scale, columns == 1)
+            image_cell(row, context, entry, scale, label)
     if len(items) > page_size:
         nav = layout.row(align=True)
         previous = nav.operator("remi.image_page", text="", icon="TRIA_LEFT")
@@ -349,88 +308,97 @@ def deck(layout, context, items, columns, scale, page_size):
         following.direction = 1
 
 
-def result_block(layout, context):
-    module = sys.modules["remi.features.generation.panel"]
-    module.draw_mesh_controls(layout, context, generation_state(context))
-
-
 # --------------------------------------------------------------------------
-# A — big cards
+# Per-cell menu (secondary actions without per-cell chrome)
 # --------------------------------------------------------------------------
 
 
-def variant_big(layout, context):
+class GEN_OT_CellMenu(Operator):
+    bl_idname = "gen.cell_menu"
+    bl_label = "Image Actions"
+    bl_options = {"INTERNAL"}
+
+    path: StringProperty()
+
+    def execute(self, context):
+        context.scene[MENU_PATH] = self.path
+        bpy.ops.wm.call_menu(name="GEN_MT_Cell")
+        return {"FINISHED"}
+
+
+class GEN_MT_Cell(Menu):
+    bl_idname = "GEN_MT_Cell"
+    bl_label = "Image"
+
+    def draw(self, context):
+        layout = self.layout
+        path = context.scene.get(MENU_PATH, "")
+        if not path:
+            layout.label(text="No image", icon="INFO")
+            return
+        splat = splat_for(path)
+        if splat is None:
+            play = layout.operator("remi.generate_splats", text="Generate 3D", icon="PLAY")
+            play.image_path = path
+        else:
+            use = layout.operator("remi.activate_splat", text="Select 3D", icon="RESTRICT_SELECT_OFF")
+            use.image_path = path
+            mesh = mesh_for(splat)
+            if mesh is not None:
+                layout.operator("remi.select_workspace", text="Optimize", icon="MOD_DECIM").workspace = "OPTIMIZE"
+                layout.operator("remi.select_workspace", text="Texture", icon="TEXTURE").workspace = "TEXTURE"
+        layout.separator()
+        layout.operator("remi.regenerate_image", text="Load Settings", icon="FILE_REFRESH").path = path
+        layout.operator("remi.copy_image_prompt", text="Copy Prompt", icon="COPYDOWN").path = path
+        layout.operator("remi.open_image", text="Open Image", icon="FILEBROWSER").path = path
+        layout.operator("remi.delete_image", text="Delete", icon="TRASH").path = path
+
+
+# --------------------------------------------------------------------------
+# Variants
+# --------------------------------------------------------------------------
+
+
+def common_top(layout, context):
     workspace_tabs(layout, context)
     prompt_block(layout, context)
     warnings(layout, context)
+
+
+def variant_one_up(layout, context):
+    common_top(layout, context)
     layout.separator()
     items = entries(context)
     gallery_header(layout, context, items)
-    deck(layout, context, items, columns=1, scale=7.0, page_size=3)
+    image_grid(layout, context, items, columns=1, scale=7.0, page_size=3, label="Generate 3D")
     result_block(layout, context)
-
-
-# --------------------------------------------------------------------------
-# B — two-up cards
-# --------------------------------------------------------------------------
 
 
 def variant_two_up(layout, context):
-    workspace_tabs(layout, context)
-    prompt_block(layout, context)
-    warnings(layout, context)
+    common_top(layout, context)
     layout.separator()
     items = entries(context)
     gallery_header(layout, context, items)
-    deck(layout, context, items, columns=2, scale=3.2, page_size=4)
+    image_grid(layout, context, items, columns=2, scale=3.8, page_size=4)
     result_block(layout, context)
 
 
-# --------------------------------------------------------------------------
-# C — hero + strip
-# --------------------------------------------------------------------------
-
-
-def variant_hero(layout, context):
-    workspace_tabs(layout, context)
-    prompt_block(layout, context)
-    warnings(layout, context)
-
-    items = entries(context)
-    if not items:
-        layout.label(text="No images yet — generate one above.", icon="INFO")
-        return
-    chosen = selected_entry(context, items) or items[0]
-
-    card = layout.box()
-    preview = icon(chosen.path)
-    if preview:
-        card.template_icon(icon_value=preview, scale=7.0)
-    head = card.row(align=True)
-    head.label(text=meta_line(chosen), icon="IMAGE_DATA")
-    badge(head, context, chosen)
-    card_actions(card, context, chosen, big=True)
-    card_tools(card, context, chosen)
-
+def variant_three_up(layout, context):
+    common_top(layout, context)
     layout.separator()
-    layout.label(text="All images", icon="IMAGE_DATA")
-    strip = layout.column(align=True)
-    for offset in range(0, len(items), 4):
-        row = strip.row(align=True)
-        for entry in items[offset:offset + 4]:
-            cell = row.column(align=True)
-            preview = icon(entry.path)
-            if preview:
-                cell.template_icon(icon_value=preview, scale=1.6)
-            select = cell.operator(
-                "remi.select_image",
-                text="",
-                icon="RADIOBUT_ON" if same_path(chosen.path, entry.path) else "RADIOBUT_OFF",
-            )
-            select.path = str(entry.path)
-            _busy, splat, _mesh = state_of(context, entry)
-            if splat is not None:
-                cell.label(text="3D", icon="CHECKMARK")
+    items = entries(context)
+    gallery_header(layout, context, items)
+    image_grid(layout, context, items, columns=3, scale=2.8, page_size=6)
+    result_block(layout, context)
+
+
+def variant_wide(layout, context):
+    common_top(layout, context)
+    layout.label(text="Drag the sidebar to ~500 px for this one", icon="INFO")
+    layout.separator()
+    items = entries(context)
+    gallery_header(layout, context, items)
+    image_grid(layout, context, items, columns=2, scale=6.5, page_size=2)
     result_block(layout, context)
 
 
@@ -466,39 +434,57 @@ class GEN_PT_Control(Panel):
         if BOOT["error"]:
             for line in textwrap.wrap(BOOT["error"], 42):
                 layout.label(text=line, icon="ERROR")
-        layout.label(text="Live panels: real operators.", icon="INFO")
+        layout.label(text="Image size is the `scale=` number.", icon="INFO")
 
 
-class GEN_PT_Big(Panel):
-    bl_label = "A · Big cards"
-    bl_idname = "GEN_PT_Big"
+class GEN_PT_OneUp(Panel):
+    bl_label = "A · 1-up (240 px)"
+    bl_idname = "GEN_PT_OneUp"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "GEN"
-    draw = guarded(variant_big)
+    bl_options = {"DEFAULT_CLOSED"}
+    draw = guarded(variant_one_up)
 
 
 class GEN_PT_TwoUp(Panel):
-    bl_label = "B · Two-up cards"
+    bl_label = "B · 2-up (140 px)"
     bl_idname = "GEN_PT_TwoUp"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "GEN"
-    bl_options = {"DEFAULT_CLOSED"}
     draw = guarded(variant_two_up)
 
 
-class GEN_PT_Hero(Panel):
-    bl_label = "C · Hero + strip"
-    bl_idname = "GEN_PT_Hero"
+class GEN_PT_ThreeUp(Panel):
+    bl_label = "C · 3-up (90 px)"
+    bl_idname = "GEN_PT_ThreeUp"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "GEN"
     bl_options = {"DEFAULT_CLOSED"}
-    draw = guarded(variant_hero)
+    draw = guarded(variant_three_up)
 
 
-CLASSES = (GEN_PT_Control, GEN_PT_Big, GEN_PT_TwoUp, GEN_PT_Hero)
+class GEN_PT_Wide(Panel):
+    bl_label = "D · 2-up wide (230 px)"
+    bl_idname = "GEN_PT_Wide"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "GEN"
+    bl_options = {"DEFAULT_CLOSED"}
+    draw = guarded(variant_wide)
+
+
+CLASSES = (
+    GEN_OT_CellMenu,
+    GEN_MT_Cell,
+    GEN_PT_Control,
+    GEN_PT_OneUp,
+    GEN_PT_TwoUp,
+    GEN_PT_ThreeUp,
+    GEN_PT_Wide,
+)
 
 
 def register():
@@ -514,9 +500,19 @@ def unregister():
             pass
 
 
+def warm_icons():
+    """Queue previews before the first draw; drawing cannot wait for them."""
+    try:
+        for entry in entries(bpy.context):
+            icon(entry.path)
+    except Exception as exc:
+        print(f"Remi sketch: preview warm-up skipped: {exc}")
+
+
 def main():
     register()
     boot()
+    warm_icons()
     print(f"Remi generate sketch ready: N-panel → GEN tab. Remi source: {BOOT['source']}")
     if BOOT["error"]:
         print(f"Could not load Remi: {BOOT['error']}")

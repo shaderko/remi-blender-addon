@@ -35,25 +35,29 @@ operators — a variant can actually drive image generation and 3D creation.
 
 ## Generate variants
 
-Driving constraint from the first review: **thumbnails were too small, and they
-should be the control point for 3D generation.** So every card now carries its
-own 3D action and its own progress; there is no separate detail panel to visit.
+Driving constraint from the second review: **cells are wanted, but the image
+must fill the cell.** So a cell is now the preview plus one slim button row —
+no box, no seed line, no prompt text, no tool row inside the cell. Everything
+else lives once above the grid, and secondary actions (load settings, copy,
+open, delete) moved into a per-image `▾` menu.
 
-| | Idea | Rows | Preview |
-|---|---|---|---|
-| **A** | One full-width card per row; 3D starts from the card | 22.9 | `scale=7` ≈ 220 px |
-| **B** | Two cards per row, same per-card action | 13.5 | `scale=3.2` ≈ 100 px |
-| **C** | One large preview, thumbnails below to switch | 13.1 | hero 7, strip 1.6 |
-| today | 3×2 cards, two buttons each, detail box, mesh controls | 21.2 | `scale=2.4` ≈ 75 px |
+| | Idea | Rows | Image | Fits at |
+|---|---|---|---|---|
+| **A** | 1-up | 12.7 | `scale=7` ≈ 224 px | 320 px |
+| **B** | 2-up | 10.7 | `scale=3.8` ≈ 122 px | 280 px |
+| **C** | 3-up | 10.7 | `scale=2.8` ≈ 90 px | 300 px |
+| **D** | 2-up wide | 9.7 | `scale=6.5` ≈ 208 px | ~460 px |
+| today | 3×2 boxed cards at `scale=2.4` | 21.2 | ≈ 75 px in a ~110 px box | — |
 
-Blender note: a scaled preview (`template_icon`) cannot itself be clicked — only
-operators and props are interactive. So the action is a full-width button
-directly under each thumbnail, and all secondary actions (load settings, copy
-prompt, open, delete) shrink to an icon row. Making the image itself a hit
-target would need a custom GPU-drawn popup, which is a different kind of project.
+The hard limit: a preview does not grow with the panel. `template_icon` draws at
+`scale × 32 px`, so the column count has to match the sidebar width you actually
+use. Wider sidebar does not enlarge the images — it only fits more columns (see
+variant D, which needs ~460 px).
 
-Thumbnail size is one number per variant (`scale=` in the file) — tell me if 220 px
-is still too small or already too tall.
+Preview check on this machine: in a GUI Blender the gallery previews load
+(ids 1111+, `icon_size` 32×32), in `--background` they do not (id 0), so a
+headless screenshot only ever shows the fallback icon. Judge the size in the
+app, not from my captures.
 
 ## How to judge
 
@@ -102,10 +106,10 @@ that matters is against today's layout, on your own gallery.
 | Question | Decision |
 |---|---|
 | Session shells (A–D) | **Rejected** — all felt worse than today; Optimize stays as-is |
-| Thumbnail size | Must be much larger; currently the main complaint |
-| Thumbnails as 3D control point | Required — per-card action, not a detail panel |
-| Generate variant | *(open: A, B, or C)* |
-| Preview scale | *(open: A/B use one number each)* |
-| Keep one gear for settings, or split image/3D | *(open)* |
+| Cells vs single image | Multiple cells wanted |
+| Chrome inside a cell | **Removed** — image fills the cell, one slim button row |
+| Thumbnails as 3D control point | Required — per-cell action, no detail panel |
+| Generate variant | *(open: A, B, C, or D)* |
+| Column count / target sidebar width | *(open — this is the size decision)* |
 | Port target | `features/images/panel.py: draw_create` + `_draw_gallery` |
 | Test assertions to replace | `tests/blender_workspace_ui_regression.py` (prompt-only, one popover) |

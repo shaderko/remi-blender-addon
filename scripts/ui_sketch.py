@@ -21,17 +21,32 @@ Delete this file once a shell has been chosen and ported.
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
+import textwrap
 from pathlib import Path
 from types import SimpleNamespace
 
 import bpy
 from bpy.types import Menu, Operator, Panel
 
-ROOT = Path(__file__).resolve().parents[1]
-FILE = Path(__file__).resolve()
 MODULE_NAME = "remi_ui_sketch"
-LAST_MTIME = FILE.stat().st_mtime
+BOOT = {"source": "not loaded", "error": ""}
+
+
+def _script_location():
+    raw = globals().get("__file__")
+    if not raw:
+        return None
+    path = Path(raw)
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    path = path.resolve()
+    return path if path.is_file() else None
+
+
+FILE = _script_location()
+LAST_MTIME = FILE.stat().st_mtime if FILE is not None else 0.0
 
 MODE = "DEMO"  # DEMO | LIVE
 SCENARIO = "session"  # idle | session | busy | interactive | automatic
@@ -65,22 +80,63 @@ def remi():
     return sys.modules["remi"]
 
 
+def locate_root():
+    override = os.environ.get("REMI_ROOT")
+    if override:
+        root = Path(override).resolve()
+        if (root / "__init__.py").is_file():
+            return root
+    if FILE is not None:
+        root = FILE.parents[1]
+        if (root / "__init__.py").is_file() and (root / "app").is_dir():
+            return root
+    raise RuntimeError(
+        "Cannot find the Remi checkout. Launch Blender with "
+        "--python <repo>/scripts/ui_sketch.py, or set REMI_ROOT."
+    )
+
+
+def registered_remi():
+    """An enabled copy of Remi in this Blender, if any."""
+    for key in list(bpy.context.preferences.addons.keys()):
+        name = key.lower()
+        if name != "remi" and not name.endswith(".remi"):
+            continue
+        module = sys.modules.get(key)
+        if module is not None and hasattr(module, "app"):
+            return module
+    return None
+
+
 def load_remi():
-    if "remi" in sys.modules:
-        return
+    checkout = sys.modules.get("remi")
+    if checkout is not None and hasattr(checkout, "app"):
+        return "checkout"
+    installed = registered_remi()
+    if installed is not None:
+        sys.modules["remi"] = installed
+        return f"installed · {installed.__name__}"
+    root = locate_root()
     spec = importlib.util.spec_from_file_location(
-        "remi", ROOT / "__init__.py", submodule_search_locations=[str(ROOT)]
+        "remi", root / "__init__.py", submodule_search_locations=[str(root)]
     )
     module = importlib.util.module_from_spec(spec)
     sys.modules["remi"] = module
     spec.loader.exec_module(module)
+    module.register()
+    return "checkout"
+
+
+def boot():
+    """Never raise: panels stay visible and report the problem instead."""
     try:
-        module.register()
-    except RuntimeError as exc:  # another copy of the add-on is already enabled
+        BOOT["source"] = load_remi()
+        BOOT["error"] = ""
+    except Exception as exc:
+        BOOT["source"] = "not loaded"
+        BOOT["error"] = f"{type(exc).__name__}: {exc}"
         sys.modules.pop("remi", None)
-        raise RuntimeError(
-            "Another Remi copy is registered. Launch with --factory-startup."
-        ) from exc
+    return BOOT
 
 
 def features():
@@ -92,7 +148,10 @@ def stage_items():
 
 
 def stage_name(identifier):
-    return dict(stage_items()).get(identifier, identifier.title())
+    try:
+        return dict(stage_items()).get(identifier, identifier.title())
+    except Exception:
+        return identifier.title()
 
 
 # --------------------------------------------------------------------------
@@ -481,8 +540,11 @@ class SK_MT_Stages(Menu):
 
     def draw(self, _context):
         layout = self.layout
-        for identifier, name in stage_items():
-            stage_button(layout, identifier, depress=identifier == STAGE)
+        try:
+            for identifier, name in stage_items():
+                stage_button(layout, identifier, depress=identifier == STAGE)
+        except Exception as exc:
+            layout.label(text=f"{type(exc).__name__}: {exc}", icon="ERROR")
 
 
 class SK_PT_StageSheet(Panel):
@@ -495,14 +557,17 @@ class SK_PT_StageSheet(Panel):
     bl_ui_units_x = 20
 
     def draw(self, context):
-        state = current_state(context)
         layout = self.layout
-        layout.use_property_split = False
-        row = layout.row(align=True)
-        for identifier, name in stage_items():
-            stage_button(row, identifier, depress=identifier == state.stage)
-        layout.separator()
-        leaves(layout, context, state)
+        try:
+            state = current_state(context)
+            layout.use_property_split = False
+            row = layout.row(align=True)
+            for identifier, name in stage_items():
+                stage_button(row, identifier, depress=identifier == state.stage)
+            layout.separator()
+            leaves(layout, context, state)
+        except Exception as exc:
+            layout.label(text=f"{type(exc).__name__}: {exc}", icon="ERROR")
 
 
 # --------------------------------------------------------------------------
@@ -530,6 +595,14 @@ class SK_PT_Control(Panel):
 
     def draw(self, context):
         layout = self.layout
+        source = BOOT["source"]
+        loaded = source != "not loaded"
+        layout.label(text=f"Remi · {source}", icon="CHECKMARK" if loaded else "ERROR")
+        if BOOT["error"]:
+            for line in textwrap.wrap(BOOT["error"], 42):
+                layout.label(text=line, icon="ERROR")
+            layout.label(text="Launch: blender --python scripts/ui_sketch.py", icon="INFO")
+        layout.separator()
         row = layout.row(align=True)
         for key, label in (("DEMO", "Demo"), ("LIVE", "Live")):
             button = layout.operator("remi_sketch.config", text=label, depress=MODE == key)
@@ -619,6 +692,8 @@ def draw_variant(layout, context, shell):
 
 
 def reload_sketch():
+    if FILE is None:
+        return
     old = sys.modules.get(MODULE_NAME)
     saved = (MODE, SCENARIO, STAGE, WORKSPACE, AUTO_RELOAD)
     if old is not None:
@@ -632,12 +707,13 @@ def reload_sketch():
     spec.loader.exec_module(module)
     module.MODE, module.SCENARIO, module.STAGE, module.WORKSPACE, module.AUTO_RELOAD = saved
     module.register()
+    module.boot()
     print("Remi sketch: reloaded")
 
 
 def watch():
     module = sys.modules.get(MODULE_NAME)
-    if module is None:
+    if module is None or FILE is None:
         return 1.0
     try:
         mtime = FILE.stat().st_mtime
@@ -688,15 +764,19 @@ def unregister():
 
 
 def main():
-    load_remi()
     register()
-    if not getattr(bpy, "_remi_sketch_watch", False):
+    boot()
+    if FILE is not None and not getattr(bpy, "_remi_sketch_watch", False):
         bpy.app.timers.register(watch, first_interval=1.0, persistent=True)
         bpy._remi_sketch_watch = True
     print(
         "Remi sketch ready: N-panel → UI tab → Sketch Control. "
-        f"Editing this file reloads it while Auto is on ({FILE})"
+        f"Remi source: {BOOT['source']}"
     )
+    if BOOT["error"]:
+        print(f"Remi sketch could not load Remi: {BOOT['error']}")
+    if FILE is not None:
+        print(f"Editing {FILE} reloads it while Auto is on.")
 
 
 if __name__ == "__main__":

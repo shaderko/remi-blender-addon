@@ -52,7 +52,7 @@ MODE = "DEMO"  # DEMO | LIVE
 SCENARIO = "session"  # idle | session | busy | interactive | automatic
 STAGE = "REPAIR"
 WORKSPACE = "OPTIMIZE"
-AUTO_RELOAD = True
+AUTO_RELOAD = False  # opt-in: no background machinery until you ask for it
 
 SHORT_SCENARIOS = (
     ("idle", "Idle"),
@@ -295,6 +295,10 @@ class SK_OT_ToggleAutoReload(Operator):
     def execute(self, context):
         global AUTO_RELOAD
         AUTO_RELOAD = not AUTO_RELOAD
+        if AUTO_RELOAD:
+            arm_watch()
+        else:
+            disarm_watch()
         redraw(context)
         return {"FINISHED"}
 
@@ -713,13 +717,14 @@ def reload_sketch():
 
 def watch():
     module = sys.modules.get(MODULE_NAME)
-    if module is None or FILE is None:
-        return 1.0
+    if module is None or FILE is None or not getattr(module, "AUTO_RELOAD", False):
+        disarm_watch()
+        return None
     try:
         mtime = FILE.stat().st_mtime
     except OSError:
         return 1.0
-    if module.AUTO_RELOAD and mtime > module.LAST_MTIME + 0.01:
+    if mtime > module.LAST_MTIME + 0.01:
         module.LAST_MTIME = mtime
         try:
             module.reload_sketch()
@@ -727,6 +732,22 @@ def watch():
             print(f"Remi sketch: reload failed: {exc}")
         return 0.5
     return 0.7
+
+
+def arm_watch():
+    """Start the file watcher. Opt-in: nothing runs in the background otherwise."""
+    existing = getattr(bpy, "_remi_sketch_watch_fn", None)
+    if existing is not None and bpy.app.timers.is_registered(existing):
+        return
+    bpy._remi_sketch_watch_fn = watch
+    bpy.app.timers.register(watch, first_interval=1.0)
+
+
+def disarm_watch():
+    existing = getattr(bpy, "_remi_sketch_watch_fn", None)
+    if existing is not None and bpy.app.timers.is_registered(existing):
+        bpy.app.timers.unregister(existing)
+    bpy._remi_sketch_watch_fn = None
 
 
 # --------------------------------------------------------------------------
@@ -766,9 +787,8 @@ def unregister():
 def main():
     register()
     boot()
-    if FILE is not None and not getattr(bpy, "_remi_sketch_watch", False):
-        bpy.app.timers.register(watch, first_interval=1.0, persistent=True)
-        bpy._remi_sketch_watch = True
+    if FILE is not None and AUTO_RELOAD:
+        arm_watch()
     print(
         "Remi sketch ready: N-panel → UI tab → Sketch Control. "
         f"Remi source: {BOOT['source']}"
@@ -776,7 +796,7 @@ def main():
     if BOOT["error"]:
         print(f"Remi sketch could not load Remi: {BOOT['error']}")
     if FILE is not None:
-        print(f"Editing {FILE} reloads it while Auto is on.")
+        print(f"Click Reload after editing {FILE}.")
 
 
 if __name__ == "__main__":

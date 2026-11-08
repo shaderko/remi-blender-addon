@@ -40,11 +40,16 @@ failed.
 - **Demo** draws candidate shells against fabricated state — no session needed.
 - **Live** draws the same shells against your real `remi_session`, so you can
   run an actual Repair → Remesh → UV → Bake pass through any variant.
-- **Auto ✓** reloads the file about a second after you save it. Edit in your
-  editor, watch Blender repaint.
+- **Reload** re-executes the file after you edit it. **Auto** is off by default
+  and starts a file watcher that reloads on save; leave it off unless you want
+  the save-and-repaint loop, because it re-registers panels from a timer.
 - If a copy of Remi is already enabled in this Blender, the sketch reuses it
   instead of loading a second one. Use `--factory-startup` to guarantee you are
   looking at the checkout.
+
+If Blender freezes, note *where* (right after launch, opening the UI tab, a
+specific shell, a popover) and relaunch without Auto. The default launch now
+runs no background code at all — just panels.
 
 ## The four shells
 

@@ -47,7 +47,13 @@ open, delete) moved into a per-image `▾` menu.
 | **B** | 2-up | 10.7 | `scale=3.8` ≈ 122 px | 280 px |
 | **C** | 3-up | 10.7 | `scale=2.8` ≈ 90 px | 300 px |
 | **D** | 2-up wide | 9.7 | `scale=6.5` ≈ 208 px | ~460 px |
+| **E** | adaptive (`grid_flow`) | 8.7 | `scale=8` ≈ 256 px | 1 column at 320 px, 2 at ~600 px |
 | today | 3×2 boxed cards at `scale=2.4` | 21.2 | ≈ 75 px in a ~110 px box | — |
+
+**E is A and D merged**: the tile size is fixed at 256 px, and `grid_flow(columns=0)`
+decides how many fit, so the default narrow sidebar shows one big image per row
+and a widened one shows two. Square (1×1) output means the tile wastes no space
+on letterboxing.
 
 The hard limit: a preview does not grow with the panel. `template_icon` draws at
 `scale × 32 px`, so the column count has to match the sidebar width you actually
@@ -76,6 +82,18 @@ that matters is against today's layout, on your own gallery.
 
 ## Findings so far
 
+- **Overlays are not available in a panel.** `UILayout` has no z-order and no
+  absolute positioning; a scaled preview is display-only and cannot carry text
+  or buttons on top of it. Three ways to get closer, cheapest first:
+  1. **Tile + menu** (what the sketch does): image, then a slim row inside the
+     same visual block. No true overlay, but the image is ~95 % of the cell.
+  2. **State baked into the thumbnail**: a coloured bar or border composited
+     into the PNG (numpy over image pixels). Gives state at a glance, no text,
+     and needs a thumbnail cache with invalidation.
+  3. **Custom GPU browser**: a modal operator with a `SpaceView3D` draw handler,
+     GPU textures, `blf` text and its own hit-testing — real hover overlays,
+     clickable images, keyboard navigation. This is a separate surface and a
+     much larger piece of work (how BlenderKit and asset shelves do it).
 - **The gallery does filesystem work inside `draw`** (`gallery.refresh`,
   `Path.is_dir`). Cached by token, but still redraw-time I/O; the sketch was
   written to call the same functions, so this is worth fixing regardless of the

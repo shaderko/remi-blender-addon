@@ -402,6 +402,36 @@ def variant_wide(layout, context):
     result_block(layout, context)
 
 
+def variant_adaptive(layout, context):
+    """One column when narrow, more as the sidebar widens — image size is fixed."""
+    common_top(layout, context)
+    layout.separator()
+    items = entries(context)
+    gallery_header(layout, context, items)
+    if not items:
+        layout.label(text="No images yet — generate one above.", icon="INFO")
+        return
+    state = image_state(context)
+    page_size = 6
+    max_page = max(0, (len(items) - 1) // page_size)
+    state.page = min(state.page, max_page)
+    start = state.page * page_size
+    page = items[start:start + page_size]
+    flow = layout.grid_flow(
+        row_major=True, columns=0, even_columns=True, even_rows=True, align=True
+    )
+    for entry in page:
+        image_cell(flow, context, entry, 8.0, "3D")
+    if len(items) > page_size:
+        nav = layout.row(align=True)
+        previous = nav.operator("remi.image_page", text="", icon="TRIA_LEFT")
+        previous.direction = -1
+        nav.label(text=f"{state.page + 1} / {max_page + 1}")
+        following = nav.operator("remi.image_page", text="", icon="TRIA_RIGHT")
+        following.direction = 1
+    result_block(layout, context)
+
+
 # --------------------------------------------------------------------------
 # Panels
 # --------------------------------------------------------------------------
@@ -467,13 +497,23 @@ class GEN_PT_ThreeUp(Panel):
 
 
 class GEN_PT_Wide(Panel):
-    bl_label = "D · 2-up wide (230 px)"
+    bl_label = "D · 2-up wide (208 px)"
     bl_idname = "GEN_PT_Wide"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "GEN"
     bl_options = {"DEFAULT_CLOSED"}
     draw = guarded(variant_wide)
+
+
+class GEN_PT_Adaptive(Panel):
+    bl_label = "E · Adaptive (256 px)"
+    bl_idname = "GEN_PT_Adaptive"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "GEN"
+    bl_options = {"DEFAULT_CLOSED"}
+    draw = guarded(variant_adaptive)
 
 
 CLASSES = (
@@ -484,6 +524,7 @@ CLASSES = (
     GEN_PT_TwoUp,
     GEN_PT_ThreeUp,
     GEN_PT_Wide,
+    GEN_PT_Adaptive,
 )
 
 

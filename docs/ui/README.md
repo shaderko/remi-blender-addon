@@ -23,15 +23,31 @@ to rank states, not to win an argument about pixels.
 
 ## Run the sketch
 
+Three routes, easiest first.
+
+**Double-click `scripts/run-ui-sketch.bat`.** It finds Blender 5.2 (or 5.3/5.1),
+launches it with the sketch, and keeps the console open if something fails.
+
+**Or from a terminal, with absolute paths** — a relative path launched from the
+wrong folder silently opens a normal Blender with no sketch:
+
 ```powershell
 & "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" `
-  --factory-startup --python scripts/ui_sketch.py
+  --factory-startup `
+  --python "C:\Users\skaredko\Documents\projects\personal\remi-cloud\remi-blender-addon\scripts\ui_sketch.py"
 ```
 
-In the 3D viewport press `N`, open the **UI** tab (it sits at the bottom of the
-sidebar strip, below **Remi**), expand **Sketch Control**.
+**Or from inside Blender:** Scripting workspace → Text Editor → **Open** →
+`scripts/ui_sketch.py` → **Run Script** (`Alt+P`). No terminal, errors land in
+the Info bar.
 
-The tab only exists while the script is running — it is not installed into
+In the 3D viewport press `N`. The sidebar tabs run down the **right edge of the
+viewport**, in this order: `Item`, `Tool`, `View`, `Animation`, then whatever
+add-ons registered — **`Remi`** and **`UI`** are added at the bottom. If neither
+`Remi` nor `UI` is there, the script never ran in that session (a normal
+`blender.exe` start has no sketch in it).
+
+The `UI` tab only exists while the script is running — it is not installed into
 Blender. Close Blender and it is gone until you launch it again. If the tab is
 there but the shells are empty, **Sketch Control** shows which Remi copy it
 bound to (`checkout`, or `installed · <module>`) and prints the error if loading

@@ -1,137 +1,115 @@
-# UI shell design pass
+# UI design pass
 
-Two artefacts, both throwaway-safe: this note, the generated census, and the
-sketch playground in `scripts/`. No add-on code is involved.
+Two sketch playgrounds, both throwaway-safe. No add-on code is involved.
 
+- `../../scripts/ui_generate_sketch.py` — **current focus**: four layouts for the
+  Generate workspace (image prompt, thumbnails, 3D source).
+- `../../scripts/ui_sketch.py` — the earlier session-shell variants, **shelved**
+  (see the decision log).
 - [`census-before.md`](census-before.md) — what the sidebar draws today, per state.
 - `../../scripts/ui_census.py` — regenerates that report.
-- `../../scripts/ui_sketch.py` — four candidate shells, live in Blender.
 
-## Run the census
+## Run
 
-```powershell
-& "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" `
-  --factory-startup --background --python scripts/ui_census.py
-```
+Double-click **`scripts/run-ui-sketch.bat`** — it finds Blender 5.3, launches
+with the Generate variants, and keeps the console open on failure. Pass a name
+for the other playground: `run-ui-sketch.bat ui_sketch.py`.
 
-It registers the add-on, draws every state into a recording layout, restores
-what it touched, and rewrites `docs/ui/census-before.md`. Run it again after a
-shell change to compare numbers; keep the `before` copy if you want a diff.
-
-Approximations: 20 px per line, 8 px per box, 6 px per separator. Good enough
-to rank states, not to win an argument about pixels.
-
-## Run the sketch
-
-Three routes, easiest first.
-
-**Double-click `scripts/run-ui-sketch.bat`.** It finds Blender 5.2 (or 5.3/5.1),
-launches it with the sketch, and keeps the console open if something fails.
-
-**Or from a terminal, with absolute paths** — a relative path launched from the
-wrong folder silently opens a normal Blender with no sketch:
+Without the launcher, use absolute paths (a relative `--python` from the wrong
+folder silently opens a normal Blender with no sketch):
 
 ```powershell
-& "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" `
-  --factory-startup `
-  --python "C:\Users\skaredko\Documents\projects\personal\remi-cloud\remi-blender-addon\scripts\ui_sketch.py"
+& "C:\Program Files\Blender Foundation\Blender 5.3 Beta\blender.exe" --factory-startup `
+  --python "C:\Users\skaredko\Documents\projects\personal\remi-cloud\remi-blender-addon\scripts\ui_generate_sketch.py"
 ```
 
-**Or from inside Blender:** Scripting workspace → Text Editor → **Open** →
-`scripts/ui_sketch.py` → **Run Script** (`Alt+P`). No terminal, errors land in
-the Info bar.
+Or inside Blender: Scripting workspace → Text Editor → Open → Run Script.
 
-In the 3D viewport press `N`. The sidebar tabs run down the **right edge of the
-viewport**, in this order: `Item`, `Tool`, `View`, `Animation`, then whatever
-add-ons registered — **`Remi`** and **`UI`** are added at the bottom. If neither
-`Remi` nor `UI` is there, the script never ran in that session (a normal
-`blender.exe` start has no sketch in it).
+Then press `N`: the sidebar tabs run down the right edge of the viewport
+(`Item`, `Tool`, `View`, `Animation`, `Remi`, …). The sketches add a **`GEN`**
+tab next to the add-on's own **`Remi`** tab, so both are one click apart.
 
-The `UI` tab only exists while the script is running — it is not installed into
-Blender. Close Blender and it is gone until you launch it again. If the tab is
-there but the shells are empty, **Sketch Control** shows which Remi copy it
-bound to (`checkout`, or `installed · <module>`) and prints the error if loading
-failed.
+The tabs only exist while a sketch script runs. The `GEN` panels read the real
+scene and the real gallery folder, and their buttons are the production
+operators — a variant can actually drive image generation and 3D creation.
 
-- **Demo** draws candidate shells against fabricated state — no session needed.
-- **Live** draws the same shells against your real `remi_session`, so you can
-  run an actual Repair → Remesh → UV → Bake pass through any variant.
-- **Reload** re-executes the file after you edit it. **Auto** is off by default
-  and starts a file watcher that reloads on save; leave it off unless you want
-  the save-and-repaint loop, because it re-registers panels from a timer.
-- If a copy of Remi is already enabled in this Blender, the sketch reuses it
-  instead of loading a second one. Use `--factory-startup` to guarantee you are
-  looking at the checkout.
+## Generate variants
 
-If Blender freezes, note *where* (right after launch, opening the UI tab, a
-specific shell, a popover) and relaunch without Auto. The default launch now
-runs no background code at all — just panels.
+Measured against the real 5.3 gallery (13 images), with one image selected:
 
-## The four shells
-
-| | Idea | Session rows (Repair) | Trade-off |
+| | Idea | Rows | Widgets |
 |---|---|---|---|
-| **A** | Tiered panel: header, one status line, stage menu, one box of controls, history | 25.4 | Smallest change from today; still one long scroll |
-| **B** | Stage list: every stage a row, only the current one expanded | 27.3 | Best scannability, worst height |
-| **C** | Compact rail: nine rows; the whole stage lives in a floating sheet | 8.3 | Fits one screen; hides parameters one click away |
-| **D** | Checklist: six rows; stage settings open in a modal dialog | 9.3 | Cleanest rail; modal rhythm |
+| **1** | Prompt bar, 3-column thumbnails, one action bar below | 12.5 | 27 |
+| **2** | Three numbered steps: Describe → Pick → Make 3D | 19.8 | 31 |
+| **3** | One large preview, thumbnails as a strip, actions under | 10.8 | 26 |
+| **4** | Compact sidebar + wide floating browser popover | 7.7 (+5.3 sheet) | 12 |
+| today | Prompt, 3×2 cards with two buttons each, detail box, mesh controls | 21.2 | 48 |
 
-Today's session shell, for comparison: **27.6 rows / 552 px** (Repair) and
-**42.6 rows / 852 px** (interactive retopology).
+(20 px per line, approximate; today with nothing selected is 15.8 rows.)
 
-The entry view (no session) and the automatic full-flow view are shared by all
-four, so the comparison is about the manual session loop only.
+What actually differs, beyond height:
+
+- **One button per card.** Today every card carries a play button *and* a select
+  button; the variants keep selection on the card and move 3D to the detail
+  block. Cards become thumbnails again instead of toolbars.
+- **Selection is visible.** Today the selected card uses `box.alert` — a red box.
+  Variants use a radio indicator plus the depress state.
+- **The 3D step has a home.** Variant 2 numbers it; variant 1 puts it under the
+  grid with the mesh controls; variant 4 puts browsing in its own wide surface,
+  where thumbnails can actually be big.
+- **Settings stay one click away** in the add-on's existing gear popover
+  (`Remi_PT_ImageSettings`), reused rather than reimplemented.
 
 ## How to judge
 
-For each shell, capture the same matrix: sidebar at **320 / 420 / 560 px** ×
-`UI scale` **1.0 / 1.5**, in Demo states *Stage (Repair)*, *Stage (Bake)*,
-*Busy*, *Interactive*, and in Live after a real Remesh.
+For each variant, keep the same window width and check:
 
-Look for:
+1. How many thumbnails can you see at once, and are they big enough to recognise?
+2. Which action is primary after selecting an image — Generate 3D, or something
+   else competing with it?
+3. Does the prompt stay reachable while browsing (variant 4 hides it only in the
+   sheet)?
+4. Do you ever have to hunt for settings, or for the image you just made?
+5. Height: does the whole thing fit one screen at 320 px wide?
 
-1. Does the primary action sit on one screen with the status that justifies it?
-2. Which labels truncate at 320 px, and does the truncation hide meaning?
-3. Can you tell which stage you are in without reading a paragraph?
-4. How many clicks/scrolled screens to: start → change stage → run → finish?
-5. Does anything read as two competing primary buttons?
+Also open the **Remi** tab next to `GEN` and flip between them — the comparison
+that matters is against today's layout, on your own gallery.
 
-## Findings that came out of building this
+## Findings so far
 
-- **`feature.draw()` conflates settings and actions.** Every shell that moves
-  the stage to a sheet or dialog ends up with a duplicate run button, because
-  the leaves carry their own. A `draw_settings()` / `draw_actions()` split is a
-  prerequisite for C and D — small, mechanical, and behind the existing seam.
-- **There is no per-stage completion state.** `remi_session` tracks history
-  depth (`step_index`) and the current step name, not which stages ran. Any
-  "done / next" affordance (B and D want one) needs a state addition, so it is
-  a product decision, not just pixels.
-- **Interactive retopology is the worst state in the panel** (42.6 rows) and no
-  shell fixes it: it is a tool with its own viewport workspace, so it probably
-  wants its own surface rather than another tier.
 - **The gallery does filesystem work inside `draw`** (`gallery.refresh`,
-  `Path.is_dir`), which is redraw-time I/O and a UX smell in equal measure.
+  `Path.is_dir`). Cached by token, but still redraw-time I/O; the sketch was
+  written to call the same functions, so this is worth fixing regardless of the
+  winning layout.
+- **Image generation and 3D generation share one surface.** The 3D entry points
+  only exist inside a selected image's detail block, which is why the flow feels
+  scattered rather than sequential.
+- **One gear hides everything.** Model, size, count, seed, negative prompt,
+  Python path, model folder, mesh quality and output all live in
+  `Remi_PT_ImageSettings`; a first-time user sees none of it.
+- **`feature.draw()` conflates settings and actions** (from the session pass).
+  Any layout that relocates stage controls duplicates the run buttons until
+  that seam gets a `draw_settings()` / `draw_actions()` split.
+- **Interactive retopology** (42.6 rows) has no good sidebar treatment; not this
+  pass, but noted.
 
-## Proposed budget for the winning shell
+## Budget proposal
 
 | State | Rows | Rule |
 |---|---|---|
-| Entry | ≤ 8 | one primary |
-| Session, manual | ≤ 16 | one primary, one status line, zero scrolling at 900 px |
-| Busy | ≤ 10 | status + cancel only |
-| Automatic | ≤ 6 | progress + stop |
-| Interactive | own surface | not a sidebar tier |
+| Generate, idle | ≤ 14 | prompt + one primary + thumbnails visible |
+| Generate, one selected | ≤ 18 | detail replaces, never appends |
+| Generate, busy | ≤ 10 | progress + cancel, thumbnails still visible |
+| Browser sheet | own surface | wide enough for 4+ columns |
 
 ## Decision log
 
-Fill this in when a variant is chosen — then port only the shell.
-
 | Question | Decision |
 |---|---|
-| Winning shell | |
-| Tier each control moved to | |
-| Leaf split needed (`draw_settings` / `draw_actions`) | |
-| Per-stage completion state wanted | |
-| Interactive state treatment | |
-| Test assertions to replace | |
-| Shell to port into `main_panel.draw_session` | |
+| Session shells (A–D) | **Rejected** — all felt worse than today; Optimize stays as-is |
+| Generate variant | *(open)* |
+| Keep one gear for settings, or split image/3D | *(open)* |
+| Thumbnails in sidebar or in a sheet | *(open)* |
+| Where the 3D step lives | *(open)* |
+| Port target | `features/images/panel.py: draw_create` + `_draw_gallery` |
+| Test assertions to replace | `tests/blender_workspace_ui_regression.py` (prompt-only, one popover) |

@@ -35,30 +35,25 @@ operators — a variant can actually drive image generation and 3D creation.
 
 ## Generate variants
 
-Measured against the real 5.3 gallery (13 images), with one image selected:
+Driving constraint from the first review: **thumbnails were too small, and they
+should be the control point for 3D generation.** So every card now carries its
+own 3D action and its own progress; there is no separate detail panel to visit.
 
-| | Idea | Rows | Widgets |
+| | Idea | Rows | Preview |
 |---|---|---|---|
-| **1** | Prompt bar, 3-column thumbnails, one action bar below | 12.5 | 27 |
-| **2** | Three numbered steps: Describe → Pick → Make 3D | 19.8 | 31 |
-| **3** | One large preview, thumbnails as a strip, actions under | 10.8 | 26 |
-| **4** | Compact sidebar + wide floating browser popover | 7.7 (+5.3 sheet) | 12 |
-| today | Prompt, 3×2 cards with two buttons each, detail box, mesh controls | 21.2 | 48 |
+| **A** | One full-width card per row; 3D starts from the card | 22.9 | `scale=7` ≈ 220 px |
+| **B** | Two cards per row, same per-card action | 13.5 | `scale=3.2` ≈ 100 px |
+| **C** | One large preview, thumbnails below to switch | 13.1 | hero 7, strip 1.6 |
+| today | 3×2 cards, two buttons each, detail box, mesh controls | 21.2 | `scale=2.4` ≈ 75 px |
 
-(20 px per line, approximate; today with nothing selected is 15.8 rows.)
+Blender note: a scaled preview (`template_icon`) cannot itself be clicked — only
+operators and props are interactive. So the action is a full-width button
+directly under each thumbnail, and all secondary actions (load settings, copy
+prompt, open, delete) shrink to an icon row. Making the image itself a hit
+target would need a custom GPU-drawn popup, which is a different kind of project.
 
-What actually differs, beyond height:
-
-- **One button per card.** Today every card carries a play button *and* a select
-  button; the variants keep selection on the card and move 3D to the detail
-  block. Cards become thumbnails again instead of toolbars.
-- **Selection is visible.** Today the selected card uses `box.alert` — a red box.
-  Variants use a radio indicator plus the depress state.
-- **The 3D step has a home.** Variant 2 numbers it; variant 1 puts it under the
-  grid with the mesh controls; variant 4 puts browsing in its own wide surface,
-  where thumbnails can actually be big.
-- **Settings stay one click away** in the add-on's existing gear popover
-  (`Remi_PT_ImageSettings`), reused rather than reimplemented.
+Thumbnail size is one number per variant (`scale=` in the file) — tell me if 220 px
+is still too small or already too tall.
 
 ## How to judge
 
@@ -107,9 +102,10 @@ that matters is against today's layout, on your own gallery.
 | Question | Decision |
 |---|---|
 | Session shells (A–D) | **Rejected** — all felt worse than today; Optimize stays as-is |
-| Generate variant | *(open)* |
+| Thumbnail size | Must be much larger; currently the main complaint |
+| Thumbnails as 3D control point | Required — per-card action, not a detail panel |
+| Generate variant | *(open: A, B, or C)* |
+| Preview scale | *(open: A/B use one number each)* |
 | Keep one gear for settings, or split image/3D | *(open)* |
-| Thumbnails in sidebar or in a sheet | *(open)* |
-| Where the 3D step lives | *(open)* |
 | Port target | `features/images/panel.py: draw_create` + `_draw_gallery` |
 | Test assertions to replace | `tests/blender_workspace_ui_regression.py` (prompt-only, one popover) |

@@ -23,6 +23,7 @@ import math
 import os
 import shutil
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -481,8 +482,9 @@ class Board:
         self.future = []
         self.strip_hits = []
         self.splat_ready = {}
-        self.splat_cards = {}
         self.splat_previews = {}
+        self.view_3d = {}
+        self.toggle_hits = []
         self.pending_3d = ""
         self.pending_3d_key = ""
         self.text_drag = False
@@ -523,6 +525,20 @@ class Board:
                         self.scales[str(path)] = max(MIN_SCALE, min(MAX_SCALE, float(value)))
                     except (TypeError, ValueError):
                         continue
+            saved_splats = layout.get("splats")
+            if isinstance(saved_splats, dict):
+                for path, name in saved_splats.items():
+                    if (
+                        str(path) in paths
+                        and isinstance(name, str)
+                        and bpy.data.objects.get(name) is not None
+                    ):
+                        self.splat_ready[str(path)] = name
+            saved_views = layout.get("view3d")
+            if isinstance(saved_views, dict):
+                for path, flag in saved_views.items():
+                    if str(path) in paths:
+                        self.view_3d[str(path)] = bool(flag)
             for index, entry in enumerate(entries):
                 path = str(entry.path)
                 if path not in self.positions:
@@ -985,6 +1001,106 @@ def build_splat_preview(obj, size=256):
     return texture, image
 
 
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp"}
+
+
+def import_image_file(context, source):
+    """Register an external image on the board by giving it a gallery job."""
+    source = Path(str(source))
+    if not source.is_file():
+        return None
+    output = Path(bpy.path.abspath(context.scene.remi_image.output))
+    try:
+        output.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    job = output / f"imported_{stamp}_{int(time.time() * 1000) % 1000:03d}"
+    while job.exists():
+        job = output / f"imported_{stamp}_{int(time.time() * 1000) % 1000:03d}"
+    try:
+        job.mkdir()
+        target = job / source.name
+        shutil.copy2(source, target)
+        meta = {
+            "prompt": "",
+            "negative_prompt": "",
+            "model": "imported",
+            "model_label": "Imported",
+            "seed": 0,
+            "width": 0,
+            "height": 0,
+            "images": [{"file": target.name, "seed": 0}],
+        }
+        (job / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+        (job / "complete.json").write_text("{}", encoding="utf-8")
+    except OSError:
+        return None
+    return target
+
+
+def incoming_folder(context):
+    try:
+        output = Path(bpy.path.abspath(context.scene.remi_image.output))
+        folder = output / ".incoming"
+        folder.mkdir(parents=True, exist_ok=True)
+        return folder
+    except OSError:
+        return None
+
+
+def drain_incoming(context):
+    """Import anything dropped into the watched folder."""
+    folder = incoming_folder(context)
+    if folder is None:
+        return 0
+    added = 0
+    for path in list(folder.iterdir()):
+        if not path.is_file() or path.suffix.lower() not in IMAGE_SUFFIXES:
+            continue
+        if import_image_file(context, path) is not None:
+            try:
+                path.unlink()
+            except OSError:
+                pass
+            added += 1
+    return added
+
+
+def paste_image(context):
+    """Paste the clipboard image into the board's Image Editor, then import it."""
+    window = None
+    for candidate in bpy.context.window_manager.windows:
+        if BOARD is not None and candidate.as_pointer() == BOARD.window:
+            window = candidate
+            break
+    if window is None:
+        return False
+    area = next(
+        (item for item in window.screen.areas if item.type == "IMAGE_EDITOR"), None
+    )
+    if area is None:
+        return False
+    try:
+        with context.temp_override(window=window, screen=window.screen, area=area):
+            bpy.ops.image.paste()
+    except Exception:
+        return False
+    space = area.spaces.active
+    image = getattr(space, "image", None)
+    if image is None:
+        return False
+    try:
+        temporary = Path(bpy.app.tempdir or tempfile.gettempdir())
+        temporary = temporary / f"remi_paste_{int(time.time())}.png"
+        image.filepath_raw = str(temporary)
+        image.file_format = "PNG"
+        image.save()
+    except Exception:
+        return False
+    return import_image_file(context, temporary) is not None
+
+
 def splat_for(path):
     try:
         return sys.modules["remi.blender.gaussian_splats"].splat_for_image(path)
@@ -1229,6 +1345,12 @@ def save_layout(context):
         },
         "zoom": round(float(board.zoom), 4),
         "pan": [round(float(board.pan[0]), 2), round(float(board.pan[1]), 2)],
+        "splats": {
+            str(item): name
+            for item, name in board.splat_ready.items()
+            if bpy.data.objects.get(name) is not None
+        },
+        "view3d": {str(item): bool(flag) for item, flag in board.view_3d.items()},
     }
     try:
         data = {}
@@ -1304,6 +1426,9 @@ class REMI_BOARD_OT_run(Operator):
         board.caret = len(board.composer)
         board.anchor = board.caret
         BOARD = board
+        folder = incoming_folder(context)
+        if folder is not None:
+            print(f"Remi board: drag images into {folder} or press Ctrl+V to paste")
         area = context.area
         self._area_x = area.x if area is not None else 0
         self._area_y = area.y if area is not None else 0
@@ -1521,6 +1646,18 @@ class REMI_BOARD_OT_run(Operator):
         if event.type == "ESC" and event.value == "PRESS":
             self._finish(context)
             return {"CANCELLED"}
+
+        if event.ctrl and event.type == "V" and event.value == "PRESS" and not board.focused:
+            if paste_image(context):
+                gallery_module = sys.modules.get("remi.features.images.gallery")
+                if gallery_module is not None:
+                    try:
+                        gallery_module.gallery.invalidate()
+                    except Exception:
+                        pass
+                board.reload(context)
+            self._redraw(context)
+            return {"RUNNING_MODAL"}
 
         if event.type == "MOUSEMOVE":
             if board.text_drag and board.focused:
@@ -1832,6 +1969,14 @@ def board_tick():
     context = bpy.context
     state = context.window_manager.remi_image
     board.ticks += 1
+    if board.ticks % 4 == 0 and drain_incoming(context):
+        gallery_module = sys.modules.get("remi.features.images.gallery")
+        if gallery_module is not None:
+            try:
+                gallery_module.gallery.invalidate()
+            except Exception:
+                pass
+        board.reload(context)
     generation = context.window_manager.remi_generation
     if board.pending_3d and not generation.busy:
         path = board.pending_3d
@@ -1846,20 +1991,10 @@ def board_tick():
                 pass
             board.splat_ready[path] = splat.name
             preview = build_splat_preview(splat)
-            if key and key in board.order:
-                index = board.order.index(key)
-                card = f"splat:{board.counter}"
-                board.counter += 1
-                board.positions[card] = board.positions.pop(key, [0.0, 0.0])
-                board.scales[card] = board.scales.pop(key, 1.0)
-                board.order[index] = card
-                board.splat_cards[card] = {"image": path, "object": splat.name}
-                if preview is not None:
-                    board.splat_previews[card] = preview
-                    board.datablocks.append(preview[1])
-            elif preview is not None:
+            if preview is not None:
                 board.splat_previews[path] = preview
                 board.datablocks.append(preview[1])
+            save_layout(context)
         elif key:
             if key in board.order:
                 board.order.remove(key)

@@ -299,6 +299,78 @@ def caret_from_point(lines, text, x, y, size, text_x, text_top):
     return best
 
 
+def _word_char(char):
+    return char.isalnum() or char == "_"
+
+
+def word_left(text, index):
+    while index > 0 and text[index - 1].isspace():
+        index -= 1
+    if index > 0 and not _word_char(text[index - 1]):
+        while index > 0 and not text[index - 1].isspace() and not _word_char(text[index - 1]):
+            index -= 1
+        return index
+    while index > 0 and _word_char(text[index - 1]):
+        index -= 1
+    return index
+
+
+def word_right(text, index):
+    total = len(text)
+    while index < total and text[index].isspace():
+        index += 1
+    if index < total and not _word_char(text[index]):
+        while index < total and not text[index].isspace() and not _word_char(text[index]):
+            index += 1
+        return index
+    while index < total and _word_char(text[index]):
+        index += 1
+    return index
+
+
+def word_at(text, index):
+    total = len(text)
+    if total == 0:
+        return 0, 0
+    index = max(0, min(index, total - 1))
+    if not _word_char(text[index]):
+        start = index
+        while start > 0 and not _word_char(text[start - 1]) and not text[start - 1].isspace():
+            start -= 1
+        end = index
+        while end < total and not _word_char(text[end]) and not text[end].isspace():
+            end += 1
+        return start, end
+    start = index
+    while start > 0 and _word_char(text[start - 1]):
+        start -= 1
+    end = index
+    while end < total and _word_char(text[end]):
+        end += 1
+    return start, end
+
+
+def push_history(board):
+    board.history.append((board.composer, board.caret, board.anchor))
+    if len(board.history) > 200:
+        board.history.pop(0)
+    board.future.clear()
+
+
+def undo_text(board):
+    if not board.history:
+        return
+    board.future.append((board.composer, board.caret, board.anchor))
+    board.composer, board.caret, board.anchor = board.history.pop()
+
+
+def redo_text(board):
+    if not board.future:
+        return
+    board.history.append((board.composer, board.caret, board.anchor))
+    board.composer, board.caret, board.anchor = board.future.pop()
+
+
 def editor_layout(board, width):
     """Bar rectangle, text origin and visible line count for the current text."""
     bar_w = max(420.0, min(560.0, width - 100.0))
@@ -397,6 +469,10 @@ class Board:
         self.text_top = 0.0
         self.bar_rect = (0.0, 0.0, 0.0, 0.0)
         self.button_rect = (0.0, 0.0, 0.0, 0.0)
+        self.history = []
+        self.future = []
+        self.text_drag = False
+        self.text_clicks = (0.0, 0.0, 0.0, 0)
         self.queue = []
         self.running = ""
         self.pending = []
@@ -966,60 +1042,24 @@ class REMI_BOARD_OT_run(Operator):
             return False
         text = board.composer
         key = event.type
+        ctrl = event.ctrl
+        shift = event.shift
         if key == "ESC":
             board.focused = False
             return True
-        if key == "RETURN":
-            if event.shift:
-                self._replace_selection(board, "\n")
-                self._refresh_text(board)
-            else:
-                submit_current(context)
-            return True
-        if key == "BACK_SPACE":
-            low, high = self._selection(board)
-            if low != high:
-                board.composer = text[:low] + text[high:]
-                board.caret = board.anchor = low
-            elif board.caret > 0:
-                board.composer = text[: board.caret - 1] + text[board.caret :]
-                board.caret -= 1
-                board.anchor = board.caret
-            self._refresh_text(board)
-            return True
-        if key == "DELETE":
-            low, high = self._selection(board)
-            if low != high:
-                board.composer = text[:low] + text[high:]
-                board.caret = board.anchor = low
-            elif board.caret < len(text):
-                board.composer = text[: board.caret] + text[board.caret + 1 :]
-            self._refresh_text(board)
-            return True
-        if key in {"LEFT_ARROW", "RIGHT_ARROW", "UP_ARROW", "DOWN_ARROW", "HOME", "END"}:
-            lines = board.text_lines or wrap_lines(text, TEXT_SIZE, board.text_field_w)
-            if key in {"LEFT_ARROW", "RIGHT_ARROW"}:
-                step = -1 if key == "LEFT_ARROW" else 1
-                board.caret = max(0, min(len(text), board.caret + step))
-            elif key in {"HOME", "END"}:
-                row, _column = caret_line(lines, board.caret)
-                start, end = lines[row]
-                board.caret = start if key == "HOME" else end
-            else:
-                row, _column = caret_line(lines, board.caret)
-                target = max(0, min(len(lines) - 1, row + (-1 if key == "UP_ARROW" else 1)))
-                start, end = lines[target]
-                offset = board.caret - lines[row][0]
-                board.caret = min(start + offset, end)
-            if not event.shift:
-                board.anchor = board.caret
-            self._refresh_text(board)
-            return True
-        if event.ctrl and key == "A":
+        if ctrl and key == "A":
             board.anchor = 0
             board.caret = len(text)
             return True
-        if event.ctrl and key in {"C", "X"}:
+        if ctrl and key == "Z" and not shift:
+            undo_text(board)
+            self._refresh_text(board)
+            return True
+        if (ctrl and key == "Y") or (ctrl and shift and key == "Z"):
+            redo_text(board)
+            self._refresh_text(board)
+            return True
+        if ctrl and key in {"C", "X"}:
             low, high = self._selection(board)
             selected = text[low:high]
             if selected:
@@ -1028,21 +1068,85 @@ class REMI_BOARD_OT_run(Operator):
                 except Exception:
                     pass
                 if key == "X":
+                    push_history(board)
                     board.composer = text[:low] + text[high:]
                     board.caret = board.anchor = low
                     self._refresh_text(board)
             return True
-        if event.ctrl and key == "V":
+        if ctrl and key == "V":
             try:
                 clip = context.window_manager.clipboard or ""
             except Exception:
                 clip = ""
             if clip:
+                push_history(board)
                 self._replace_selection(board, clip)
                 self._refresh_text(board)
             return True
+        if key == "RETURN":
+            if shift:
+                push_history(board)
+                self._replace_selection(board, "\n")
+                self._refresh_text(board)
+            else:
+                submit_current(context)
+            return True
+        if key == "BACK_SPACE":
+            low, high = self._selection(board)
+            if low != high:
+                push_history(board)
+                board.composer = text[:low] + text[high:]
+                board.caret = board.anchor = low
+            elif board.caret > 0:
+                push_history(board)
+                board.composer = text[: board.caret - 1] + text[board.caret :]
+                board.caret -= 1
+                board.anchor = board.caret
+            self._refresh_text(board)
+            return True
+        if key == "DELETE":
+            low, high = self._selection(board)
+            if low != high:
+                push_history(board)
+                board.composer = text[:low] + text[high:]
+                board.caret = board.anchor = low
+            elif board.caret < len(text):
+                push_history(board)
+                board.composer = text[: board.caret] + text[board.caret + 1 :]
+            self._refresh_text(board)
+            return True
+        if key in {"LEFT_ARROW", "RIGHT_ARROW", "UP_ARROW", "DOWN_ARROW", "HOME", "END"}:
+            lines = board.text_lines or wrap_lines(text, TEXT_SIZE, board.text_field_w)
+            if key in {"LEFT_ARROW", "RIGHT_ARROW"}:
+                step = -1 if key == "LEFT_ARROW" else 1
+                if ctrl:
+                    board.caret = (
+                        word_left(text, board.caret)
+                        if step < 0
+                        else word_right(text, board.caret)
+                    )
+                else:
+                    board.caret = max(0, min(len(text), board.caret + step))
+            elif key in {"HOME", "END"}:
+                if ctrl:
+                    board.caret = 0 if key == "HOME" else len(text)
+                else:
+                    row, _column = caret_line(lines, board.caret)
+                    start, end = lines[row]
+                    board.caret = start if key == "HOME" else end
+            else:
+                row, _column = caret_line(lines, board.caret)
+                target = max(0, min(len(lines) - 1, row + (-1 if key == "UP_ARROW" else 1)))
+                start, end = lines[target]
+                offset = board.caret - lines[row][0]
+                board.caret = min(start + offset, end)
+            if not shift:
+                board.anchor = board.caret
+            self._refresh_text(board)
+            return True
         char = getattr(event, "unicode", "")
-        if char and char.isprintable() and not event.ctrl and not event.alt:
+        if char and char.isprintable() and not ctrl and not event.alt:
+            push_history(board)
             self._replace_selection(board, char)
             self._refresh_text(board)
             return True
@@ -1078,6 +1182,18 @@ class REMI_BOARD_OT_run(Operator):
             return {"CANCELLED"}
 
         if event.type == "MOUSEMOVE":
+            if board.text_drag and board.focused:
+                board.caret = caret_from_point(
+                    board.text_lines,
+                    board.composer,
+                    mx,
+                    my,
+                    TEXT_SIZE,
+                    board.text_x,
+                    board.text_top,
+                )
+                self._redraw(context)
+                return {"RUNNING_MODAL"}
             if board.resize_drag is not None:
                 drag = board.resize_drag
                 delta = (mx - drag["start"][0]) / max(1.0, CELL_W * board.zoom)
@@ -1145,7 +1261,7 @@ class REMI_BOARD_OT_run(Operator):
                     submit_current(context)
                 else:
                     board.focused = True
-                    board.caret = caret_from_point(
+                    caret = caret_from_point(
                         board.text_lines,
                         board.composer,
                         mx,
@@ -1154,7 +1270,28 @@ class REMI_BOARD_OT_run(Operator):
                         board.text_x,
                         board.text_top,
                     )
-                    board.anchor = board.caret
+                    last_x, last_y, last_time, count = board.text_clicks
+                    now = time.time()
+                    if now - last_time < 0.4 and abs(mx - last_x) < 8 and abs(my - last_y) < 8:
+                        count = min(count + 1, 3)
+                    else:
+                        count = 1
+                    board.text_clicks = (mx, my, now, count)
+                    if count == 2:
+                        start, end = word_at(board.composer, caret)
+                        board.anchor, board.caret = start, end
+                    elif count >= 3:
+                        lines = board.text_lines or wrap_lines(
+                            board.composer, TEXT_SIZE, board.text_field_w
+                        )
+                        row, _column = caret_line(lines, caret)
+                        start, end = lines[row]
+                        board.anchor, board.caret = start, end
+                    elif event.shift:
+                        board.caret = caret
+                    else:
+                        board.caret = board.anchor = caret
+                    board.text_drag = True
                     self._refresh_text(board)
                 self._redraw(context)
                 return {"RUNNING_MODAL"}
@@ -1207,6 +1344,7 @@ class REMI_BOARD_OT_run(Operator):
             board.card_drag = None
             board.pan_drag = None
             board.resize_drag = None
+            board.text_drag = False
             save_layout(context)
             return {"RUNNING_MODAL"}
 

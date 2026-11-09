@@ -2,16 +2,17 @@
 
     scripts\\run-ui-sketch.bat
 
-A custom NodeTree displayed in a real Node Editor. Nodes carry the pipeline's
-state and call the add-on's existing operators; nothing here replaces the
-add-on UI, and nothing is added to the scene except the results the pipeline
-itself creates (splat object, mesh).
+Prompt ──▶ Generate Image ──▶ [Image card]
+             (appends a card, never overwrites the previous one)
 
-    Prompt ──▶ Generate ──▶ Image ──▶ Splat 3D ──▶ Mesh
-                 (image)              (splats)     (mesh)
+Image ──▶ Generate 3D ──▶ [Splats card]
+            (object pinned to the card)
 
-Long jobs report through the add-on's own state (`remi_image`, `remi_generation`);
-a timer polls until a job finishes and then binds the result to the node.
+Splats ──▶ Mesh
+
+Cards pin their own artifact: a path for images, an object name for splats.
+Re-running a producer appends another card instead of mutating a shared slot, so
+the graph is a board while Remi's runtime slots stay single.
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ from bpy.types import Menu, Node, NodeTree, Operator, Panel
 BOOT = {"source": "not loaded", "error": ""}
 TREE_ID = "RemiImageGraph"
 GRAPH_NAME = "Remi Image Graph"
+CARD_SCALE = 4.5
 
 
 def _script_location():
@@ -141,19 +143,58 @@ def mesh_for(splat):
         return None
 
 
-def newest_since(context, stamp):
-    for entry in entries(context):
-        if entry.created >= stamp - 2.0:
-            return entry
-    return None
-
-
 def redraw():
     try:
         for area in bpy.context.screen.areas:
             area.tag_redraw()
     except Exception:
         pass
+
+
+# --------------------------------------------------------------------------
+# Text resolution: sockets carry values by walking back through the graph
+# --------------------------------------------------------------------------
+
+
+def output_text(socket):
+    node = socket.node
+    name = socket.name
+    if node.bl_idname == "RemiNodePrompt":
+        return node.slot_value(name)
+    if node.bl_idname == "RemiNodeMerge":
+        parts = [input_text(node, "Text 1"), input_text(node, "Text 2")]
+        return node.separator.join(part for part in parts if part.strip())
+    if node.bl_idname == "RemiNodeGenerate":
+        return node.prompt
+    return ""
+
+
+def input_text(node, socket_name):
+    socket = node.inputs.get(socket_name)
+    if socket is None:
+        return ""
+    if socket.is_linked:
+        return output_text(socket.links[0].from_socket)
+    return ""
+
+
+def input_image_path(node, socket_name="Image"):
+    socket = node.inputs.get(socket_name)
+    if socket is None or not socket.is_linked:
+        return ""
+    return image_path_of(socket.links[0].from_node)
+
+
+def image_path_of(node):
+    if node.bl_idname == "RemiNodeImage":
+        return node.path or input_image_path(node)
+    if node.bl_idname == "RemiNodeSplats":
+        return node.image_path or input_image_path(node)
+    if node.bl_idname == "RemiNodeGenerate":
+        return getattr(node, "result_path", "")
+    if node.bl_idname == "RemiNodeSplat":
+        return input_image_path(node)
+    return getattr(node, "path", "")
 
 
 # --------------------------------------------------------------------------
@@ -172,16 +213,13 @@ def graph(create=False):
 
 def seed_graph(tree):
     prompt = tree.nodes.new("RemiNodePrompt")
-    prompt.location = (-360, 120)
+    prompt.location = (-420, 160)
+    merge = tree.nodes.new("RemiNodeMerge")
+    merge.location = (-160, 200)
     generate = tree.nodes.new("RemiNodeGenerate")
-    generate.location = (-40, 80)
-    image = tree.nodes.new("RemiNodeImage")
-    image.location = (260, 80)
-    splat = tree.nodes.new("RemiNodeSplat")
-    splat.location = (560, 80)
-    tree.links.new(prompt.outputs["Prompt"], generate.inputs["Prompt"])
-    tree.links.new(generate.outputs["Image"], image.inputs["Image"])
-    tree.links.new(image.outputs["Image"], splat.inputs["Image"])
+    generate.location = (140, 140)
+    tree.links.new(prompt.outputs["Text 1"], merge.inputs["Text 1"])
+    tree.links.new(merge.outputs["Text"], generate.inputs["Prompt"])
     tree.nodes.active = generate
 
 
@@ -193,28 +231,21 @@ def bind_editor(space, tree):
     return space.node_tree == tree
 
 
-def upstream_node(node, socket_name):
-    socket = node.inputs.get(socket_name)
-    if socket is None or not socket.is_linked:
-        return None
-    return socket.links[0].from_node
+def spawn_image_card(tree, source_node, path, index=0):
+    card = tree.nodes.new("RemiNodeImage")
+    card.location = (source_node.location.x + 420, source_node.location.y - 60 * index)
+    card.path = path
+    tree.links.new(source_node.outputs["Image"], card.inputs["Image"])
+    return card
 
 
-def upstream_image_path(node):
-    source = upstream_node(node, "Image")
-    while source is not None:
-        path = getattr(source, "result_path", "") or getattr(source, "path", "")
-        if path:
-            return path
-        source = upstream_node(source, "Image")
-    return ""
-
-
-def upstream_prompt(node):
-    source = upstream_node(node, "Prompt")
-    if source is not None and getattr(source, "text", ""):
-        return source.text
-    return getattr(node, "prompt", "")
+def spawn_splat_card(tree, source_node, object_name, image_path, index=0):
+    card = tree.nodes.new("RemiNodeSplats")
+    card.location = (source_node.location.x + 420, source_node.location.y - 60 * index)
+    card.object_name = object_name
+    card.image_path = image_path
+    tree.links.new(source_node.outputs["Image"], card.inputs["Image"])
+    return card
 
 
 # --------------------------------------------------------------------------
@@ -229,43 +260,78 @@ class RemiImageGraph(NodeTree):
 
 
 class RemiNodePrompt(Node):
-    """Reusable prompt text."""
+    """Two text slots; each is an input and an output, so prompts compose."""
 
     bl_idname = "RemiNodePrompt"
     bl_label = "Prompt"
     bl_icon = "TEXT"
 
-    text: StringProperty(name="Prompt", default="")
-    negative: StringProperty(name="Negative", default="")
-    seed: IntProperty(name="Seed", default=0, min=0)
+    text1: StringProperty(name="Text 1", default="")
+    text2: StringProperty(name="Text 2", default="")
 
     def init(self, context):
-        self.outputs.new("NodeSocketString", "Prompt")
+        self.inputs.new("NodeSocketString", "Text 1")
+        self.inputs.new("NodeSocketString", "Text 2")
+        self.outputs.new("NodeSocketString", "Text 1")
+        self.outputs.new("NodeSocketString", "Text 2")
+
+    def slot_value(self, name):
+        linked = input_text(self, name)
+        if linked:
+            return linked
+        return self.text1 if name == "Text 1" else self.text2
 
     def draw_buttons(self, context, layout):
-        layout.prop(self, "text", text="")
-        layout.prop(self, "negative", text="")
-        row = layout.row(align=True)
-        row.prop(self, "seed")
-        button = row.operator("remi_nodes.use_seed", text="", icon="FILE_REFRESH")
-        button.node = self.name
+        for name, prop in (("Text 1", "text1"), ("Text 2", "text2")):
+            if self.inputs[name].is_linked:
+                layout.label(text=f"{name}: from link", icon="LINKED")
+            else:
+                layout.prop(self, prop, text="")
+        layout.label(text="two slots, both exposed", icon="INFO")
+
+
+class RemiNodeMerge(Node):
+    """Combine two text streams."""
+
+    bl_idname = "RemiNodeMerge"
+    bl_label = "Merge Text"
+    bl_icon = "SORTALPHA"
+
+    separator: StringProperty(name="Separator", default=", ")
+
+    def init(self, context):
+        self.inputs.new("NodeSocketString", "Text 1")
+        self.inputs.new("NodeSocketString", "Text 2")
+        self.outputs.new("NodeSocketString", "Text")
+
+    def draw_buttons(self, context, layout):
+        layout.prop(self, "separator", text="")
+        preview = self.separator.join(
+            part for part in (input_text(self, "Text 1"), input_text(self, "Text 2")) if part.strip()
+        )
+        if preview:
+            for line in textwrap.wrap(preview, 30)[:2]:
+                layout.label(text=line)
 
 
 class RemiNodeGenerate(Node):
-    """One image generation through remi.generate_image."""
+    """Image generation. Appends an Image card on success."""
 
     bl_idname = "RemiNodeGenerate"
     bl_label = "Generate Image"
     bl_icon = "RENDER_STILL"
 
     prompt: StringProperty(name="Prompt", default="")
-    result_path: StringProperty(name="Result", default="", subtype="FILE_PATH")
+    negative: StringProperty(name="Negative", default="")
     pending: BoolProperty(default=False)
     started: FloatProperty(default=0.0)
     message: StringProperty(default="")
+    runs: IntProperty(default=0)
+    result_path: StringProperty(default="", subtype="FILE_PATH")
 
     def init(self, context):
         self.inputs.new("NodeSocketString", "Prompt")
+        self.inputs.new("NodeSocketString", "Negative")
         self.outputs.new("NodeSocketImage", "Image")
 
     def draw_buttons(self, context, layout):
@@ -277,6 +343,8 @@ class RemiNodeGenerate(Node):
         row.prop(settings, "count", text="")
         if not self.inputs["Prompt"].is_linked:
             layout.prop(self, "prompt", text="")
+        if not self.inputs["Negative"].is_linked and settings.model == "base":
+            layout.prop(self, "negative", text="")
         if self.pending or state.busy:
             layout.progress(
                 factor=float(state.progress),
@@ -288,56 +356,53 @@ class RemiNodeGenerate(Node):
         button.node = self.name
         if self.message:
             layout.label(text=self.message, icon="INFO")
-        if self.result_path:
-            icon = preview_icon(self.result_path)
-            if icon:
-                layout.template_icon(icon_value=icon, scale=1.6)
-            layout.label(text=Path(self.result_path).name)
+        if self.runs:
+            layout.label(text=f"{self.runs} image card(s) made", icon="IMAGE_DATA")
 
 
 class RemiNodeImage(Node):
-    """A concrete image, passed to the next stage."""
+    """A board card: one concrete image, pinned to this node."""
 
     bl_idname = "RemiNodeImage"
     bl_label = "Image"
     bl_icon = "IMAGE_DATA"
 
     path: StringProperty(name="Path", default="", subtype="FILE_PATH")
-    result_path: StringProperty(default="")
 
     def init(self, context):
         self.inputs.new("NodeSocketImage", "Image")
         self.outputs.new("NodeSocketImage", "Image")
 
     def draw_buttons(self, context, layout):
-        linked = self.inputs["Image"].is_linked
-        effective = upstream_image_path(self) if linked else self.path
-        if linked:
-            layout.label(text="From graph", icon="LINKED")
+        pinned = bool(self.path)
+        if pinned:
+            layout.label(text=Path(self.path).name, icon="PINNED")
+        elif self.inputs["Image"].is_linked:
+            layout.label(text="Follows the graph", icon="LINKED")
         else:
-            layout.prop(self, "path", text="")
-            row = layout.row(align=True)
-            row.operator("remi_nodes.use_latest", text="Latest").node = self.name
-            row.operator("remi_nodes.use_selected", text="Selected").node = self.name
+            layout.label(text="Empty card", icon="INFO")
+        effective = self.path or input_image_path(self)
         icon = preview_icon(effective)
         if icon:
-            layout.template_icon(icon_value=icon, scale=2.0)
+            layout.template_icon(icon_value=icon, scale=CARD_SCALE)
         elif effective:
             layout.label(text="No preview", icon="INFO")
+        row = layout.row(align=True)
+        row.operator("remi_nodes.card_pin", text="Pin", icon="PINNED").node = self.name
+        row.operator("remi_nodes.card_open", text="", icon="ZOOM_IN").node = self.name
 
 
 class RemiNodeSplat(Node):
-    """Image → Gaussian splats through remi.generate_splats."""
+    """Image → Gaussian splats. Appends a Splats card on success."""
 
     bl_idname = "RemiNodeSplat"
-    bl_label = "3D Splats"
+    bl_label = "Generate 3D"
     bl_icon = "OUTLINER_OB_POINTCLOUD"
 
-    result_path: StringProperty(default="")
-    object_name: StringProperty(default="")
     pending: BoolProperty(default=False)
     started: FloatProperty(default=0.0)
     message: StringProperty(default="")
+    runs: IntProperty(default=0)
 
     def init(self, context):
         self.inputs.new("NodeSocketImage", "Image")
@@ -345,7 +410,7 @@ class RemiNodeSplat(Node):
 
     def draw_buttons(self, context, layout):
         state = generation_state(context)
-        source = upstream_image_path(self)
+        source = input_image_path(self)
         if not source:
             layout.label(text="Connect an image", icon="INFO")
             return
@@ -353,27 +418,53 @@ class RemiNodeSplat(Node):
         if self.pending or state.busy:
             layout.progress(factor=float(state.progress), type="BAR", text=state.status or "3D…")
             return
-        button = layout.operator("remi_nodes.splat", text="Make 3D", icon="PLAY")
+        button = layout.operator("remi_nodes.splat", text="Generate Splats", icon="PLAY")
         button.node = self.name
         if self.message:
             layout.label(text=self.message, icon="INFO")
-        if self.object_name and self.object_name in bpy.data.objects:
-            row = layout.row(align=True)
-            row.label(text=self.object_name, icon="CHECKMARK")
-            row.operator("remi_nodes.focus", text="", icon="RESTRICT_SELECT_OFF").object_name = self.object_name
-            mesh = mesh_for(splat_for(source)) if source else None
-            if mesh is not None:
-                layout.label(text=f"Mesh · {mesh.name}", icon="MOD_REMESH")
+        if self.runs:
+            layout.label(text=f"{self.runs} splats card(s) made", icon="OUTLINER_OB_POINTCLOUD")
+
+
+class RemiNodeSplats(Node):
+    """A board card for one splat object, pinned by name."""
+
+    bl_idname = "RemiNodeSplats"
+    bl_label = "Splats"
+    bl_icon = "OUTLINER_OB_POINTCLOUD"
+
+    object_name: StringProperty(default="")
+    image_path: StringProperty(default="", subtype="FILE_PATH")
+
+    def init(self, context):
+        self.inputs.new("NodeSocketImage", "Image")
+        self.outputs.new("NodeSocketImage", "Image")
+
+    def draw_buttons(self, context, layout):
+        obj = bpy.data.objects.get(self.object_name) if self.object_name else None
+        if obj is None:
+            layout.label(text="Missing object", icon="ERROR")
+            return
+        row = layout.row(align=True)
+        row.label(text=obj.name, icon="CHECKMARK")
+        row.operator("remi_nodes.focus", text="", icon="RESTRICT_SELECT_OFF").object_name = obj.name
+        if self.image_path:
+            icon = preview_icon(self.image_path)
+            if icon:
+                layout.template_icon(icon_value=icon, scale=1.6)
+        mesh = mesh_for(obj)
+        if mesh is not None:
+            layout.label(text=f"mesh · {mesh.name}", icon="MOD_REMESH")
+        layout.label(text=self.object_name)
 
 
 class RemiNodeMesh(Node):
-    """Splats → mesh through remi.create_mesh."""
+    """Splats → mesh."""
 
     bl_idname = "RemiNodeMesh"
     bl_label = "Mesh"
     bl_icon = "MOD_REMESH"
 
-    object_name: StringProperty(default="")
     pending: BoolProperty(default=False)
     message: StringProperty(default="")
 
@@ -382,7 +473,7 @@ class RemiNodeMesh(Node):
 
     def draw_buttons(self, context, layout):
         state = generation_state(context)
-        source = upstream_image_path(self)
+        source = input_image_path(self)
         splat = splat_for(source) if source else None
         if splat is None:
             layout.label(text="No splats upstream", icon="INFO")
@@ -403,59 +494,59 @@ class RemiNodeMesh(Node):
 
 
 # --------------------------------------------------------------------------
-# Result polling
+# Result polling: bind the job's artifact to the node, append a card
 # --------------------------------------------------------------------------
 
 
-def pending_nodes():
+def all_nodes():
     tree = graph()
-    if tree is None:
-        return []
-    return [node for node in tree.nodes if getattr(node, "pending", False)]
+    return list(tree.nodes) if tree else []
 
 
 def poll_results():
     tree = graph()
     if tree is None:
         return None
-    waiting = pending_nodes()
+    waiting = [node for node in tree.nodes if getattr(node, "pending", False)]
     if not waiting:
         return None
+    context = bpy.context
+    image = image_state(context)
+    generation = generation_state(context)
     changed = False
-    image = image_state(bpy.context)
-    generation = generation_state(bpy.context)
     for node in waiting:
-        if node.bl_idname == "RemiNodeGenerate":
-            if image.busy:
-                continue
-            entry = newest_since(bpy.context, node.started)
+        if node.bl_idname == "RemiNodeGenerate" and not image.busy:
             node.pending = False
+            entry = next(
+                (item for item in entries(context) if item.created >= node.started - 2.0), None
+            )
             if entry is not None:
+                node.runs += 1
                 node.result_path = str(entry.path)
                 node.message = f"done · seed {entry.seed}"
+                spawn_image_card(tree, node, str(entry.path), node.runs - 1)
             else:
-                node.message = image.status or "No result — check the console"
+                node.message = image.status or "No result — check the Info bar"
             changed = True
-        elif node.bl_idname == "RemiNodeSplat":
-            if generation.busy:
-                continue
+        elif node.bl_idname == "RemiNodeSplat" and not generation.busy:
             node.pending = False
-            source = upstream_image_path(node)
+            source = input_image_path(node)
             splat = splat_for(source) if source else None
             if splat is not None:
-                node.object_name = splat.name
+                node.runs += 1
                 node.message = "splats ready"
+                spawn_splat_card(tree, node, splat.name, source, node.runs - 1)
             else:
-                node.message = generation.status or "No splats — check the console"
+                node.message = generation.status or "No splats — check the Info bar"
             changed = True
-        elif node.bl_idname == "RemiNodeMesh":
-            if generation.mesh_busy:
-                continue
+        elif node.bl_idname == "RemiNodeMesh" and not generation.mesh_busy:
             node.pending = False
-            source = upstream_image_path(node)
+            source = input_image_path(node)
             splat = splat_for(source) if source else None
             mesh = mesh_for(splat) if splat is not None else None
-            node.message = f"mesh · {mesh.name}" if mesh is not None else (generation.mesh_status or "No mesh")
+            node.message = f"mesh · {mesh.name}" if mesh is not None else (
+                generation.mesh_status or "No mesh"
+            )
             changed = True
     if changed:
         redraw()
@@ -498,12 +589,16 @@ class RemiNodes_OT_Generate(Operator):
         if node is None:
             self.report({"ERROR"}, "Node not found")
             return {"CANCELLED"}
-        prompt = upstream_prompt(node).strip()
+        prompt = (input_text(node, "Prompt") or node.prompt).strip()
         if not prompt:
             node.message = "No prompt — link a Prompt node or type one"
             redraw()
             return {"CANCELLED"}
-        context.scene.remi_image.prompt = prompt
+        settings = context.scene.remi_image
+        settings.prompt = prompt
+        negative = input_text(node, "Negative") or node.negative
+        if negative and settings.model == "base":
+            settings.negative_prompt = negative
         if not bpy.ops.remi.generate_image.poll():
             node.message = "Blocked — a session or another job is running"
             redraw()
@@ -512,7 +607,6 @@ class RemiNodes_OT_Generate(Operator):
         node.started = time.time()
         node.message = ""
         try:
-            # Modal job operator: invoke, not exec.
             result = bpy.ops.remi.generate_image("INVOKE_DEFAULT")
         except Exception as exc:
             node.pending = False
@@ -527,7 +621,6 @@ class RemiNodes_OT_Generate(Operator):
             return {"CANCELLED"}
         arm_poll()
         redraw()
-        self.report({"INFO"}, "Generating from the graph")
         return {"FINISHED"}
 
 
@@ -535,7 +628,7 @@ class RemiNodes_OT_Splat(Operator):
     """Generate Gaussian splats from the upstream image."""
 
     bl_idname = "remi_nodes.splat"
-    bl_label = "Make Splats From Node"
+    bl_label = "Generate Splats From Node"
     bl_options = {"REGISTER"}
 
     node: StringProperty()
@@ -548,15 +641,14 @@ class RemiNodes_OT_Splat(Operator):
     def execute(self, context):
         node = node_of(self.node)
         if node is None:
-            self.report({"ERROR"}, "Node not found")
             return {"CANCELLED"}
-        source = upstream_image_path(node)
+        source = input_image_path(node)
         if not source or not Path(bpy.path.abspath(source)).is_file():
             node.message = "No image upstream"
             redraw()
             return {"CANCELLED"}
         if not bpy.ops.remi.generate_splats.poll():
-            node.message = "Blocked — finish the current job first"
+            node.message = "Blocked — another job is running"
             redraw()
             return {"CANCELLED"}
         node.pending = True
@@ -577,13 +669,10 @@ class RemiNodes_OT_Splat(Operator):
             return {"CANCELLED"}
         arm_poll()
         redraw()
-        self.report({"INFO"}, "Generating splats from the graph")
         return {"FINISHED"}
 
 
 class RemiNodes_OT_Mesh(Operator):
-    """Create a mesh from the upstream splats."""
-
     bl_idname = "remi_nodes.mesh"
     bl_label = "Create Mesh From Node"
     bl_options = {"REGISTER"}
@@ -598,16 +687,15 @@ class RemiNodes_OT_Mesh(Operator):
     def execute(self, context):
         node = node_of(self.node)
         if node is None:
-            self.report({"ERROR"}, "Node not found")
             return {"CANCELLED"}
-        source = upstream_image_path(node)
+        source = input_image_path(node)
         splat = splat_for(source) if source else None
         if splat is None:
             node.message = "No splats upstream"
             redraw()
             return {"CANCELLED"}
         if not bpy.ops.remi.create_mesh.poll():
-            node.message = "Blocked — finish the current job first"
+            node.message = "Blocked — another job is running"
             redraw()
             return {"CANCELLED"}
         for obj in context.view_layer.objects:
@@ -631,8 +719,49 @@ class RemiNodes_OT_Mesh(Operator):
             return {"CANCELLED"}
         arm_poll()
         redraw()
-        self.report({"INFO"}, "Building the mesh from the graph")
         return {"FINISHED"}
+
+
+class RemiNodes_OT_CardPin(Operator):
+    """Pin a card to the image currently shown."""
+
+    bl_idname = "remi_nodes.card_pin"
+    bl_label = "Pin Image"
+    bl_options = {"REGISTER"}
+
+    node: StringProperty()
+
+    def execute(self, context):
+        node = node_of(self.node)
+        if node is None or node.bl_idname != "RemiNodeImage":
+            return {"CANCELLED"}
+        effective = node.path or input_image_path(node)
+        if not effective:
+            return {"CANCELLED"}
+        node.path = bpy.path.abspath(effective)
+        redraw()
+        return {"FINISHED"}
+
+
+class RemiNodes_OT_CardOpen(Operator):
+    bl_idname = "remi_nodes.card_open"
+    bl_label = "Open Image"
+    bl_options = {"REGISTER"}
+
+    node: StringProperty()
+
+    def execute(self, context):
+        node = node_of(self.node)
+        if node is None:
+            return {"CANCELLED"}
+        path = node.path or input_image_path(node)
+        if not path:
+            return {"CANCELLED"}
+        opener = getattr(bpy.ops.gen, "open_full", None)
+        if opener is None:
+            self.report({"WARNING"}, "Load ui_generate_sketch.py for the full-size viewer")
+            return {"CANCELLED"}
+        return opener(path=bpy.path.abspath(path))
 
 
 class RemiNodes_OT_UseLatest(Operator):
@@ -648,23 +777,6 @@ class RemiNodes_OT_UseLatest(Operator):
         if node is None or not items:
             return {"CANCELLED"}
         node.path = str(items[0].path)
-        redraw()
-        return {"FINISHED"}
-
-
-class RemiNodes_OT_UseSelected(Operator):
-    bl_idname = "remi_nodes.use_selected"
-    bl_label = "Use Selected Image"
-    bl_options = {"REGISTER"}
-
-    node: StringProperty()
-
-    def execute(self, context):
-        node = node_of(self.node)
-        selected = image_state(context).selected
-        if node is None or not selected:
-            return {"CANCELLED"}
-        node.path = bpy.path.abspath(selected)
         redraw()
         return {"FINISHED"}
 
@@ -703,9 +815,43 @@ class RemiNodes_OT_Focus(Operator):
         return {"FINISHED"}
 
 
-# --------------------------------------------------------------------------
-# Editor binding
-# --------------------------------------------------------------------------
+class RemiNodes_OT_SyncBoard(Operator):
+    """Add a pinned card for every image already in the gallery."""
+
+    bl_idname = "remi_nodes.sync_board"
+    bl_label = "Sync Board From Gallery"
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        tree = graph(create=True)
+        pinned = {node.path for node in tree.nodes if node.bl_idname == "RemiNodeImage" and node.path}
+        added = 0
+        for index, entry in enumerate(entries(context)):
+            if str(entry.path) in pinned:
+                continue
+            card = tree.nodes.new("RemiNodeImage")
+            card.location = (-420, -200 - 260 * index)
+            card.path = str(entry.path)
+            added += 1
+        redraw()
+        self.report({"INFO"}, f"Added {added} card(s)")
+        return {"FINISHED"}
+
+
+class RemiNodes_OT_AddNode(Operator):
+    bl_idname = "remi_nodes.add"
+    bl_label = "Add Node"
+    bl_options = {"REGISTER"}
+
+    node_type: StringProperty(default="RemiNodeGenerate")
+
+    def execute(self, context):
+        tree = graph(create=True)
+        node = tree.nodes.new(self.node_type)
+        node.location = (0, -300)
+        tree.nodes.active = node
+        redraw()
+        return {"FINISHED"}
 
 
 class RemiNodes_OT_OpenGraph(Operator):
@@ -754,21 +900,6 @@ class RemiNodes_OT_OpenGraph(Operator):
         return {"FINISHED"}
 
 
-class RemiNodes_OT_AddNode(Operator):
-    bl_idname = "remi_nodes.add"
-    bl_label = "Add Node"
-    bl_options = {"REGISTER"}
-
-    node_type: StringProperty(default="RemiNodeGenerate")
-
-    def execute(self, context):
-        tree = graph(create=True)
-        node = tree.nodes.new(self.node_type)
-        tree.nodes.active = node
-        redraw()
-        return {"FINISHED"}
-
-
 class RemiNodes_MT_Add(Menu):
     bl_idname = "RemiNodes_MT_Add"
     bl_label = "Remi Nodes"
@@ -777,9 +908,11 @@ class RemiNodes_MT_Add(Menu):
         layout = self.layout
         for identifier, label, icon in (
             ("RemiNodePrompt", "Prompt", "TEXT"),
-            ("RemiNodeImage", "Image", "IMAGE_DATA"),
+            ("RemiNodeMerge", "Merge Text", "SORTALPHA"),
+            ("RemiNodeImage", "Image card", "IMAGE_DATA"),
             ("RemiNodeGenerate", "Generate Image", "RENDER_STILL"),
-            ("RemiNodeSplat", "3D Splats", "OUTLINER_OB_POINTCLOUD"),
+            ("RemiNodeSplat", "Generate 3D", "OUTLINER_OB_POINTCLOUD"),
+            ("RemiNodeSplats", "Splats card", "OUTLINER_OB_POINTCLOUD"),
             ("RemiNodeMesh", "Mesh", "MOD_REMESH"),
         ):
             button = layout.operator("remi_nodes.add", text=label, icon=icon)
@@ -804,26 +937,32 @@ class RemiNodes_PT_Panel(Panel):
                 layout.label(text=line, icon="ERROR")
         layout.operator("remi_nodes.open_graph", text="Open Image Graph", icon="NODE")
         layout.menu("RemiNodes_MT_Add", text="Add Node", icon="ADD")
+        layout.operator("remi_nodes.sync_board", text="Sync Board From Gallery", icon="FILE_REFRESH")
         tree = graph()
         if tree is not None:
-            layout.label(text=f"{len(tree.nodes)} nodes", icon="NODETREE")
+            cards = len([n for n in tree.nodes if n.bl_idname in {"RemiNodeImage", "RemiNodeSplats"}])
+            layout.label(text=f"{len(tree.nodes)} nodes · {cards} cards", icon="NODETREE")
 
 
 CLASSES = (
     RemiImageGraph,
     RemiNodePrompt,
+    RemiNodeMerge,
     RemiNodeImage,
     RemiNodeGenerate,
     RemiNodeSplat,
+    RemiNodeSplats,
     RemiNodeMesh,
     RemiNodes_OT_OpenGraph,
     RemiNodes_OT_Generate,
     RemiNodes_OT_Splat,
     RemiNodes_OT_Mesh,
+    RemiNodes_OT_CardPin,
+    RemiNodes_OT_CardOpen,
     RemiNodes_OT_UseLatest,
-    RemiNodes_OT_UseSelected,
     RemiNodes_OT_UseSeed,
     RemiNodes_OT_Focus,
+    RemiNodes_OT_SyncBoard,
     RemiNodes_OT_AddNode,
     RemiNodes_MT_Add,
     RemiNodes_PT_Panel,

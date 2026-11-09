@@ -127,15 +127,17 @@ nodes. Images are loaded as datablocks only for texturing and removed on close.
 | drag a card | move it; a whole selection moves together |
 | drag empty space, or MMB | pan |
 | double-click a card | open that image in **its own window** (Image Editor) |
-| right-click | board menu: Generate 3D, Open Full Size, Select All/None, Close |
-| click the composer | type a prompt; **Enter** or *Create image* starts a generation |
+| click the composer bar | type a prompt; **Enter** or *Create* queues a generation |
 | `A` / `F` / `Esc` | select all / fit board to window / unfocus then close |
 
-The composer bar at the bottom mirrors the reference layout: the selected
-image's thumbnail and prompt sit above the input; model and size are compact
-pills that cycle on click; *Create image* runs `remi.generate_image` and the bar
-shows progress while it runs. When the job finishes the board reloads and the
-new image lands on the canvas as a card.
+The canvas shows images only — no labels, no frames, each drawn at its own
+aspect ratio inside a square cell; selection is an accent outline around the
+image. The composer is a single compact bar, centred and capped at 560 px, with
+a click-positioned caret and no selection-dependent chrome.
+
+Starting a generation immediately places an **empty card** with a progress line;
+pressing *Create* again while a job runs queues the next prompt, and the queue
+advances by itself when the previous image lands.
 
 It draws a grid of 512 px thumbnails at a fixed board size, so zooming in is how
 you inspect detail — same interaction as a node canvas, without the nodes.

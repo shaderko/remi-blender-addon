@@ -291,6 +291,9 @@ class Board:
         self.focused = False
         self.queue = []
         self.running = ""
+        self.pending = []
+        self.counter = 0
+        self.ticks = 0
         self.known = 0
 
     # data ---------------------------------------------------------------
@@ -301,8 +304,11 @@ class Board:
         self.order = [str(entry.path) for entry in entries]
         self.positions = {}
         saved = layout.get("positions") if isinstance(layout, dict) else None
+        paths = {str(entry.path) for entry in entries}
         if isinstance(saved, dict):
             for path, position in saved.items():
+                if str(path) not in paths:
+                    continue
                 if isinstance(position, (list, tuple)) and len(position) == 2:
                     self.positions[str(path)] = [float(position[0]), float(position[1])]
             self.zoom = float(layout.get("zoom", self.zoom))
@@ -337,17 +343,55 @@ class Board:
         bottom = min(position[1] for position in self.positions.values())
         return [left, bottom - CELL_H - GAP]
 
+    def add_pending(self, prompt):
+        key = f"pending:{self.counter}"
+        self.counter += 1
+        self.pending.append({"key": key, "prompt": prompt})
+        self.positions[key] = self.new_slot()
+        self.order.append(key)
+        return key
+
+    def drop_oldest_pending(self):
+        if not self.pending:
+            return None
+        slot = self.pending.pop(0)
+        key = slot["key"]
+        if key in self.order:
+            self.order.remove(key)
+        self.positions.pop(key, None)
+        self.scales.pop(key, None)
+        self.selected.discard(key)
+        return key
+
     def reload(self, context):
         entries = gallery_entries(context)
         known = {str(entry.path) for entry in entries}
         self.entries = entries
         for entry in entries:
             path = str(entry.path)
-            if path not in self.positions:
+            if path in self.positions:
+                if path not in self.order:
+                    self.order.append(path)
+                continue
+            slot = self.pending.pop(0) if self.pending else None
+            if slot is not None:
+                key = slot["key"]
+                self.positions[path] = self.positions.pop(key, self.new_slot())
+                if key in self.scales:
+                    self.scales[path] = self.scales.pop(key)
+                if key in self.order:
+                    self.order[self.order.index(key)] = path
+                else:
+                    self.order.append(path)
+                if key in self.selected:
+                    self.selected.discard(key)
+                    self.selected.add(path)
+            else:
                 self.positions[path] = self.new_slot()
-            if path not in self.order:
                 self.order.append(path)
         for path in list(self.order):
+            if path.startswith("pending:"):
+                continue
             if path not in known:
                 self.order.remove(path)
                 self.positions.pop(path, None)
@@ -521,30 +565,6 @@ def draw_composer(board, width):
     )
 
 
-def placeholder_cards(board, width, height):
-    """Empty cards for jobs that are queued or running."""
-    slots = list(board.queue)
-    if board.running:
-        slots.insert(0, board.running)
-    if not slots:
-        return
-    base_x, base_y = board.new_slot()
-    for offset, prompt in enumerate(slots):
-        bx = base_x
-        by = base_y - offset * (CELL_H + GAP)
-        x = bx * board.zoom + board.pan[0]
-        y = by * board.zoom + board.pan[1]
-        w, h = CELL_W * board.zoom, CELL_H * board.zoom
-        if x + w < 0 or x > width or y + h < 0 or y > height:
-            continue
-        draw_rect(x, y, w, h, EMPTY)
-        label = "generating…" if offset == 0 and board.running else "queued"
-        draw_text(label, x + 12, y + h - 24, 12, DIM)
-        if offset == 0 and board.running:
-            state = bpy.context.window_manager.remi_image
-            draw_rect(x + 12, y + 10, max(2.0, (w - 24) * state.progress), 3.0, ACCENT)
-
-
 def board_draw():
     board = BOARD
     if board is None:
@@ -568,9 +588,23 @@ def board_draw():
     draw_grid(board, width, height)
 
     zoom = board.zoom
+    pulse = 0.5 + 0.5 * math.sin(time.time() * 2.6)
     for path in board.order:
         x, y, w, h = board.card_rect(path)
         if x + w < 0 or x > width or y + h < 0 or y > height:
+            continue
+        if path.startswith("pending:"):
+            grey = 0.13 + 0.055 * pulse
+            draw_rect(x, y, w, h, (grey, grey, grey + 0.008, 1.0))
+            if path in board.selected:
+                thickness = max(1.5, 2.0 * zoom)
+                draw_rect(x, y, w, thickness, ACCENT)
+                draw_rect(x, y, thickness, h, ACCENT)
+                draw_rect(x + w - thickness, y, thickness, h, ACCENT)
+                draw_rect(x, y + h - thickness, w, thickness, ACCENT)
+            if path == board.hover or path in board.selected:
+                handle = max(7.0, 9.0 * zoom)
+                draw_rect(x + w - handle / 2, y - handle / 2, handle, handle, ACCENT)
             continue
         cached = board.texture(path)
         if cached is None:
@@ -637,9 +671,12 @@ def save_layout(context):
         "positions": {
             str(path): [round(float(pos[0]), 2), round(float(pos[1]), 2)]
             for path, pos in board.positions.items()
+            if not str(path).startswith("pending:")
         },
         "scales": {
-            str(path): round(float(value), 4) for path, value in board.scales.items()
+            str(path): round(float(value), 4)
+            for path, value in board.scales.items()
+            if not str(path).startswith("pending:")
         },
         "zoom": round(float(board.zoom), 4),
         "pan": [round(float(board.pan[0]), 2), round(float(board.pan[1]), 2)],
@@ -662,16 +699,22 @@ def start_next(context):
     context.scene.remi_image.prompt = prompt
     if not bpy.ops.remi.generate_image.poll():
         board.queue.clear()
+        while board.pending:
+            board.drop_oldest_pending()
         return
     try:
         result = bpy.ops.remi.generate_image("INVOKE_DEFAULT")
     except Exception:
         board.queue.clear()
+        while board.pending:
+            board.drop_oldest_pending()
         return
     if {"FINISHED", "RUNNING_MODAL"} & set(result):
         board.running = prompt
     else:
         board.queue.clear()
+        while board.pending:
+            board.drop_oldest_pending()
 
 
 # --------------------------------------------------------------------------
@@ -751,10 +794,12 @@ class REMI_BOARD_OT_run(Operator):
         text = board.composer.strip()
         if not text:
             return
+        board.add_pending(text)
         board.queue.append(text)
         board.composer = ""
         board.caret = 0
         start_next(context)
+        save_layout(context)
         self._redraw(context)
 
     def modal(self, context, event):
@@ -892,6 +937,11 @@ class REMI_BOARD_OT_run(Operator):
                 board.pan_drag = (mx, my)
             else:
                 board.raise_card(path)
+                if path.startswith("pending:"):
+                    x, y, _w, _h = board.card_rect(path)
+                    board.card_drag = {"path": path, "dx": mx - x, "dy": my - y}
+                    self._redraw(context)
+                    return {"RUNNING_MODAL"}
                 if event.shift:
                     board.selected.symmetric_difference_update({path})
                 elif path not in board.selected:
@@ -968,23 +1018,27 @@ class REMI_BOARD_OT_run(Operator):
 
 
 def board_tick():
-    """Advance the queue and pick up finished images."""
+    """Pulse pending cards, advance the queue, pick up finished images."""
     board = BOARD
     if board is None:
         return None
     context = bpy.context
     state = context.window_manager.remi_image
-    if not state.busy:
+    board.ticks += 1
+    if not state.busy and board.ticks % 3 == 0:
         entries = gallery_entries(context)
         if len(entries) > board.known:
             board.reload(context)
-        board.running = ""
+            board.running = ""
+        elif board.running:
+            board.drop_oldest_pending()
+            board.running = ""
         start_next(context)
     for window in context.window_manager.windows:
         if window.as_pointer() == board.window:
             for area in window.screen.areas:
                 area.tag_redraw()
-    return 0.5
+    return 0.15
 
 
 # --------------------------------------------------------------------------

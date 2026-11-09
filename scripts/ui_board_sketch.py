@@ -286,9 +286,6 @@ class Board:
         self.card_drag = None
         self.resize_drag = None
         self.last_click = (None, 0.0)
-        self.composer = ""
-        self.caret = 0
-        self.focused = False
         self.queue = []
         self.running = ""
         self.pending = []
@@ -516,52 +513,36 @@ def draw_grid(board, width, height):
 
 
 def draw_composer(board, width):
-    bar_w = max(360.0, min(560.0, width - 120.0))
-    bar_h = 58.0
+    bar_w = max(380.0, min(520.0, width - 120.0))
+    bar_h = 46.0
     x = (width - bar_w) / 2
-    y = 22.0
+    y = 24.0
     draw_rect(x, y, bar_w, bar_h, (0.105, 0.105, 0.115, 0.97))
-    if board.focused:
-        draw_rect(x, y, bar_w, 1.5, ACCENT)
 
-    field_x = x + 14
-    field_w = bar_w - 140
-    text = board.composer
-    size = 13
-    if text:
-        shown = clip_text(text, size, field_w)
-        if board.focused:
-            offset = max(0.0, text_width(text[: board.caret], size) - field_w + 12)
-            draw_text(
-                clip_text(text, size, field_w),
-                field_x - offset,
-                y + 22,
-                size,
-                TEXT,
-            )
-        else:
-            draw_text(shown, field_x, y + 22, size, TEXT)
-    else:
-        draw_text("Describe an image…", field_x, y + 22, size, DIM)
-    if board.focused and (time.time() % 1.0) < 0.55:
-        offset = 0.0
-        if text:
-            offset = max(0.0, text_width(text[: board.caret], size) - field_w + 12)
-        caret = text_width(text[: board.caret], size) - offset
-        draw_rect(field_x + caret + 1, y + 19, 1.4, 17, TEXT)
+    field_x = x + 10
+    field_w = bar_w - 146
+    draw_rect(field_x, y + 8, field_w, 30, (0.075, 0.075, 0.085, 1.0))
+    prompt = bpy.context.scene.remi_image.prompt or ""
+    label = clip_text(prompt, 13, field_w - 18) if prompt else "Describe an image…"
+    draw_text(label, field_x + 9, y + 19, 13, TEXT if prompt else DIM)
 
-    button_w = 112.0
+    button_w = 118.0
     button_x = x + bar_w - button_w - 12
     state = bpy.context.window_manager.remi_image
     busy = state.busy or bool(board.queue)
-    draw_rect(button_x, y + 12, button_w, 34, ACCENT if not busy else (0.24, 0.24, 0.25, 1.0))
-    label = f"{int(state.progress * 100)}%" if state.busy else ("Queued" if busy else "Create")
+    draw_rect(
+        button_x,
+        y + 8,
+        button_w,
+        30,
+        (0.24, 0.24, 0.25, 1.0) if busy else ACCENT,
+    )
     draw_text(
-        label,
-        button_x + 24,
-        y + 23,
+        "Create",
+        button_x + 34,
+        y + 19,
         12,
-        (0.06, 0.06, 0.07, 1.0) if not busy else TEXT,
+        TEXT if busy else (0.06, 0.06, 0.07, 1.0),
     )
 
 
@@ -739,8 +720,6 @@ class REMI_BOARD_OT_run(Operator):
             return {"CANCELLED"}
         board = Board(window)
         board.load(context, gallery_entries(context))
-        board.composer = context.scene.remi_image.prompt or ""
-        board.caret = len(board.composer)
         board.fit()
         BOARD = board
         area = context.area
@@ -769,39 +748,6 @@ class REMI_BOARD_OT_run(Operator):
                 self._area_x, self._area_y = area.x, area.y
         return event.mouse_x - self._area_x, event.mouse_y - self._area_y
 
-    # composer helpers ---------------------------------------------------
-    def _field_rect(self, board):
-        width = board.region[0]
-        bar_w = max(360.0, min(560.0, width - 120.0))
-        x = (width - bar_w) / 2
-        return x + 14, 22.0 + 10, bar_w - 140, 38
-
-    def _caret_from_x(self, board, mx, field_x):
-        size = 13
-        target = mx - field_x
-        best = 0
-        for index in range(len(board.composer) + 1):
-            width = text_width(board.composer[:index], size)
-            if width >= target:
-                return index
-            best = index
-        return best
-
-    def _submit(self, context):
-        board = BOARD
-        if board is None:
-            return
-        text = board.composer.strip()
-        if not text:
-            return
-        board.add_pending(text)
-        board.queue.append(text)
-        board.composer = ""
-        board.caret = 0
-        start_next(context)
-        save_layout(context)
-        self._redraw(context)
-
     def modal(self, context, event):
         board = BOARD
         if board is None:
@@ -815,54 +761,8 @@ class REMI_BOARD_OT_run(Operator):
         mx, my = self._mouse(context, event)
 
         if event.type == "ESC" and event.value == "PRESS":
-            if board.focused:
-                board.focused = False
-                self._redraw(context)
-                return {"RUNNING_MODAL"}
             self._finish(context)
             return {"CANCELLED"}
-
-        if board.focused and event.value == "PRESS":
-            text = board.composer
-            if event.type == "BACK_SPACE":
-                if board.caret > 0:
-                    board.composer = text[: board.caret - 1] + text[board.caret :]
-                    board.caret -= 1
-                self._redraw(context)
-                return {"RUNNING_MODAL"}
-            if event.type == "DELETE":
-                if board.caret < len(text):
-                    board.composer = text[: board.caret] + text[board.caret + 1 :]
-                self._redraw(context)
-                return {"RUNNING_MODAL"}
-            if event.type in {"LEFT_ARROW", "RIGHT_ARROW", "HOME", "END"}:
-                if event.type == "LEFT_ARROW":
-                    board.caret = max(0, board.caret - 1)
-                elif event.type == "RIGHT_ARROW":
-                    board.caret = min(len(text), board.caret + 1)
-                elif event.type == "HOME":
-                    board.caret = 0
-                else:
-                    board.caret = len(text)
-                self._redraw(context)
-                return {"RUNNING_MODAL"}
-            if event.type == "RETURN":
-                self._submit(context)
-                return {"RUNNING_MODAL"}
-            char = getattr(event, "unicode", "")
-            if char and char.isprintable() and not event.ctrl and not event.alt:
-                board.composer = text[: board.caret] + char + text[board.caret :]
-                board.caret += len(char)
-                self._redraw(context)
-                return {"RUNNING_MODAL"}
-            if event.type not in {
-                "MOUSEMOVE",
-                "LEFTMOUSE",
-                "MIDDLEMOUSE",
-                "WHEELUPMOUSE",
-                "WHEELDOWNMOUSE",
-            }:
-                return {"RUNNING_MODAL"}
 
         if event.type == "MOUSEMOVE":
             if board.resize_drag is not None:
@@ -902,21 +802,27 @@ class REMI_BOARD_OT_run(Operator):
             return {"RUNNING_MODAL"}
 
         if event.type == "LEFTMOUSE" and event.value == "PRESS":
-            field_x, field_y, field_w, field_h = self._field_rect(board)
             width = board.region[0]
-            bar_w = max(360.0, min(560.0, width - 120.0))
+            bar_w = max(380.0, min(520.0, width - 120.0))
             bar_x = (width - bar_w) / 2
-            button = (bar_x + bar_w - 124, 34, 112, 34)
-            if field_x <= mx <= field_x + field_w and field_y <= my <= field_y + field_h:
-                board.focused = True
-                board.caret = self._caret_from_x(board, mx, field_x)
+            field_rect = (bar_x + 10, 32, bar_w - 146, 30)
+            button_rect = (bar_x + bar_w - 130, 32, 118, 30)
+            if (
+                field_rect[0] <= mx <= field_rect[0] + field_rect[2]
+                and field_rect[1] <= my <= field_rect[1] + field_rect[3]
+            ):
+                try:
+                    bpy.ops.wm.call_panel(name="REMI_BOARD_PT_composer", keep_open=True)
+                except Exception:
+                    pass
+                return {"RUNNING_MODAL"}
+            if (
+                button_rect[0] <= mx <= button_rect[0] + button_rect[2]
+                and button_rect[1] <= my <= button_rect[1] + button_rect[3]
+            ):
+                submit_current(context)
                 self._redraw(context)
                 return {"RUNNING_MODAL"}
-            if button[0] <= mx <= button[0] + button[2] and button[1] <= my <= button[1] + button[3]:
-                board.focused = False
-                self._submit(context)
-                return {"RUNNING_MODAL"}
-            board.focused = False
             corner = board.resize_target(mx, my)
             if corner is not None:
                 board.raise_card(corner)
@@ -1017,6 +923,21 @@ class REMI_BOARD_OT_run(Operator):
         self._finish(context)
 
 
+def submit_current(context):
+    """Queue the prompt currently in the scene's native text field."""
+    board = BOARD
+    if board is None:
+        return False
+    text = context.scene.remi_image.prompt.strip()
+    if not text:
+        return False
+    board.add_pending(text)
+    board.queue.append(text)
+    save_layout(context)
+    start_next(context)
+    return True
+
+
 def board_tick():
     """Pulse pending cards, advance the queue, pick up finished images."""
     board = BOARD
@@ -1098,6 +1019,53 @@ class REMI_BOARD_OT_open(Operator):
         return {"FINISHED"}
 
 
+class REMI_BOARD_OT_create(Operator):
+    """Queue the prompt from the native field."""
+
+    bl_idname = "remi_board.create"
+    bl_label = "Create Image"
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        if not submit_current(context):
+            self.report({"WARNING"}, "Type a prompt first")
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
+class REMI_BOARD_PT_composer(Panel):
+    """The native prompt field, opened from the board's bottom bar."""
+
+    bl_label = "Prompt"
+    bl_idname = "REMI_BOARD_PT_composer"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "HEADER"
+    bl_ui_units_x = 34
+
+    def draw(self, context):
+        layout = self.layout
+        settings = context.scene.remi_image
+        layout.use_property_split = False
+        layout.prop(settings, "prompt", text="")
+        row = layout.row(align=True)
+        row.prop(settings, "model", text="")
+        row.prop(settings, "size", text="")
+        row = layout.row(align=True)
+        row.prop(settings, "count", text="Images")
+        row.prop(settings, "steps", text="Steps")
+        state = context.window_manager.remi_image
+        if state.busy:
+            layout.progress(
+                factor=float(state.progress),
+                type="BAR",
+                text=f"{int(state.progress * 100)}%",
+            )
+        else:
+            column = layout.column()
+            column.scale_y = 1.4
+            column.operator("remi_board.create", text="Create image", icon="PLAY")
+
+
 class REMI_BOARD_PT_panel(Panel):
     bl_label = "Image board"
     bl_idname = "REMI_BOARD_PT_panel"
@@ -1116,7 +1084,13 @@ class REMI_BOARD_PT_panel(Panel):
         layout.operator("remi_board.open", text="Open Image Board", icon="WINDOW")
 
 
-CLASSES = (REMI_BOARD_OT_run, REMI_BOARD_OT_open, REMI_BOARD_PT_panel)
+CLASSES = (
+    REMI_BOARD_OT_run,
+    REMI_BOARD_OT_open,
+    REMI_BOARD_OT_create,
+    REMI_BOARD_PT_composer,
+    REMI_BOARD_PT_panel,
+)
 
 
 def register():

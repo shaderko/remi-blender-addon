@@ -1748,6 +1748,66 @@ class REMI_BOARD_MT_image(Menu):
         layout.operator("remi_board.delete", text="Delete", icon="TRASH").path = path
 
 
+class REMI_BOARD_OT_workspace(Operator):
+    """Create or switch to a Remi workspace tab."""
+
+    bl_idname = "remi_board.workspace"
+    bl_label = "Open Remi Workspace"
+    bl_description = "Switch to a Remi workspace, creating it the first time"
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        window = context.window
+        if window is None:
+            return {"CANCELLED"}
+        name = "Remi"
+        existing = bpy.data.workspaces.get(name)
+        if existing is not None:
+            window.workspace = existing
+            return {"FINISHED"}
+        before = {workspace.name for workspace in bpy.data.workspaces}
+        try:
+            bpy.ops.workspace.add()
+        except Exception as exc:
+            self.report({"ERROR"}, f"Could not add a workspace: {exc}")
+            return {"CANCELLED"}
+        created = next(
+            (item for item in bpy.data.workspaces if item.name not in before), None
+        )
+        if created is None:
+            self.report({"ERROR"}, "The workspace was not created")
+            return {"CANCELLED"}
+        created.name = name
+        window.workspace = created
+        screen = window.screen
+        if screen is not None:
+            areas = list(screen.areas)
+            if areas:
+                main = max(areas, key=lambda item: item.width * item.height)
+                if main.type != "VIEW_3D":
+                    main.type = "VIEW_3D"
+                space = main.spaces.active
+                if hasattr(space, "show_region_ui"):
+                    space.show_region_ui = True
+        self.report({"INFO"}, "Remi workspace ready")
+        return {"FINISHED"}
+
+
+class REMI_MT_flow(Menu):
+    bl_idname = "REMI_MT_flow"
+    bl_label = "Remi"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("remi_board.workspace", text="Remi Workspace", icon="WINDOW")
+        layout.separator()
+        layout.operator("remi_board.open", text="Image Board in New Window", icon="IMAGE_DATA")
+
+
+def topbar_flow_menu(self, context):
+    self.layout.menu("REMI_MT_flow")
+
+
 class REMI_BOARD_OT_create(Operator):
     """Queue the prompt from the native field."""
 
@@ -1785,7 +1845,9 @@ CLASSES = (
     REMI_BOARD_OT_open,
     REMI_BOARD_OT_create,
     REMI_BOARD_OT_delete,
+    REMI_BOARD_OT_workspace,
     REMI_BOARD_MT_image,
+    REMI_MT_flow,
     REMI_BOARD_PT_panel,
 )
 
@@ -1793,10 +1855,19 @@ CLASSES = (
 def register():
     for cls in CLASSES:
         bpy.utils.register_class(cls)
+    try:
+        bpy.types.TOPBAR_MT_editor_menus.remove(topbar_flow_menu)
+    except Exception:
+        pass
+    bpy.types.TOPBAR_MT_editor_menus.append(topbar_flow_menu)
 
 
 def unregister():
     global BOARD
+    try:
+        bpy.types.TOPBAR_MT_editor_menus.remove(topbar_flow_menu)
+    except Exception:
+        pass
     if bpy.app.timers.is_registered(board_tick):
         bpy.app.timers.unregister(board_tick)
     if BOARD is not None:

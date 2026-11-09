@@ -147,6 +147,8 @@ you inspect detail — same interaction as a node canvas, without the nodes.
 Selection is stored as newline-separated paths on the scene (`remi_board_selection`),
 which is the list a future context-conditioned model would consume.
 
+A Remi menu is appended to the top bar with **Remi Workspace** (creates a workspace tab on first use, then switches to it) and **Image Board in New Window**.
+
 Status: first GPU pass. Geometry, hit-testing and selection are verified
 headlessly; the drawing path and the second-window modal need a real session.
 

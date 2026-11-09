@@ -126,6 +126,7 @@ nodes. Images are loaded as datablocks only for texturing and removed on close.
 | click / shift-click | select one / add to selection |
 | drag a card | move it; a whole selection moves together |
 | drag empty space, or MMB | pan |
+| drag a card's bottom-right corner | resize it uniformly; aspect ratio preserved (0.25x-4x) |
 | double-click a card | open that image in **its own window** (Image Editor) |
 | click the composer bar | type a prompt; **Enter** or *Create* queues a generation |
 | `A` / `F` / `Esc` | select all / fit board to window / unfocus then close |

@@ -18,6 +18,7 @@ removed when the board closes.
 from __future__ import annotations
 
 import importlib.util
+import json
 import math
 import os
 import sys
@@ -32,12 +33,16 @@ from gpu_extras.batch import batch_for_shader
 
 BOOT = {"source": "not loaded", "error": ""}
 SELECTION_KEY = "remi_board_selection"
+LAYOUT_KEY = "remi_board_layout"
 
 CELL_W = 300.0
 CELL_H = 300.0
 GAP = 30.0
 COLUMNS = 4
 THUMB = 512
+RESIZE_PX = 16.0
+MIN_SCALE = 0.25
+MAX_SCALE = 4.0
 
 BG = (0.152, 0.152, 0.158, 1.0)
 DOT = (0.235, 0.235, 0.245, 1.0)
@@ -272,12 +277,14 @@ class Board:
         self.entries = []
         self.order = []
         self.positions = {}
+        self.scales = {}
         self.selected = set()
         self.textures = {}
         self.datablocks = []
         self.region = (1440, 810)
         self.pan_drag = None
         self.card_drag = None
+        self.resize_drag = None
         self.last_click = (None, 0.0)
         self.composer = ""
         self.caret = 0
@@ -287,12 +294,35 @@ class Board:
         self.known = 0
 
     # data ---------------------------------------------------------------
-    def load(self, entries):
+    def load(self, context, entries):
+        layout = load_layout(context)
         self.entries = entries
         self.known = len(entries)
         self.order = [str(entry.path) for entry in entries]
-        for index, entry in enumerate(entries):
-            self.positions[str(entry.path)] = self.grid_position(index)
+        self.positions = {}
+        saved = layout.get("positions") if isinstance(layout, dict) else None
+        if isinstance(saved, dict):
+            for path, position in saved.items():
+                if isinstance(position, (list, tuple)) and len(position) == 2:
+                    self.positions[str(path)] = [float(position[0]), float(position[1])]
+            self.zoom = float(layout.get("zoom", self.zoom))
+            pan = layout.get("pan")
+            if isinstance(pan, (list, tuple)) and len(pan) == 2:
+                self.pan = [float(pan[0]), float(pan[1])]
+            saved_scales = layout.get("scales")
+            if isinstance(saved_scales, dict):
+                for path, value in saved_scales.items():
+                    try:
+                        self.scales[str(path)] = max(MIN_SCALE, min(MAX_SCALE, float(value)))
+                    except (TypeError, ValueError):
+                        continue
+            for index, entry in enumerate(entries):
+                path = str(entry.path)
+                if path not in self.positions:
+                    self.positions[path] = self.new_slot()
+        else:
+            for index, entry in enumerate(entries):
+                self.positions[str(entry.path)] = self.grid_position(index)
 
     @staticmethod
     def grid_position(index):
@@ -300,37 +330,56 @@ class Board:
         row = index // COLUMNS
         return [column * (CELL_W + GAP), -(row * (CELL_H + GAP))]
 
+    def new_slot(self):
+        if not self.positions:
+            return [0.0, 0.0]
+        left = min(position[0] for position in self.positions.values())
+        bottom = min(position[1] for position in self.positions.values())
+        return [left, bottom - CELL_H - GAP]
+
     def reload(self, context):
         entries = gallery_entries(context)
         known = {str(entry.path) for entry in entries}
         self.entries = entries
-        placed = len(self.positions)
         for entry in entries:
             path = str(entry.path)
             if path not in self.positions:
-                self.positions[path] = self.grid_position(placed)
-                placed += 1
+                self.positions[path] = self.new_slot()
             if path not in self.order:
                 self.order.append(path)
         for path in list(self.order):
             if path not in known:
                 self.order.remove(path)
                 self.positions.pop(path, None)
+                self.scales.pop(path, None)
                 self.selected.discard(path)
         self.known = len(entries)
+        save_layout(context)
 
     # geometry -----------------------------------------------------------
-    def cell(self, index):
-        column = index % COLUMNS
-        row = index // COLUMNS
-        bx = column * (CELL_W + GAP)
-        by = -(row * (CELL_H + GAP))
-        return bx * self.zoom + self.pan[0], by * self.zoom + self.pan[1]
+    def scale_of(self, path):
+        return self.scales.get(path, 1.0)
 
     def card_rect(self, path):
-        index = self.order.index(path) if path in self.order else 0
-        x, y = self.cell(index)
-        return x, y, CELL_W * self.zoom, CELL_H * self.zoom
+        x, y = self.positions.get(path, (0.0, 0.0))
+        scale = self.scale_of(path)
+        return (
+            x * self.zoom + self.pan[0],
+            y * self.zoom + self.pan[1],
+            CELL_W * scale * self.zoom,
+            CELL_H * scale * self.zoom,
+        )
+
+    def corner_handle(self, path):
+        x, y, w, _h = self.card_rect(path)
+        return x + w, y
+
+    def resize_target(self, mx, my):
+        for path in reversed(self.order):
+            hx, hy = self.corner_handle(path)
+            if abs(mx - hx) <= RESIZE_PX and abs(my - hy) <= RESIZE_PX:
+                return path
+        return None
 
     def hit(self, mx, my):
         for path in reversed(self.order):
@@ -359,8 +408,9 @@ class Board:
         ys = [self.positions[p][1] for p in self.order if p in self.positions]
         if not xs:
             return
-        left, right = min(xs), max(xs) + CELL_W
-        bottom, top = min(ys), max(ys) + CELL_H
+        right = max(self.positions[p][0] + CELL_W * self.scale_of(p) for p in self.order if p in self.positions)
+        top = max(self.positions[p][1] + CELL_H * self.scale_of(p) for p in self.order if p in self.positions)
+        left, bottom = min(xs), min(ys)
         width, height = self.region
         board_w, board_h = max(1.0, right - left), max(1.0, top - bottom)
         self.zoom = max(0.12, min(width / (board_w + 100), height / (board_h + 200), 1.5))
@@ -476,9 +526,14 @@ def placeholder_cards(board, width, height):
     slots = list(board.queue)
     if board.running:
         slots.insert(0, board.running)
+    if not slots:
+        return
+    base_x, base_y = board.new_slot()
     for offset, prompt in enumerate(slots):
-        index = len(board.order) + offset
-        x, y = board.cell(index)
+        bx = base_x
+        by = base_y - offset * (CELL_H + GAP)
+        x = bx * board.zoom + board.pan[0]
+        y = by * board.zoom + board.pan[1]
         w, h = CELL_W * board.zoom, CELL_H * board.zoom
         if x + w < 0 or x > width or y + h < 0 or y > height:
             continue
@@ -537,6 +592,10 @@ def board_draw():
             draw_rect(draw_x, draw_y, thickness, draw_h, ACCENT)
             draw_rect(draw_x + draw_w - thickness, draw_y, thickness, draw_h, ACCENT)
             draw_rect(draw_x, draw_y + draw_h - thickness, draw_w, thickness, ACCENT)
+        if path == board.hover or path in board.selected:
+            handle = max(7.0, 9.0 * zoom)
+            hx, hy = draw_x + draw_w, draw_y
+            draw_rect(hx - handle / 2, hy - handle / 2, handle, handle, ACCENT)
 
     placeholder_cards(board, width, height)
     draw_composer(board, width)
@@ -557,6 +616,38 @@ def selected_paths(context):
 
 def store_selection(context, paths):
     context.scene[SELECTION_KEY] = "\n".join(sorted(paths))
+
+
+def load_layout(context):
+    raw = context.scene.get(LAYOUT_KEY, "")
+    if not raw:
+        return {}
+    try:
+        data = json.loads(str(raw))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_layout(context):
+    board = BOARD
+    if board is None:
+        return
+    payload = {
+        "positions": {
+            str(path): [round(float(pos[0]), 2), round(float(pos[1]), 2)]
+            for path, pos in board.positions.items()
+        },
+        "scales": {
+            str(path): round(float(value), 4) for path, value in board.scales.items()
+        },
+        "zoom": round(float(board.zoom), 4),
+        "pan": [round(float(board.pan[0]), 2), round(float(board.pan[1]), 2)],
+    }
+    try:
+        context.scene[LAYOUT_KEY] = json.dumps(payload)
+    except Exception:
+        pass
 
 
 def start_next(context):
@@ -604,7 +695,7 @@ class REMI_BOARD_OT_run(Operator):
         if window is None:
             return {"CANCELLED"}
         board = Board(window)
-        board.load(gallery_entries(context))
+        board.load(context, gallery_entries(context))
         board.composer = context.scene.remi_image.prompt or ""
         board.caret = len(board.composer)
         board.fit()
@@ -729,7 +820,13 @@ class REMI_BOARD_OT_run(Operator):
                 return {"RUNNING_MODAL"}
 
         if event.type == "MOUSEMOVE":
-            if board.card_drag is not None:
+            if board.resize_drag is not None:
+                drag = board.resize_drag
+                delta = (mx - drag["start"][0]) / max(1.0, CELL_W * board.zoom)
+                board.scales[drag["path"]] = max(
+                    MIN_SCALE, min(MAX_SCALE, drag["scale"] + delta)
+                )
+            elif board.card_drag is not None:
                 drag = board.card_drag
                 nx = (mx - drag["dx"] - board.pan[0]) / board.zoom
                 ny = (my - drag["dy"] - board.pan[1]) / board.zoom
@@ -740,6 +837,8 @@ class REMI_BOARD_OT_run(Operator):
                 board.pan[0] += mx - board.pan_drag[0]
                 board.pan[1] += my - board.pan_drag[1]
                 board.pan_drag = (mx, my)
+            else:
+                board.hover = board.hit(mx, my)
             self._redraw(context)
             return {"RUNNING_MODAL"}
 
@@ -773,6 +872,18 @@ class REMI_BOARD_OT_run(Operator):
                 self._submit(context)
                 return {"RUNNING_MODAL"}
             board.focused = False
+            corner = board.resize_target(mx, my)
+            if corner is not None:
+                board.raise_card(corner)
+                board.selected = {corner}
+                store_selection(context, board.selected)
+                board.resize_drag = {
+                    "path": corner,
+                    "start": (mx, my),
+                    "scale": board.scale_of(corner),
+                }
+                self._redraw(context)
+                return {"RUNNING_MODAL"}
             path = board.hit(mx, my)
             if path is None:
                 if not event.shift:
@@ -803,6 +914,8 @@ class REMI_BOARD_OT_run(Operator):
         if event.type == "LEFTMOUSE" and event.value == "RELEASE":
             board.card_drag = None
             board.pan_drag = None
+            board.resize_drag = None
+            save_layout(context)
             return {"RUNNING_MODAL"}
 
         if event.type == "A" and event.value == "PRESS":
@@ -813,6 +926,7 @@ class REMI_BOARD_OT_run(Operator):
 
         if event.type == "F" and event.value == "PRESS":
             board.fit()
+            save_layout(context)
             self._redraw(context)
             return {"RUNNING_MODAL"}
 
@@ -826,6 +940,7 @@ class REMI_BOARD_OT_run(Operator):
     def _finish(self, context):
         global BOARD
         board = BOARD
+        save_layout(context)
         if bpy.app.timers.is_registered(board_tick):
             bpy.app.timers.unregister(board_tick)
         if board is not None:
@@ -911,6 +1026,15 @@ class REMI_BOARD_OT_open(Operator):
             space.overlay.show_overlays = False
         except Exception:
             pass
+        try:
+            with context.temp_override(window=window, screen=window.screen, area=area):
+                bpy.ops.screen.header()
+        except Exception:
+            try:
+                with context.temp_override(window=window, screen=window.screen, area=area):
+                    bpy.ops.screen.region_toggle(region="HEADER")
+            except Exception:
+                pass
         try:
             with context.temp_override(window=window, screen=window.screen, area=area):
                 bpy.ops.remi_board.run("INVOKE_DEFAULT")

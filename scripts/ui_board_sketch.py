@@ -29,6 +29,7 @@ from pathlib import Path
 import blf
 import bpy
 import gpu
+import numpy as np
 from bpy.props import StringProperty
 from bpy.types import Menu, Operator, Panel
 from gpu_extras.batch import batch_for_shader
@@ -480,6 +481,7 @@ class Board:
         self.future = []
         self.strip_hits = []
         self.splat_ready = {}
+        self.splat_previews = {}
         self.pending_3d = ""
         self.text_drag = False
         self.text_word_drag = False
@@ -891,6 +893,92 @@ def remove_draw_handlers(board):
         setattr(board, attribute, None)
 
 
+def _blur(buffer, passes=2):
+    for _ in range(passes):
+        buffer = (
+            buffer
+            + np.roll(buffer, 1, 0)
+            + np.roll(buffer, -1, 0)
+            + np.roll(buffer, 1, 1)
+            + np.roll(buffer, -1, 1)
+        ) / 5.0
+    return buffer
+
+
+def project_splats(positions, opacities, sh_dc, matrix, size=256):
+    """Orthographic-ish projection of gaussian centres into an RGBA buffer."""
+    points = np.asarray(positions, dtype=np.float64)
+    if points.size == 0:
+        return None
+    world = points @ np.asarray(matrix)[:3, :3].T + np.asarray(matrix)[:3, 3]
+    centre = (world.min(axis=0) + world.max(axis=0)) * 0.5
+    extent = float(np.max(world.max(axis=0) - world.min(axis=0)))
+    if extent <= 0.0:
+        return None
+    points = (world - centre) / extent
+
+    view = np.array([0.75, -1.0, 0.45])
+    view /= np.linalg.norm(view)
+    right = np.cross(np.array([0.0, 0.0, 1.0]), view)
+    right /= max(np.linalg.norm(right), 1e-8)
+    up = np.cross(view, right)
+    distance = 1.6
+    depth = np.maximum(distance - points @ view, 0.05)
+    focal = 2.6
+    pixel_x = ((points @ right) / depth * focal * 0.5 + 0.5) * size
+    pixel_y = ((points @ up) / depth * focal * 0.5 + 0.5) * size
+
+    rgb = np.clip(np.asarray(sh_dc, dtype=np.float64) * 0.28209479177387814 + 0.5, 0.0, 1.0)
+    linear = np.where(rgb <= 0.04045, rgb / 12.92, ((rgb + 0.055) / 1.055) ** 2.4)
+    weight = np.clip(np.asarray(opacities, dtype=np.float64), 0.0, 1.0) / depth
+
+    xs = np.clip(pixel_x.astype(np.int32), 0, size - 1)
+    ys = np.clip(pixel_y.astype(np.int32), 0, size - 1)
+    colour_buffer = np.zeros((size, size, 3), dtype=np.float64)
+    weight_buffer = np.zeros((size, size), dtype=np.float64)
+    for channel in range(3):
+        np.add.at(colour_buffer[:, :, channel], (ys, xs), linear[:, channel] * weight)
+    np.add.at(weight_buffer, (ys, xs), weight)
+
+    colour_buffer = _blur(colour_buffer)
+    weight_buffer = _blur(weight_buffer)
+    alpha = np.clip(weight_buffer / max(weight_buffer.max(), 1e-8), 0.0, 1.0)
+    normalised = colour_buffer / np.maximum(weight_buffer, 1e-8)[:, :, None]
+    background = 0.02
+    final = normalised * alpha[:, :, None] + background * (1.0 - alpha[:, :, None])
+    return np.concatenate([final, alpha[:, :, None]], axis=2).astype(np.float32)
+
+
+def build_splat_preview(obj, size=256):
+    """Project the splat cloud into a texture for the board."""
+    module = sys.modules.get("remi.blender.gaussian_splats")
+    if module is None:
+        return None
+    try:
+        arrays = module.splat_arrays(obj)
+    except Exception:
+        return None
+    positions = np.asarray(arrays["positions"], dtype=np.float64)
+    opacities = np.asarray(arrays["opacities"], dtype=np.float64)
+    sh_dc = np.asarray(arrays["sh_dc"], dtype=np.float64)
+    if len(positions) > 60000:
+        index = np.linspace(0, len(positions) - 1, 60000).astype(int)
+        positions = positions[index]
+        opacities = opacities[index]
+        sh_dc = sh_dc[index]
+    rgba = project_splats(positions, opacities, sh_dc, np.array(obj.matrix_world), size)
+    if rgba is None:
+        return None
+    image = bpy.data.images.new(f"remi preview {obj.name}", size, size, alpha=True)
+    image.pixels.foreach_set(rgba.ravel())
+    try:
+        texture = gpu.texture.from_image(image)
+    except Exception:
+        bpy.data.images.remove(image)
+        return None
+    return texture, image
+
+
 def splat_for(path):
     try:
         return sys.modules["remi.blender.gaussian_splats"].splat_for_image(path)
@@ -1030,6 +1118,13 @@ def board_draw():
             draw_rect(draw_x + draw_w - thickness, draw_y, thickness, draw_h, ACCENT)
             draw_rect(draw_x, draw_y + draw_h - thickness, draw_w, thickness, ACCENT)
         if path in board.splat_ready:
+            preview = board.splat_previews.get(path)
+            if preview is not None:
+                inset = max(56.0, min(120.0, 90.0 * zoom))
+                px = x + w - inset - 10
+                py = y + h - inset - 10
+                draw_rect(px - 3, py - 3, inset + 6, inset + 6, (0.06, 0.06, 0.07, 1.0))
+                draw_image(preview[0], px, py, inset, inset)
             draw_text("3D", x + 8, y + 8, 11, ACCENT)
         if path == board.hover or path in board.selected:
             handle = max(7.0, 9.0 * zoom)
@@ -1725,6 +1820,10 @@ def board_tick():
             except Exception:
                 pass
             board.splat_ready[path] = splat.name
+            preview = build_splat_preview(splat)
+            if preview is not None:
+                board.splat_previews[path] = preview
+                board.datablocks.append(preview[1])
     if not state.busy and board.ticks % 3 == 0:
         entries = gallery_entries(context)
         if len(entries) > board.known:

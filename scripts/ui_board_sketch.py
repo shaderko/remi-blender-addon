@@ -472,6 +472,7 @@ class Board:
         self.history = []
         self.future = []
         self.text_drag = False
+        self.text_word_drag = False
         self.text_clicks = (0.0, 0.0, 0.0, 0)
         self.queue = []
         self.running = ""
@@ -1005,6 +1006,7 @@ class REMI_BOARD_OT_run(Operator):
         return {"RUNNING_MODAL"}
 
     def _mouse(self, context, event):
+        """Window coordinates converted to the region we actually draw in."""
         window = None
         for candidate in bpy.context.window_manager.windows:
             if BOARD is not None and candidate.as_pointer() == BOARD.window:
@@ -1016,7 +1018,14 @@ class REMI_BOARD_OT_run(Operator):
             if area is None and areas:
                 area = max(areas, key=lambda item: item.width * item.height)
             if area is not None:
-                self._area_x, self._area_y = area.x, area.y
+                region = next(
+                    (item for item in area.regions if item.type == "WINDOW"), None
+                )
+                if region is not None:
+                    self._area_x = area.x + region.x
+                    self._area_y = area.y + region.y
+                else:
+                    self._area_x, self._area_y = area.x, area.y
         return event.mouse_x - self._area_x, event.mouse_y - self._area_y
 
     def _selection(self, board):
@@ -1090,6 +1099,22 @@ class REMI_BOARD_OT_run(Operator):
                 self._refresh_text(board)
             else:
                 submit_current(context)
+            return True
+        if ctrl and key in {"BACK_SPACE", "DELETE"}:
+            low, high = self._selection(board)
+            push_history(board)
+            if low != high:
+                board.composer = text[:low] + text[high:]
+                board.caret = board.anchor = low
+            elif key == "BACK_SPACE":
+                start = word_left(text, board.caret)
+                board.composer = text[:start] + text[board.caret :]
+                board.caret = board.anchor = start
+            else:
+                end = word_right(text, board.caret)
+                board.composer = text[: board.caret] + text[end:]
+                board.caret = board.anchor = board.caret
+            self._refresh_text(board)
             return True
         if key == "BACK_SPACE":
             low, high = self._selection(board)
@@ -1183,7 +1208,7 @@ class REMI_BOARD_OT_run(Operator):
 
         if event.type == "MOUSEMOVE":
             if board.text_drag and board.focused:
-                board.caret = caret_from_point(
+                caret = caret_from_point(
                     board.text_lines,
                     board.composer,
                     mx,
@@ -1192,6 +1217,11 @@ class REMI_BOARD_OT_run(Operator):
                     board.text_x,
                     board.text_top,
                 )
+                if board.text_word_drag:
+                    start, end = word_at(board.composer, caret)
+                    board.caret = end if caret >= board.anchor else start
+                else:
+                    board.caret = caret
                 self._redraw(context)
                 return {"RUNNING_MODAL"}
             if board.resize_drag is not None:
@@ -1253,7 +1283,8 @@ class REMI_BOARD_OT_run(Operator):
             return {"RUNNING_MODAL"}
 
         if event.type == "LEFTMOUSE" and event.value == "PRESS":
-            editor_layout(board, board.region[0])
+            if not board.bar_rect[2]:
+                editor_layout(board, board.region[0])
             bx, by, bw, bh = board.bar_rect
             if bx <= mx <= bx + bw and by <= my <= by + bh:
                 btx, bty, btw, bth = board.button_rect
@@ -1292,7 +1323,15 @@ class REMI_BOARD_OT_run(Operator):
                     else:
                         board.caret = board.anchor = caret
                     board.text_drag = True
+                    board.text_word_drag = count == 2
                     self._refresh_text(board)
+                    if os.environ.get("REMI_BOARD_DEBUG"):
+                        print(
+                            f"board click mx={mx:.1f} my={my:.1f} "
+                            f"bar={tuple(round(v) for v in board.bar_rect)} "
+                            f"text_top={board.text_top:.1f} caret={caret} "
+                            f"len={len(board.composer)}"
+                        )
                 self._redraw(context)
                 return {"RUNNING_MODAL"}
             board.focused = False
@@ -1345,6 +1384,7 @@ class REMI_BOARD_OT_run(Operator):
             board.pan_drag = None
             board.resize_drag = None
             board.text_drag = False
+            board.text_word_drag = False
             save_layout(context)
             return {"RUNNING_MODAL"}
 

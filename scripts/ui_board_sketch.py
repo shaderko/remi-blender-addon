@@ -52,6 +52,7 @@ MAX_LINES = 7
 BAR_PAD = 12.0
 TEXT_PAD = 10.0
 BUTTON_W = 112.0
+BUTTON3_W = 104.0
 BUTTON_H = 28.0
 
 BG = (0.152, 0.152, 0.158, 1.0)
@@ -373,8 +374,8 @@ def redo_text(board):
 
 def editor_layout(board, width):
     """Bar rectangle, text origin and visible line count for the current text."""
-    bar_w = max(420.0, min(560.0, width - 100.0))
-    field_w = bar_w - 2 * BAR_PAD
+    bar_w = max(520.0, min(680.0, width - 100.0))
+    field_w = bar_w - 2 * BAR_PAD - BUTTON_W - BUTTON3_W - 30
     lines = wrap_lines(board.composer, TEXT_SIZE, field_w)
     visible = max(MIN_LINES, min(len(lines), MAX_LINES))
     text_h = visible * LINE_H
@@ -391,6 +392,12 @@ def editor_layout(board, width):
         x + bar_w - BAR_PAD - BUTTON_W,
         y + BAR_PAD - 2,
         BUTTON_W,
+        BUTTON_H,
+    )
+    board.button3d_rect = (
+        board.button_rect[0] - BUTTON3_W - 8,
+        board.button_rect[1],
+        BUTTON3_W,
         BUTTON_H,
     )
     return lines
@@ -472,6 +479,8 @@ class Board:
         self.history = []
         self.future = []
         self.strip_hits = []
+        self.splat_ready = {}
+        self.pending_3d = ""
         self.text_drag = False
         self.text_word_drag = False
         self.text_clicks = (0.0, 0.0, 0.0, 0)
@@ -733,9 +742,14 @@ def draw_selection_strip(board, width):
     gap = 6.0
     x = bx
     single = len(selected) == 1
-    button_w = 46.0
+    button_w = 54.0
     button_h = 24.0
-    reserve = 2 * (button_w + 6) + 12 if single else 0.0
+    buttons = []
+    if single:
+        buttons = [("copy", "Copy"), ("use", "Use")]
+        if selected[0] in board.splat_ready:
+            buttons.append(("add3d", "Add 3D"))
+    reserve = len(buttons) * (button_w + 6) + 12 if single else 0.0
     limit = bx + bw - reserve
     shown = 0
     for path in selected:
@@ -773,17 +787,16 @@ def draw_selection_strip(board, width):
         return
     path = selected[0]
     prompt = prompt_for(board, path)
-    use_x = bx + bw - button_w
-    copy_x = use_x - button_w - 6
-    text_x = x
-    text_limit = copy_x - 10 - text_x
-    label = clip_text(prompt, 11, text_limit) if prompt else "(no prompt saved)"
-    draw_text(label, text_x, y + 15, 11, TEXT if prompt else DIM)
-    for offset, (action, caption) in enumerate((("copy", "Copy"), ("use", "Use"))):
-        bx0 = copy_x + offset * (button_w + 6)
+    right = bx + bw
+    for action, caption in reversed(buttons):
+        bx0 = right - button_w
         draw_rect(bx0, y + 8, button_w, button_h, (0.19, 0.19, 0.2, 1.0))
-        draw_text(caption, bx0 + 11, y + 16, 11, TEXT)
+        draw_text(caption, bx0 + 10, y + 16, 11, TEXT)
         board.strip_hits.append(((bx0, y + 8, button_w, button_h), action, path))
+        right = bx0 - 6
+    text_limit = right - 10 - x
+    label = clip_text(prompt, 11, max(40.0, text_limit)) if prompt else "(no prompt saved)"
+    draw_text(label, x, y + 15, 11, TEXT if prompt else DIM)
 
 
 def draw_composer(board, width):
@@ -845,6 +858,7 @@ def draw_composer(board, width):
 
     bx, by, bw, bh = board.button_rect
     state = bpy.context.window_manager.remi_image
+    generation = bpy.context.window_manager.remi_generation
     busy = state.busy or bool(board.queue)
     draw_rect(bx, by, bw, bh, (0.24, 0.24, 0.25, 1.0) if busy else ACCENT)
     draw_text(
@@ -855,6 +869,75 @@ def draw_composer(board, width):
         TEXT if busy else (0.06, 0.06, 0.07, 1.0),
     )
 
+    x3, y3, w3, h3 = board.button3d_rect
+    ready = len(board.selected) == 1 and not generation.busy and not board.pending_3d
+    draw_rect(x3, y3, w3, h3, (0.2, 0.2, 0.21, 1.0) if ready else (0.15, 0.15, 0.16, 1.0))
+    label = "3D…" if (generation.busy or board.pending_3d) else "Create 3D"
+    draw_text(label, x3 + 18, y3 + 8, 12, TEXT if ready else DIM)
+
+
+def remove_draw_handlers(board):
+    for space_type, attribute in (
+        (bpy.types.SpaceView3D, "_handle"),
+        (bpy.types.SpaceImageEditor, "_handle_image"),
+    ):
+        handle = getattr(board, attribute, None)
+        if handle is None:
+            continue
+        try:
+            space_type.draw_handler_remove(handle, "WINDOW")
+        except Exception:
+            pass
+        setattr(board, attribute, None)
+
+
+def splat_for(path):
+    try:
+        return sys.modules["remi.blender.gaussian_splats"].splat_for_image(path)
+    except Exception:
+        return None
+
+
+def start_splat(context):
+    """Generate 3D for the single selected image; it stays hidden until added."""
+    board = BOARD
+    if board is None or len(board.selected) != 1:
+        return False
+    path = next(iter(board.selected))
+    if path.startswith("pending:"):
+        return False
+    if not bpy.ops.remi.generate_splats.poll():
+        return False
+    try:
+        result = bpy.ops.remi.generate_splats("INVOKE_DEFAULT", image_path=path)
+    except Exception:
+        return False
+    if {"FINISHED", "RUNNING_MODAL"} & set(result):
+        board.pending_3d = path
+        return True
+    return False
+
+
+def add_splat_to_scene(context, path):
+    board = BOARD
+    if board is None:
+        return False
+    name = board.splat_ready.get(path)
+    obj = bpy.data.objects.get(name) if name else splat_for(path)
+    if obj is None:
+        return False
+    try:
+        obj.hide_set(False)
+        obj.hide_viewport = False
+    except Exception:
+        pass
+    for other in context.view_layer.objects:
+        other.select_set(False)
+    obj.select_set(True)
+    context.view_layer.objects.active = obj
+    board.splat_ready[path] = obj.name
+    return True
+
 
 def run_strip_action(context, action, path):
     board = BOARD
@@ -864,6 +947,9 @@ def run_strip_action(context, action, path):
         board.raise_card(path)
         board.selected = {path}
         store_selection(context, board.selected)
+        return
+    if action == "add3d":
+        add_splat_to_scene(context, path)
         return
     prompt = prompt_for(board, path)
     if not prompt:
@@ -943,6 +1029,8 @@ def board_draw():
             draw_rect(draw_x, draw_y, thickness, draw_h, ACCENT)
             draw_rect(draw_x + draw_w - thickness, draw_y, thickness, draw_h, ACCENT)
             draw_rect(draw_x, draw_y + draw_h - thickness, draw_w, thickness, ACCENT)
+        if path in board.splat_ready:
+            draw_text("3D", x + 8, y + 8, 11, ACCENT)
         if path == board.hover or path in board.selected:
             handle = max(7.0, 9.0 * zoom)
             hx, hy = draw_x + draw_w, draw_y
@@ -1104,6 +1192,12 @@ class REMI_BOARD_OT_run(Operator):
         board._handle = bpy.types.SpaceView3D.draw_handler_add(
             board_draw, (), "WINDOW", "POST_PIXEL"
         )
+        try:
+            board._handle_image = bpy.types.SpaceImageEditor.draw_handler_add(
+                board_draw, (), "WINDOW", "POST_PIXEL"
+            )
+        except Exception:
+            board._handle_image = None
         if not bpy.app.timers.is_registered(board_tick):
             bpy.app.timers.register(board_tick, first_interval=0.5)
         context.window_manager.modal_handler_add(self)
@@ -1118,7 +1212,7 @@ class REMI_BOARD_OT_run(Operator):
                 break
         if window is not None:
             areas = list(window.screen.areas)
-            area = next((item for item in areas if item.type == "VIEW_3D"), None)
+            area = next((item for item in areas if item.type in {"IMAGE_EDITOR", "VIEW_3D"}), None)
             if area is None and areas:
                 area = max(areas, key=lambda item: item.width * item.height)
             if area is not None:
@@ -1400,8 +1494,11 @@ class REMI_BOARD_OT_run(Operator):
             bx, by, bw, bh = board.bar_rect
             if bx <= mx <= bx + bw and by <= my <= by + bh:
                 btx, bty, btw, bth = board.button_rect
+                x3, y3, w3, h3 = board.button3d_rect
                 if btx <= mx <= btx + btw and bty <= my <= bty + bth:
                     submit_current(context)
+                elif x3 <= mx <= x3 + w3 and y3 <= my <= y3 + h3:
+                    start_splat(context)
                 else:
                     board.focused = True
                     caret = caret_from_point(
@@ -1526,10 +1623,14 @@ class REMI_BOARD_OT_run(Operator):
         if bpy.app.timers.is_registered(board_tick):
             bpy.app.timers.unregister(board_tick)
         if board is not None:
-            try:
-                bpy.types.SpaceView3D.draw_handler_remove(board._handle, "WINDOW")
-            except Exception:
-                pass
+            remove_draw_handlers(board)
+            for name in list(board.splat_ready.values()):
+                preview = bpy.data.objects.get(name)
+                if preview is not None and preview.hide_viewport:
+                    try:
+                        bpy.data.objects.remove(preview, do_unlink=True)
+                    except Exception:
+                        pass
             board.cleanup()
             window = None
             for candidate in bpy.context.window_manager.windows:
@@ -1613,6 +1714,17 @@ def board_tick():
     context = bpy.context
     state = context.window_manager.remi_image
     board.ticks += 1
+    generation = context.window_manager.remi_generation
+    if board.pending_3d and not generation.busy:
+        path = board.pending_3d
+        board.pending_3d = ""
+        splat = splat_for(path)
+        if splat is not None:
+            try:
+                splat.hide_viewport = True
+            except Exception:
+                pass
+            board.splat_ready[path] = splat.name
     if not state.busy and board.ticks % 3 == 0:
         entries = gallery_entries(context)
         if len(entries) > board.known:
@@ -1659,11 +1771,17 @@ class REMI_BOARD_OT_open(Operator):
             self.report({"ERROR"}, "The new window was not found")
             return {"CANCELLED"}
         area = max(window.screen.areas, key=lambda item: item.width * item.height)
-        if area.type != "VIEW_3D":
-            area.type = "VIEW_3D"
+        if area.type != "IMAGE_EDITOR":
+            area.type = "IMAGE_EDITOR"
         space = area.spaces.active
+        try:
+            space.image = None
+        except Exception:
+            pass
         if hasattr(space, "show_region_ui"):
             space.show_region_ui = False
+        if hasattr(space, "show_region_toolbar"):
+            space.show_region_toolbar = False
         try:
             space.overlay.show_overlays = False
         except Exception:
@@ -1748,68 +1866,6 @@ class REMI_BOARD_MT_image(Menu):
         layout.operator("remi_board.delete", text="Delete", icon="TRASH").path = path
 
 
-class REMI_BOARD_OT_workspace(Operator):
-    """Create or switch to a Remi workspace tab."""
-
-    bl_idname = "remi_board.workspace"
-    bl_label = "Open Remi Workspace"
-    bl_description = "Switch to a Remi workspace, creating it the first time"
-    bl_options = {"REGISTER"}
-
-    def execute(self, context):
-        window = context.window
-        name = "Remi"
-        existing = bpy.data.workspaces.get(name)
-        if existing is not None:
-            if window is not None:
-                window.workspace = existing
-            return {"FINISHED"}
-        before = {workspace.name for workspace in bpy.data.workspaces}
-        try:
-            # add() only opens the add-workspace menu; duplicate() creates the tab.
-            bpy.ops.workspace.duplicate()
-        except Exception as exc:
-            self.report({"ERROR"}, f"Could not duplicate a workspace: {exc}")
-            return {"CANCELLED"}
-        created = next(
-            (item for item in bpy.data.workspaces if item.name not in before), None
-        )
-        if created is None:
-            self.report({"ERROR"}, "The workspace was not created")
-            return {"CANCELLED"}
-        created.name = name
-        if window is None:
-            return {"FINISHED"}
-        window.workspace = created
-        screen = window.screen
-        if screen is not None:
-            areas = list(screen.areas)
-            if areas:
-                main = max(areas, key=lambda item: item.width * item.height)
-                if main.type != "VIEW_3D":
-                    main.type = "VIEW_3D"
-                space = main.spaces.active
-                if hasattr(space, "show_region_ui"):
-                    space.show_region_ui = True
-        self.report({"INFO"}, "Remi workspace ready")
-        return {"FINISHED"}
-
-
-class REMI_MT_flow(Menu):
-    bl_idname = "REMI_MT_flow"
-    bl_label = "Remi"
-
-    def draw(self, context):
-        layout = self.layout
-        layout.operator("remi_board.workspace", text="Remi Workspace", icon="WINDOW")
-        layout.separator()
-        layout.operator("remi_board.open", text="Image Board in New Window", icon="IMAGE_DATA")
-
-
-def topbar_flow_menu(self, context):
-    self.layout.menu("REMI_MT_flow")
-
-
 class REMI_BOARD_OT_create(Operator):
     """Queue the prompt from the native field."""
 
@@ -1847,9 +1903,7 @@ CLASSES = (
     REMI_BOARD_OT_open,
     REMI_BOARD_OT_create,
     REMI_BOARD_OT_delete,
-    REMI_BOARD_OT_workspace,
     REMI_BOARD_MT_image,
-    REMI_MT_flow,
     REMI_BOARD_PT_panel,
 )
 
@@ -1857,19 +1911,10 @@ CLASSES = (
 def register():
     for cls in CLASSES:
         bpy.utils.register_class(cls)
-    try:
-        bpy.types.TOPBAR_MT_editor_menus.remove(topbar_flow_menu)
-    except Exception:
-        pass
-    bpy.types.TOPBAR_MT_editor_menus.append(topbar_flow_menu)
 
 
 def unregister():
     global BOARD
-    try:
-        bpy.types.TOPBAR_MT_editor_menus.remove(topbar_flow_menu)
-    except Exception:
-        pass
     if bpy.app.timers.is_registered(board_tick):
         bpy.app.timers.unregister(board_tick)
     if BOARD is not None:

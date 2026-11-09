@@ -1758,18 +1758,18 @@ class REMI_BOARD_OT_workspace(Operator):
 
     def execute(self, context):
         window = context.window
-        if window is None:
-            return {"CANCELLED"}
         name = "Remi"
         existing = bpy.data.workspaces.get(name)
         if existing is not None:
-            window.workspace = existing
+            if window is not None:
+                window.workspace = existing
             return {"FINISHED"}
         before = {workspace.name for workspace in bpy.data.workspaces}
         try:
-            bpy.ops.workspace.add()
+            # add() only opens the add-workspace menu; duplicate() creates the tab.
+            bpy.ops.workspace.duplicate()
         except Exception as exc:
-            self.report({"ERROR"}, f"Could not add a workspace: {exc}")
+            self.report({"ERROR"}, f"Could not duplicate a workspace: {exc}")
             return {"CANCELLED"}
         created = next(
             (item for item in bpy.data.workspaces if item.name not in before), None
@@ -1778,6 +1778,8 @@ class REMI_BOARD_OT_workspace(Operator):
             self.report({"ERROR"}, "The workspace was not created")
             return {"CANCELLED"}
         created.name = name
+        if window is None:
+            return {"FINISHED"}
         window.workspace = created
         screen = window.screen
         if screen is not None:

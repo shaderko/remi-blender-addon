@@ -1,11 +1,10 @@
 @echo off
-rem Launcher for the Remi UI sketch panels.
-rem   run-ui-sketch.bat              -> Generate workspace variants (Blender 5.3)
-rem   run-ui-sketch.bat ui_sketch.py -> session-shell variants
+rem Launcher for the Remi UI sketches.
+rem   run-ui-sketch.bat              -> Generate layouts + Image graph (Blender 5.3)
+rem   run-ui-sketch.bat ui_nodes_sketch.py -> only the node graph
 setlocal
 
-set "SKETCH=%~dp0ui_generate_sketch.py"
-if not "%~1"=="" set "SKETCH=%~dp0%~1"
+set "SKETCH_DIR=%~dp0"
 
 set "BLENDER=C:\Program Files\Blender Foundation\Blender 5.3 Beta\blender.exe"
 if not exist "%BLENDER%" set "BLENDER=C:\Program Files\Blender Foundation\Blender 5.3\blender.exe"
@@ -21,23 +20,22 @@ if not exist "%BLENDER%" (
   exit /b 1
 )
 
-if not exist "%SKETCH%" (
+if not "%~1"=="" (
+  if not exist "%SKETCH_DIR%%~1" (
+    echo.
+    echo Missing sketch file: "%SKETCH_DIR%%~1"
+    echo.
+    pause
+    exit /b 1
+  )
+  echo Launching %~1
   echo.
-  echo Missing sketch file: "%SKETCH%"
+  "%BLENDER%" --factory-startup --python "%SKETCH_DIR%%~1"
+) else (
+  echo Launching Generate layouts + Image graph
   echo.
-  pause
-  exit /b 1
+  "%BLENDER%" --factory-startup --python "%SKETCH_DIR%ui_generate_sketch.py" --python "%SKETCH_DIR%ui_nodes_sketch.py"
 )
-
-echo Launching:
-echo   %BLENDER%
-echo   %SKETCH%
-echo.
-echo In Blender: press N in the viewport, then open the "GEN" tab at the
-echo bottom of the sidebar strip. The add-on's own panels stay in "Remi".
-echo.
-
-"%BLENDER%" --factory-startup --python "%SKETCH%"
 
 if errorlevel 1 (
   echo.

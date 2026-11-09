@@ -50,6 +50,9 @@ open, delete) moved into a per-image `▾` menu.
 | **E** | adaptive (`grid_flow`) | 8.7 | `scale=8` ≈ 256 px | 1 column at 320 px, 2 at ~600 px |
 | today | 3×2 boxed cards at `scale=2.4` | 21.2 | ≈ 75 px in a ~110 px box | — |
 
+Each cell is the preview plus one row: the 3D action, `⤢` (open full size in an
+Image Editor), and `▾` for the rest. Small variants drop `⤢` and keep two slots.
+
 **E is A and D merged**: the tile size is fixed at 256 px, and `grid_flow(columns=0)`
 decides how many fit, so the default narrow sidebar shows one big image per row
 and a widened one shows two. Square (1×1) output means the tile wastes no space
@@ -84,16 +87,21 @@ that matters is against today's layout, on your own gallery.
 
 - **Overlays are not available in a panel.** `UILayout` has no z-order and no
   absolute positioning; a scaled preview is display-only and cannot carry text
-  or buttons on top of it. Three ways to get closer, cheapest first:
-  1. **Tile + menu** (what the sketch does): image, then a slim row inside the
-     same visual block. No true overlay, but the image is ~95 % of the cell.
+  or buttons on top of it. Panels also deliver no double-click — every panel
+  widget is a single-click operator or prop. Three ways to get closer,
+  cheapest first:
+  1. **Tile + controls directly beneath** (what the sketch does): image, then a
+     slim row in the same block, plus a `⤢` button that opens the image in a
+     real Image Editor (verified: the operator splits the area and loads the
+     file). The image is ~95 % of the cell; the controls are not on it.
   2. **State baked into the thumbnail**: a coloured bar or border composited
      into the PNG (numpy over image pixels). Gives state at a glance, no text,
      and needs a thumbnail cache with invalidation.
   3. **Custom GPU browser**: a modal operator with a `SpaceView3D` draw handler,
      GPU textures, `blf` text and its own hit-testing — real hover overlays,
-     clickable images, keyboard navigation. This is a separate surface and a
-     much larger piece of work (how BlenderKit and asset shelves do it).
+     clickable images, double-click, keyboard navigation. This is the only way
+     to get controls *on* the image, and it is a separate surface: how
+     BlenderKit and asset shelves do it.
 - **The gallery does filesystem work inside `draw`** (`gallery.refresh`,
   `Path.is_dir`). Cached by token, but still redraw-time I/O; the sketch was
   written to call the same functions, so this is worth fixing regardless of the

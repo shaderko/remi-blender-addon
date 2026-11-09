@@ -274,13 +274,17 @@ def image_cell(row, context, entry, scale, label="3D"):
         return
 
     row = cell.row(align=True)
-    split = row.split(factor=0.82)
+    wide = scale >= 6.0
+    split = row.split(factor=0.72 if wide else 0.82)
     if splat is None:
         play = split.operator("remi.generate_splats", text=label, icon="PLAY")
         play.image_path = str(entry.path)
     else:
         use = split.operator("remi.activate_splat", text="3D", icon="CHECKMARK")
         use.image_path = str(entry.path)
+    if wide:
+        zoom = split.operator("gen.open_full", text="", icon="ZOOM_IN")
+        zoom.path = str(entry.path)
     more = split.operator("gen.cell_menu", text="", icon="COLLAPSEMENU")
     more.path = str(entry.path)
 
@@ -326,6 +330,61 @@ class GEN_OT_CellMenu(Operator):
         return {"FINISHED"}
 
 
+class GEN_OT_OpenFull(Operator):
+    """Show the image at full size in an Image Editor, inside this Blender."""
+
+    bl_idname = "gen.open_full"
+    bl_label = "Open Full Size"
+    bl_description = "Open this image in an Image Editor inside Blender"
+    bl_options = {"INTERNAL"}
+
+    path: StringProperty()
+
+    def execute(self, context):
+        path = bpy.path.abspath(self.path)
+        if not Path(path).is_file():
+            self.report({"ERROR"}, "Image file is missing")
+            return {"CANCELLED"}
+        image = bpy.data.images.load(path, check_existing=True)
+        window = context.window
+        if window is None:
+            self.report({"ERROR"}, "No window to open the image in")
+            return {"CANCELLED"}
+        screen = window.screen
+
+        area = next((item for item in screen.areas if item.type == "IMAGE_EDITOR"), None)
+        if area is None:
+            area = self._split_area(context, window, screen)
+        if area is None:
+            self.report({"ERROR"}, "Could not open an Image Editor")
+            return {"CANCELLED"}
+
+        area.type = "IMAGE_EDITOR"
+        for space in area.spaces:
+            if space.type == "IMAGE_EDITOR":
+                space.image = image
+                space.show_region_toolbar = False
+                break
+        self.report({"INFO"}, f"Opened {Path(path).name}")
+        return {"FINISHED"}
+
+    @staticmethod
+    def _split_area(context, window, screen):
+        source = context.area
+        if source is None or source.type == "IMAGE_EDITOR":
+            source = max(screen.areas, key=lambda item: item.width * item.height)
+        before = {item.as_pointer() for item in screen.areas}
+        try:
+            with context.temp_override(window=window, screen=screen, area=source):
+                bpy.ops.screen.area_split(direction="HORIZONTAL", factor=0.5)
+        except Exception:
+            return None
+        return next(
+            (item for item in screen.areas if item.as_pointer() not in before),
+            None,
+        )
+
+
 class GEN_MT_Cell(Menu):
     bl_idname = "GEN_MT_Cell"
     bl_label = "Image"
@@ -348,6 +407,7 @@ class GEN_MT_Cell(Menu):
                 layout.operator("remi.select_workspace", text="Optimize", icon="MOD_DECIM").workspace = "OPTIMIZE"
                 layout.operator("remi.select_workspace", text="Texture", icon="TEXTURE").workspace = "TEXTURE"
         layout.separator()
+        layout.operator("gen.open_full", text="Open Full Size", icon="ZOOM_IN").path = path
         layout.operator("remi.regenerate_image", text="Load Settings", icon="FILE_REFRESH").path = path
         layout.operator("remi.copy_image_prompt", text="Copy Prompt", icon="COPYDOWN").path = path
         layout.operator("remi.open_image", text="Open Image", icon="FILEBROWSER").path = path
@@ -518,6 +578,7 @@ class GEN_PT_Adaptive(Panel):
 
 CLASSES = (
     GEN_OT_CellMenu,
+    GEN_OT_OpenFull,
     GEN_MT_Cell,
     GEN_PT_Control,
     GEN_PT_OneUp,

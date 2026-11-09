@@ -1,17 +1,16 @@
-"""Image board — GPU-drawn, its own window, no scene content.
+"""Image board — GPU canvas in its own window, no scene content.
 
     scripts\\run-ui-sketch.bat
 
-Board semantics borrowed from the node prototype, minus the nodes:
+Feels like a node canvas, without nodes:
 
-- scan: a grid of every image in the gallery, zoom with the wheel, pan with MMB
-- inspect: zoom in on the board; double-click opens the image full size
-- select: click, shift-click for many; selection is a list of paths
-- act: right-click for Generate 3D / Open / Select all / Close
+- background: dark surface with a dot grid that follows zoom and pan
+- cards: draggable images, raised on click, multi-select with shift
+- wheel zooms around the cursor, LMB-drag on empty space pans, MMB pans anywhere
+- double-click opens the image full size, right-click opens the board menu
 
-Images are loaded as datablocks for texturing only; nothing is added to the
-scene and the datablocks are removed when the board closes. The board draws
-through a SpaceView3D draw handler and owns the mouse while its modal runs.
+Images are loaded as datablocks for texturing only; nothing enters the scene and
+the datablocks are removed when the board closes.
 """
 
 from __future__ import annotations
@@ -33,17 +32,21 @@ from gpu_extras.batch import batch_for_shader
 BOOT = {"source": "not loaded", "error": ""}
 SELECTION_KEY = "remi_board_selection"
 
-CARD_W = 320.0
-CARD_H = 300.0
-GAP = 26.0
+CARD_W = 300.0
+CARD_H = 280.0
+GAP_X = 40.0
+GAP_Y = 48.0
 COLUMNS = 4
 THUMB = 512
-BG = (0.045, 0.045, 0.055, 1.0)
-CARD = (0.10, 0.10, 0.12, 1.0)
+
+BG = (0.152, 0.152, 0.158, 1.0)
+DOT = (0.235, 0.235, 0.245, 1.0)
+CARD = (0.205, 0.205, 0.215, 1.0)
+CARD_HOT = (0.235, 0.235, 0.245, 1.0)
 TEXT = (0.86, 0.86, 0.9, 1.0)
 DIM = (0.55, 0.55, 0.6, 1.0)
 ACCENT = (1.0, 0.55, 0.15, 1.0)
-HUD = (0.0, 0.0, 0.0, 0.65)
+HUD = (0.0, 0.0, 0.0, 0.55)
 
 BOARD = None
 
@@ -115,8 +118,7 @@ def boot():
 
 
 def gallery_entries(context):
-    module = sys.modules.get("remi")
-    if module is None:
+    if sys.modules.get("remi") is None:
         return []
     try:
         gallery = sys.modules["remi.features.images.gallery"].gallery
@@ -168,6 +170,20 @@ def draw_rect(x, y, w, h, colour):
     batch.draw(shader)
 
 
+def draw_rects(rects, colour):
+    if not rects:
+        return
+    shader = flat_shader()
+    shader.uniform_float("color", colour)
+    vertices = []
+    for x, y, w, h in rects:
+        vertices.extend(
+            [(x, y), (x + w, y), (x + w, y + h), (x, y), (x + w, y + h), (x, y + h)]
+        )
+    batch = batch_for_shader(shader, "TRIS", {"pos": vertices})
+    batch.draw(shader)
+
+
 def draw_image(texture, x, y, w, h):
     shader = image_shader()
     shader.bind()
@@ -199,45 +215,72 @@ def draw_text(text, x, y, size=12, colour=TEXT):
 class Board:
     def __init__(self, window):
         self.window = window.as_pointer()
-        self.zoom = 0.55
-        self.pan = [60.0, 520.0]
+        self.zoom = 0.7
+        self.pan = [90.0, 640.0]
+        self.entries = []
+        self.order = []
+        self.positions = {}
         self.selected = set()
-        self.hover = -1
         self.textures = {}
         self.datablocks = []
-        self.entries = []
-        self.region = (1280, 720)
-        self.drag = None
-        self.last_click = (0.0, -1)
+        self.hover = None
+        self.region = (1440, 810)
+        self.pan_drag = None
+        self.card_drag = None
+        self.last_click = (None, 0.0)
 
-    # geometry -----------------------------------------------------------
-    def card_rect(self, index):
-        column = index % COLUMNS
-        row = index // COLUMNS
-        bx = column * (CARD_W + GAP)
-        by = -(row * (CARD_H + GAP))
-        x = bx * self.zoom + self.pan[0]
-        y = by * self.zoom + self.pan[1]
-        return x, y, CARD_W * self.zoom, CARD_H * self.zoom
+    # layout -------------------------------------------------------------
+    def load(self, entries):
+        self.entries = entries
+        self.order = [str(entry.path) for entry in entries]
+        for index, entry in enumerate(entries):
+            column = index % COLUMNS
+            row = index // COLUMNS
+            self.positions[str(entry.path)] = [
+                column * (CARD_W + GAP_X),
+                -(row * (CARD_H + GAP_Y)),
+            ]
+
+    def card_rect(self, path):
+        x, y = self.positions.get(path, (0.0, 0.0))
+        sx = x * self.zoom + self.pan[0]
+        sy = y * self.zoom + self.pan[1]
+        return sx, sy, CARD_W * self.zoom, CARD_H * self.zoom
 
     def hit(self, mx, my):
-        for index in range(len(self.entries)):
-            x, y, w, h = self.card_rect(index)
+        for path in reversed(self.order):
+            x, y, w, h = self.card_rect(path)
             if x <= mx <= x + w and y <= my <= y + h:
-                return index
-        return -1
+                return path
+        return None
+
+    def raise_card(self, path):
+        if path in self.order:
+            self.order.remove(path)
+            self.order.append(path)
+
+    def move_selected(self, path, dx, dy):
+        targets = self.selected if path in self.selected and len(self.selected) > 1 else {path}
+        for target in targets:
+            position = self.positions.get(target)
+            if position is not None:
+                position[0] += dx
+                position[1] += dy
 
     def fit(self):
-        if not self.entries:
+        if not self.order:
             return
-        rows = math.ceil(len(self.entries) / COLUMNS)
-        board_w = COLUMNS * CARD_W + (COLUMNS - 1) * GAP
-        board_h = rows * CARD_H + (rows - 1) * GAP
+        xs = [self.positions[p][0] for p in self.order]
+        ys = [self.positions[p][1] for p in self.order]
+        left, right = min(xs), max(xs) + CARD_W
+        top, bottom = max(ys) + CARD_H, min(ys)
         width, height = self.region
-        self.zoom = min(width / (board_w + 80), height / (board_h + 80), 1.6)
-        self.zoom = max(self.zoom, 0.1)
-        self.pan[0] = (width - board_w * self.zoom) / 2
-        self.pan[1] = height - CARD_H * self.zoom - 40
+        board_w = max(1.0, right - left)
+        board_h = max(1.0, top - bottom)
+        self.zoom = max(0.12, min(width / (board_w + 120), height / (board_h + 140), 1.4))
+        self.pan[0] = (width - board_w * self.zoom) / 2 - left * self.zoom
+        self.pan[1] = (height - board_h * self.zoom) / 2 - bottom * self.zoom
+        self.pan[1] -= 20
 
     # textures -----------------------------------------------------------
     def texture(self, path):
@@ -265,18 +308,29 @@ class Board:
         self.textures.clear()
 
 
-def current_board():
-    if BOARD is None:
-        return None
-    for window in bpy.context.window_manager.windows:
-        if window.as_pointer() == BOARD.window:
-            return BOARD
-    return None
-
-
 # --------------------------------------------------------------------------
 # Drawing
 # --------------------------------------------------------------------------
+
+
+def draw_grid(board, width, height):
+    spacing = 26.0 * board.zoom
+    while spacing < 14.0:
+        spacing *= 2.0
+    while spacing > 90.0:
+        spacing /= 2.0
+    start_x = board.pan[0] % spacing
+    start_y = board.pan[1] % spacing
+    size = 2.0 if board.zoom > 0.5 else 1.5
+    dots = []
+    y = start_y
+    while y < height:
+        x = start_x
+        while x < width:
+            dots.append((x, y, size, size))
+            x += spacing
+        y += spacing
+    draw_rects(dots, DOT)
 
 
 def board_draw():
@@ -299,43 +353,46 @@ def board_draw():
 
     gpu.state.blend_set("ALPHA")
     draw_rect(0, 0, width, height, BG)
+    draw_grid(board, width, height)
 
     zoom = board.zoom
-    for index, entry in enumerate(board.entries):
-        x, y, w, h = board.card_rect(index)
+    for path in board.order:
+        x, y, w, h = board.card_rect(path)
         if x + w < 0 or x > width or y + h < 0 or y > height:
             continue
-        draw_rect(x, y, w, h, CARD)
+        draw_rect(x, y, w, h, CARD_HOT if path == board.hover else CARD)
         pad = 8 * zoom
         image_size = min(w - 2 * pad, h - 64 * zoom)
         ix = x + (w - image_size) / 2
         iy = y + h - pad - image_size
-        texture = board.texture(str(entry.path))
+        texture = board.texture(path)
         if texture is not None:
             draw_image(texture, ix, iy, image_size, image_size)
         else:
-            draw_rect(ix, iy, image_size, image_size, (0.2, 0.2, 0.22, 1.0))
-        if index in board.selected:
-            draw_rect(x, y, w, 3 * max(zoom, 0.6), ACCENT)
-            draw_rect(x, y, 3 * max(zoom, 0.6), h, ACCENT)
-            draw_rect(x + w - 3 * max(zoom, 0.6), y, 3 * max(zoom, 0.6), h, ACCENT)
-            draw_rect(x, y + h - 3 * max(zoom, 0.6), w, 3 * max(zoom, 0.6), ACCENT)
-        if index == board.hover:
-            draw_rect(x, y, w, max(1.0, 2 * zoom), DIM)
-        if zoom > 0.4:
-            label = Path(entry.path).name
-            draw_text(label, x + pad, y + 40 * zoom, 11 * zoom + 3, TEXT)
-            meta = f"seed {entry.seed}"
-            if zoom > 0.7:
-                meta = f"{entry.model_label} · seed {entry.seed}"
-            draw_text(meta, x + pad, y + 22 * zoom, 10 * zoom + 2, DIM)
+            draw_rect(ix, iy, image_size, image_size, (0.18, 0.18, 0.19, 1.0))
+        if path in board.selected:
+            thickness = max(2.0, 2.5 * zoom)
+            draw_rect(x, y, w, thickness, ACCENT)
+            draw_rect(x, y, thickness, h, ACCENT)
+            draw_rect(x + w - thickness, y, thickness, h, ACCENT)
+            draw_rect(x, y + h - thickness, w, thickness, ACCENT)
+        if zoom > 0.32:
+            draw_text(Path(path).name, x + pad, y + 38 * zoom, 11 * zoom + 3, TEXT)
+            entry = next((item for item in board.entries if str(item.path) == path), None)
+            if entry is not None and zoom > 0.55:
+                draw_text(
+                    f"{entry.model_label} · seed {entry.seed}",
+                    x + pad,
+                    y + 20 * zoom,
+                    10 * zoom + 2,
+                    DIM,
+                )
 
-    # HUD
     draw_rect(0, 0, width, 34, HUD)
     draw_text(
-        f"{len(board.entries)} images · {len(board.selected)} selected · "
-        f"wheel zoom {board.zoom:.2f} · MMB pan · click select · shift-click add · "
-        f"right-click actions · Esc close",
+        f"{len(board.order)} images · {len(board.selected)} selected · zoom {board.zoom:.2f} · "
+        "wheel zoom · drag empty to pan · drag card to move · shift-click add · "
+        "double-click open · right-click actions · F fit · Esc close",
         12,
         11,
         12,
@@ -345,7 +402,7 @@ def board_draw():
 
 
 # --------------------------------------------------------------------------
-# Actions
+# Selection storage
 # --------------------------------------------------------------------------
 
 
@@ -358,6 +415,11 @@ def selected_paths(context):
 
 def store_selection(context, paths):
     context.scene[SELECTION_KEY] = "\n".join(sorted(paths))
+
+
+# --------------------------------------------------------------------------
+# Modal operator
+# --------------------------------------------------------------------------
 
 
 class REMI_BOARD_OT_run(Operator):
@@ -376,10 +438,12 @@ class REMI_BOARD_OT_run(Operator):
         if window is None:
             return {"CANCELLED"}
         board = Board(window)
-        board.entries = gallery_entries(context)
+        board.load(gallery_entries(context))
         board.fit()
         BOARD = board
-        board._handle = bpy.types.SpaceView3D.draw_handler_add(board_draw, (), "WINDOW", "POST_PIXEL")
+        board._handle = bpy.types.SpaceView3D.draw_handler_add(
+            board_draw, (), "WINDOW", "POST_PIXEL"
+        )
         context.window_manager.modal_handler_add(self)
         return {"RUNNING_MODAL"}
 
@@ -393,56 +457,79 @@ class REMI_BOARD_OT_run(Operator):
         region = getattr(context, "region", None)
         if region is not None:
             board.region = (region.width, region.height)
+        mx, my = event.mouse_region_x, event.mouse_region_y
 
         if event.type == "ESC" and event.value == "PRESS":
             self._finish(context)
             return {"CANCELLED"}
 
         if event.type == "MOUSEMOVE":
-            if board.drag is not None:
-                dx = event.mouse_region_x - board.drag[0]
-                dy = event.mouse_region_y - board.drag[1]
-                board.pan[0] += dx
-                board.pan[1] += dy
-                board.drag = (event.mouse_region_x, event.mouse_region_y)
-            else:
-                board.hover = board.hit(event.mouse_region_x, event.mouse_region_y)
+            if board.card_drag is not None:
+                drag = board.card_drag
+                nx = (mx - drag["dx"] - board.pan[0]) / board.zoom
+                ny = (my - drag["dy"] - board.pan[1]) / board.zoom
+                position = board.positions.get(drag["path"])
+                if position is not None:
+                    board.move_selected(
+                        drag["path"], nx - position[0], ny - position[1]
+                    )
+                if abs(mx - drag["start"][0]) + abs(my - drag["start"][1]) > 3:
+                    drag["moved"] = True
+            elif board.pan_drag is not None:
+                board.pan[0] += mx - board.pan_drag[0]
+                board.pan[1] += my - board.pan_drag[1]
+                board.pan_drag = (mx, my)
+            board.hover = board.hit(mx, my)
             self._redraw(context)
             return {"RUNNING_MODAL"}
 
-        if event.type in {"MIDDLEMOUSE"}:
-            if event.value == "PRESS":
-                board.drag = (event.mouse_region_x, event.mouse_region_y)
-            elif event.value == "RELEASE":
-                board.drag = None
+        if event.type == "MIDDLEMOUSE":
+            board.pan_drag = (mx, my) if event.value == "PRESS" else None
             return {"RUNNING_MODAL"}
 
         if event.type in {"WHEELUPMOUSE", "WHEELDOWNMOUSE"} and event.value == "PRESS":
             factor = 1.15 if event.type == "WHEELUPMOUSE" else 1 / 1.15
-            self._zoom(board, event.mouse_region_x, event.mouse_region_y, factor)
+            old = board.zoom
+            new = max(0.12, min(old * factor, 3.0))
+            board.pan[0] = mx - (mx - board.pan[0]) * (new / old)
+            board.pan[1] = my - (my - board.pan[1]) * (new / old)
+            board.zoom = new
             self._redraw(context)
             return {"RUNNING_MODAL"}
 
         if event.type == "LEFTMOUSE" and event.value == "PRESS":
-            index = board.hit(event.mouse_region_x, event.mouse_region_y)
-            if index >= 0:
-                entry = board.entries[index]
-                path = str(entry.path)
-                now = time.time()
-                previous_index, previous_time = board.last_click
-                board.last_click = (index, now)
-                if previous_index == index and now - previous_time < 0.35:
-                    self._open(context, path)
-                    return {"RUNNING_MODAL"}
+            path = board.hit(mx, my)
+            if path is None:
+                if not event.shift:
+                    board.selected.clear()
+                    store_selection(context, board.selected)
+                board.pan_drag = (mx, my)
+            else:
+                board.raise_card(path)
                 if event.shift:
                     board.selected.symmetric_difference_update({path})
-                else:
+                elif path not in board.selected:
                     board.selected = {path}
                 store_selection(context, board.selected)
-            elif not event.shift:
-                board.selected.clear()
-                store_selection(context, board.selected)
+                x, y, _w, _h = board.card_rect(path)
+                board.card_drag = {
+                    "path": path,
+                    "dx": mx - x,
+                    "dy": my - y,
+                    "moved": False,
+                    "start": (mx, my),
+                }
+                last_path, last_time = board.last_click
+                now = time.time()
+                board.last_click = (path, now)
+                if last_path == path and now - last_time < 0.35:
+                    self._open(context, path)
             self._redraw(context)
+            return {"RUNNING_MODAL"}
+
+        if event.type == "LEFTMOUSE" and event.value == "RELEASE":
+            board.card_drag = None
+            board.pan_drag = None
             return {"RUNNING_MODAL"}
 
         if event.type == "RIGHTMOUSE" and event.value == "PRESS":
@@ -451,7 +538,7 @@ class REMI_BOARD_OT_run(Operator):
             return {"RUNNING_MODAL"}
 
         if event.type == "A" and event.value == "PRESS":
-            board.selected = {str(entry.path) for entry in board.entries}
+            board.selected = set(board.order)
             store_selection(context, board.selected)
             self._redraw(context)
             return {"RUNNING_MODAL"}
@@ -462,14 +549,6 @@ class REMI_BOARD_OT_run(Operator):
             return {"RUNNING_MODAL"}
 
         return {"RUNNING_MODAL"}
-
-    @staticmethod
-    def _zoom(board, mx, my, factor):
-        old = board.zoom
-        new = max(0.12, min(old * factor, 3.0))
-        board.pan[0] = mx - (mx - board.pan[0]) * (new / old)
-        board.pan[1] = my - (my - board.pan[1]) * (new / old)
-        board.zoom = new
 
     @staticmethod
     def _redraw(context):
@@ -507,11 +586,15 @@ class REMI_BOARD_OT_run(Operator):
                         bpy.ops.wm.window_close()
                 except Exception:
                     pass
-        if context.area is not None:
-            context.area.tag_redraw()
+        self._redraw(context)
 
     def cancel(self, context):
         self._finish(context)
+
+
+# --------------------------------------------------------------------------
+# Open / actions / menu / panel
+# --------------------------------------------------------------------------
 
 
 class REMI_BOARD_OT_open(Operator):
@@ -570,7 +653,7 @@ class REMI_BOARD_OT_action(Operator):
         paths = selected_paths(context)
         if self.action == "select_all":
             if BOARD is not None:
-                BOARD.selected = {str(entry.path) for entry in BOARD.entries}
+                BOARD.selected = set(BOARD.order)
                 store_selection(context, BOARD.selected)
                 if context.area:
                     context.area.tag_redraw()

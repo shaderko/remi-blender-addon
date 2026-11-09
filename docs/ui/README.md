@@ -114,6 +114,29 @@ Limits worth knowing:
 - `3D Splats` and `Mesh` create real scene objects, because that is what the
   pipeline produces; the graph UI itself still creates nothing.
 
+## Image board (GPU prototype)
+
+`scripts/ui_board_sketch.py` opens a board of every gallery image in **its own
+window**, drawn with the GPU — no scene objects, no images in the 3D view, no
+nodes. Images are loaded as datablocks only for texturing and removed on close.
+
+| Input | Action |
+|---|---|
+| wheel | zoom around the cursor (0.12×–3×) |
+| middle-drag | pan |
+| click / shift-click | select one / add to selection |
+| double-click | open that image full size |
+| right-click | board menu: Generate 3D, Open Full Size, Select All/None, Close |
+| `A` / `F` / `Esc` | select all / fit board to window / close |
+
+It draws a grid of 512 px thumbnails at a fixed board size, so zooming in is how
+you inspect detail — same interaction as a node canvas, without the nodes.
+Selection is stored as newline-separated paths on the scene (`remi_board_selection`),
+which is the list a future context-conditioned model would consume.
+
+Status: first GPU pass. Geometry, hit-testing and selection are verified
+headlessly; the drawing path and the second-window modal need a real session.
+
 ## Findings so far
 
 - **Overlays are not available in a panel.** `UILayout` has no z-order and no

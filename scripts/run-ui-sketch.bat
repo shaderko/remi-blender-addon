@@ -32,9 +32,9 @@ if not "%~1"=="" (
   echo.
   "%BLENDER%" --factory-startup --python "%SKETCH_DIR%%~1"
 ) else (
-  echo Launching Generate layouts + Image graph
+  echo Launching Generate layouts + Image board
   echo.
-  "%BLENDER%" --factory-startup --python "%SKETCH_DIR%ui_generate_sketch.py" --python "%SKETCH_DIR%ui_nodes_sketch.py"
+  "%BLENDER%" --factory-startup --python "%SKETCH_DIR%ui_generate_sketch.py" --python "%SKETCH_DIR%ui_board_sketch.py"
 )
 
 if errorlevel 1 (

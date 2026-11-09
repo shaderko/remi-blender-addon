@@ -128,6 +128,7 @@ nodes. Images are loaded as datablocks only for texturing and removed on close.
 | drag empty space, or MMB | pan |
 | drag a card's bottom-right corner | resize it uniformly; aspect ratio preserved (0.25x-4x) |
 | double-click a card | open that image in **its own window** (Image Editor) |
+| right-click a card | native menu with **Delete** (trash): removes the generation's folder from disk after a confirm |
 | click the prompt area | opens a native Blender text field (selection, scroll, IME) |
 | *Create* | queues the field's prompt |
 | `A` / `F` / `Esc` | select all / fit board to window / unfocus then close |

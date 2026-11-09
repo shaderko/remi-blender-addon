@@ -21,6 +21,7 @@ import importlib.util
 import json
 import math
 import os
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -28,7 +29,8 @@ from pathlib import Path
 import blf
 import bpy
 import gpu
-from bpy.types import Operator, Panel
+from bpy.props import StringProperty
+from bpy.types import Menu, Operator, Panel
 from gpu_extras.batch import batch_for_shader
 
 BOOT = {"source": "not loaded", "error": ""}
@@ -359,6 +361,13 @@ class Board:
         self.scales.pop(key, None)
         self.selected.discard(key)
         return key
+
+    def forget(self, path):
+        if path in self.order:
+            self.order.remove(path)
+        self.positions.pop(path, None)
+        self.scales.pop(path, None)
+        self.selected.discard(path)
 
     def reload(self, context):
         entries = gallery_entries(context)
@@ -801,6 +810,19 @@ class REMI_BOARD_OT_run(Operator):
             self._redraw(context)
             return {"RUNNING_MODAL"}
 
+        if event.type == "RIGHTMOUSE" and event.value == "PRESS":
+            path = board.hit(mx, my)
+            if path is not None and not path.startswith("pending:"):
+                board.selected = {path}
+                store_selection(context, board.selected)
+                context.scene["remi_board_target"] = path
+                try:
+                    bpy.ops.wm.call_menu(name="REMI_BOARD_MT_image")
+                except Exception:
+                    pass
+                self._redraw(context)
+            return {"RUNNING_MODAL"}
+
         if event.type == "LEFTMOUSE" and event.value == "PRESS":
             width = board.region[0]
             bar_w = max(380.0, min(520.0, width - 120.0))
@@ -938,6 +960,41 @@ def submit_current(context):
     return True
 
 
+def deletion_target(path):
+    """The file or generation folder to remove for this image, inside the output dir."""
+    context = bpy.context
+    try:
+        output = Path(bpy.path.abspath(context.scene.remi_image.output)).resolve()
+    except Exception:
+        return None
+    file = Path(bpy.path.abspath(path))
+    try:
+        file = file.resolve()
+    except OSError:
+        return None
+    parent = file.parent
+    if parent == output:
+        return file
+    if output in parent.parents:
+        return parent
+    return None
+
+
+def delete_generation(path):
+    """Delete the image's generation from disk. Returns what was removed."""
+    target = deletion_target(path)
+    if target is None:
+        return None
+    try:
+        if target.is_dir():
+            shutil.rmtree(target)
+        else:
+            target.unlink(missing_ok=True)
+    except OSError:
+        return None
+    return target
+
+
 def board_tick():
     """Pulse pending cards, advance the queue, pick up finished images."""
     board = BOARD
@@ -1019,6 +1076,68 @@ class REMI_BOARD_OT_open(Operator):
         return {"FINISHED"}
 
 
+class REMI_BOARD_OT_delete(Operator):
+    """Delete this image's generation from disk."""
+
+    bl_idname = "remi_board.delete"
+    bl_label = "Delete Image"
+    bl_description = "Remove this generation's folder from disk, including every image and its metadata"
+    bl_options = {"REGISTER", "UNDO"}
+
+    path: StringProperty()
+
+    def invoke(self, context, event):
+        target = deletion_target(self.path)
+        if target is None:
+            self.report({"ERROR"}, "That file is not inside the image output folder")
+            return {"CANCELLED"}
+        subject = "folder and everything in it" if target.is_dir() else "file"
+        return context.window_manager.invoke_confirm(
+            self,
+            event,
+            title="Delete generation?",
+            message=f"Removes the {subject} '{target.name}'. There will be no local copy left.",
+            confirm_text="Delete",
+            icon="WARNING",
+        )
+
+    def execute(self, context):
+        target = delete_generation(self.path)
+        if target is None:
+            self.report({"ERROR"}, "Could not delete that generation")
+            return {"CANCELLED"}
+        gallery_module = sys.modules.get("remi.features.images.gallery")
+        if gallery_module is not None:
+            try:
+                gallery_module.gallery.invalidate()
+            except Exception:
+                pass
+        board = BOARD
+        if board is not None:
+            board.forget(self.path)
+            board.reload(context)
+            save_layout(context)
+            for window in context.window_manager.windows:
+                if window.as_pointer() == board.window:
+                    for area in window.screen.areas:
+                        area.tag_redraw()
+        self.report({"INFO"}, f"Deleted {target.name}")
+        return {"FINISHED"}
+
+
+class REMI_BOARD_MT_image(Menu):
+    bl_idname = "REMI_BOARD_MT_image"
+    bl_label = "Image"
+
+    def draw(self, context):
+        layout = self.layout
+        path = str(context.scene.get("remi_board_target", ""))
+        if not path:
+            layout.label(text="No image", icon="INFO")
+            return
+        layout.operator("remi_board.delete", text="Delete", icon="TRASH").path = path
+
+
 class REMI_BOARD_OT_create(Operator):
     """Queue the prompt from the native field."""
 
@@ -1088,6 +1207,8 @@ CLASSES = (
     REMI_BOARD_OT_run,
     REMI_BOARD_OT_open,
     REMI_BOARD_OT_create,
+    REMI_BOARD_OT_delete,
+    REMI_BOARD_MT_image,
     REMI_BOARD_PT_composer,
     REMI_BOARD_PT_panel,
 )

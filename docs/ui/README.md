@@ -123,11 +123,19 @@ nodes. Images are loaded as datablocks only for texturing and removed on close.
 | Input | Action |
 |---|---|
 | wheel | zoom around the cursor (0.12×–3×) |
-| middle-drag | pan |
 | click / shift-click | select one / add to selection |
-| double-click | open that image full size |
+| drag a card | move it; a whole selection moves together |
+| drag empty space, or MMB | pan |
+| double-click a card | open that image in **its own window** (Image Editor) |
 | right-click | board menu: Generate 3D, Open Full Size, Select All/None, Close |
-| `A` / `F` / `Esc` | select all / fit board to window / close |
+| click the composer | type a prompt; **Enter** or *Create image* starts a generation |
+| `A` / `F` / `Esc` | select all / fit board to window / unfocus then close |
+
+The composer bar at the bottom mirrors the reference layout: the selected
+image's thumbnail and prompt sit above the input; model and size are compact
+pills that cycle on click; *Create image* runs `remi.generate_image` and the bar
+shows progress while it runs. When the job finishes the board reloads and the
+new image lands on the canvas as a card.
 
 It draws a grid of 512 px thumbnails at a fixed board size, so zooming in is how
 you inspect detail — same interaction as a node canvas, without the nodes.

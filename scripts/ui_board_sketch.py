@@ -208,6 +208,167 @@ def draw_text(text, x, y, size=12, colour=TEXT):
     blf.draw(font, text)
 
 
+def text_width(text, size):
+    return blf.dimensions(0, text)[0] if text else 0.0
+
+
+def clip_text(text, size, limit):
+    if text_width(text, size) <= limit:
+        return text
+    while text and text_width(text + "…", size) > limit:
+        text = text[:-1]
+    return text + "…"
+
+
+def open_image_window(context, path):
+    """Show an image in its own window instead of splitting an area."""
+    try:
+        image = bpy.data.images.load(bpy.path.abspath(path), check_existing=True)
+    except Exception:
+        return False
+    manager = context.window_manager
+    before = {window.as_pointer() for window in manager.windows}
+    try:
+        bpy.ops.wm.window_new()
+    except Exception:
+        return False
+    window = next(
+        (item for item in manager.windows if item.as_pointer() not in before), None
+    )
+    if window is None:
+        return False
+    areas = list(window.screen.areas)
+    area = max(areas, key=lambda item: item.width * item.height) if areas else None
+    if area is None:
+        return False
+    area.type = "IMAGE_EDITOR"
+    for space in area.spaces:
+        if space.type == "IMAGE_EDITOR":
+            space.image = image
+            space.show_region_ui = False
+            space.zoom = 1.0
+            break
+    return True
+
+
+def cycle_enum(owner, name):
+    try:
+        items = list(owner.bl_rna.properties[name].enum_items)
+    except Exception:
+        return
+    identifiers = [item.identifier for item in items]
+    current = getattr(owner, name)
+    try:
+        index = identifiers.index(current)
+    except ValueError:
+        index = -1
+    setattr(owner, name, identifiers[(index + 1) % len(identifiers)])
+
+
+# --------------------------------------------------------------------------
+# Composer bar
+# --------------------------------------------------------------------------
+
+BAR_MARGIN = 22.0
+BAR_H = 118.0
+INPUT_H = 34.0
+
+
+def bar_zones(board, width, height):
+    x = BAR_MARGIN
+    y = BAR_MARGIN
+    w = width - 2 * BAR_MARGIN
+    return {
+        "bar": (x, y, w, BAR_H),
+        "input": (x + 14, y + 46, w - 28, INPUT_H),
+        "model": (x + 14, y + 10, 150, 26),
+        "size": (x + 172, y + 10, 76, 26),
+        "create": (x + w - 158, y + 10, 144, 26),
+    }
+
+
+def in_rect(mx, my, rect):
+    x, y, w, h = rect
+    return x <= mx <= x + w and y <= my <= y + h
+
+
+def draw_bar(board, width, height):
+    zones = bar_zones(board, width, height)
+    bx, by, bw, bh = zones["bar"]
+    draw_rect(bx, by, bw, bh, (0.115, 0.115, 0.125, 0.96))
+
+    selected = [path for path in board.order if path in board.selected]
+    header_top = by + bh - 14
+    if selected:
+        path = selected[0]
+        entry = next((item for item in board.entries if str(item.path) == path), None)
+        draw_rect(bx + 14, by + bh - 60, 42, 42, (0.2, 0.2, 0.21, 1.0))
+        texture = board.texture(path)
+        if texture is not None:
+            draw_image(texture, bx + 14, by + bh - 60, 42, 42)
+        label = f"{len(selected)} selected" if len(selected) > 1 else Path(path).name
+        draw_text(label, bx + 66, header_top, 12, TEXT)
+        if entry is not None:
+            prompt = clip_text(entry.prompt or "(no prompt)", 11, bw - 90)
+            draw_text(prompt, bx + 66, by + bh - 42, 11, DIM)
+
+    ix, iy, iw, ih = zones["input"]
+    draw_rect(ix, iy, iw, ih, (0.075, 0.075, 0.085, 1.0))
+    if board.focused:
+        draw_rect(ix, iy, iw, 1.5, ACCENT)
+    text = board.composer
+    size = 13
+    shown = clip_text(text, size, iw - 20)
+    colour = TEXT if text else DIM
+    draw_text(shown or "Describe an image…", ix + 10, iy + 11, size, colour)
+    if board.focused and (time.time() % 1.0) < 0.55:
+        caret = text_width(clip_text(text[: board.caret], size, iw - 20), size)
+        draw_rect(ix + 10 + caret, iy + 9, 1.4, 16, TEXT)
+    if board.status:
+        draw_text(
+            clip_text(board.status, 10, 220),
+            ix + iw - 230,
+            iy + 12,
+            10,
+            ACCENT,
+        )
+
+    settings = bpy.context.scene.remi_image
+    mx, my, mw, mh = zones["model"]
+    draw_rect(mx, my, mw, mh, (0.18, 0.18, 0.19, 1.0))
+    draw_text(clip_text(model_label(settings), 11, mw - 16), mx + 8, my + 8, 11, TEXT)
+
+    sx, sy, sw, sh = zones["size"]
+    draw_rect(sx, sy, sw, sh, (0.18, 0.18, 0.19, 1.0))
+    draw_text(clip_text(size_label(settings), 11, sw - 16), sx + 8, sy + 8, 11, TEXT)
+
+    state = bpy.context.window_manager.remi_image
+    cx, cy, cw, ch = zones["create"]
+    draw_rect(cx, cy, cw, ch, ACCENT if text.strip() and not state.busy else (0.22, 0.22, 0.23, 1.0))
+    label = f"{int(state.progress * 100)}%" if state.busy else "Create image"
+    draw_text(label, cx + 18, cy + 8, 12, (0.06, 0.06, 0.07, 1.0) if text.strip() and not state.busy else TEXT)
+
+
+def model_label(settings):
+    prop = settings.bl_rna.properties.get("model")
+    if prop is None:
+        return "model"
+    for item in prop.enum_items:
+        if item.identifier == settings.model:
+            return item.name
+    return settings.model
+
+
+def size_label(settings):
+    prop = settings.bl_rna.properties.get("size")
+    if prop is None:
+        return "size"
+    for item in prop.enum_items:
+        if item.identifier == settings.size:
+            return item.name
+    return settings.size
+
+
 # --------------------------------------------------------------------------
 # Board state
 # --------------------------------------------------------------------------
@@ -229,6 +390,34 @@ class Board:
         self.pan_drag = None
         self.card_drag = None
         self.last_click = (None, 0.0)
+        self.composer = ""
+        self.caret = 0
+        self.focused = False
+        self.pending = False
+        self.status = ""
+
+    def reload(self, context):
+        entries = gallery_entries(context)
+        known = {str(entry.path) for entry in entries}
+        self.entries = entries
+        placed = len(self.positions)
+        for entry in entries:
+            path = str(entry.path)
+            if path not in self.positions:
+                column = placed % COLUMNS
+                row = placed // COLUMNS
+                self.positions[path] = [
+                    column * (CARD_W + GAP_X),
+                    -(row * (CARD_H + GAP_Y)),
+                ]
+                placed += 1
+            if path not in self.order:
+                self.order.append(path)
+        for path in list(self.order):
+            if path not in known:
+                self.order.remove(path)
+                self.positions.pop(path, None)
+                self.selected.discard(path)
 
     # layout -------------------------------------------------------------
     def load(self, entries):
@@ -398,14 +587,33 @@ def board_draw():
     draw_rect(0, 0, width, 34, HUD)
     draw_text(
         f"{len(board.order)} images · {len(board.selected)} selected · zoom {board.zoom:.2f} · "
-        "wheel zoom · drag empty to pan · drag card to move · shift-click add · "
-        "double-click open · right-click actions · F fit · Esc close",
+        "wheel zoom · drag to pan/move · shift-click add · double-click opens a window · "
+        "click the bar to type · Enter creates · F fit · Esc close",
         12,
         11,
         12,
         TEXT,
     )
+    draw_bar(board, width, height)
     gpu.state.blend_set("NONE")
+
+
+def board_tick():
+    """Keep the board in sync while it is open, without blocking the modal."""
+    board = BOARD
+    if board is None:
+        return None
+    context = bpy.context
+    state = context.window_manager.remi_image
+    if board.pending and not state.busy:
+        board.pending = False
+        board.reload(context)
+        board.status = state.status or ""
+    for window in context.window_manager.windows:
+        if window.as_pointer() == board.window:
+            for area in window.screen.areas:
+                area.tag_redraw()
+    return 0.8
 
 
 # --------------------------------------------------------------------------
@@ -447,6 +655,8 @@ class REMI_BOARD_OT_run(Operator):
         board = Board(window)
         board.load(gallery_entries(context))
         board.fit()
+        board.composer = context.scene.remi_image.prompt or ""
+        board.caret = len(board.composer)
         BOARD = board
         area = context.area
         self._area_x = area.x if area is not None else 0
@@ -454,6 +664,8 @@ class REMI_BOARD_OT_run(Operator):
         board._handle = bpy.types.SpaceView3D.draw_handler_add(
             board_draw, (), "WINDOW", "POST_PIXEL"
         )
+        if not bpy.app.timers.is_registered(board_tick):
+            bpy.app.timers.register(board_tick, first_interval=0.6)
         context.window_manager.modal_handler_add(self)
         return {"RUNNING_MODAL"}
 
@@ -486,8 +698,52 @@ class REMI_BOARD_OT_run(Operator):
         mx, my = self._mouse(context, event)
 
         if event.type == "ESC" and event.value == "PRESS":
+            if board.focused:
+                board.focused = False
+                self._redraw(context)
+                return {"RUNNING_MODAL"}
             self._finish(context)
             return {"CANCELLED"}
+
+        if board.focused and event.value == "PRESS":
+            text = board.composer
+            if event.type == "BACK_SPACE":
+                if board.caret > 0:
+                    board.composer = text[: board.caret - 1] + text[board.caret :]
+                    board.caret -= 1
+                self._redraw(context)
+                return {"RUNNING_MODAL"}
+            if event.type == "DELETE":
+                if board.caret < len(text):
+                    board.composer = text[: board.caret] + text[board.caret + 1 :]
+                self._redraw(context)
+                return {"RUNNING_MODAL"}
+            if event.type == "LEFT_ARROW":
+                board.caret = max(0, board.caret - 1)
+                self._redraw(context)
+                return {"RUNNING_MODAL"}
+            if event.type == "RIGHT_ARROW":
+                board.caret = min(len(text), board.caret + 1)
+                self._redraw(context)
+                return {"RUNNING_MODAL"}
+            if event.type == "RETURN":
+                self._submit(context)
+                return {"RUNNING_MODAL"}
+            char = getattr(event, "unicode", "")
+            if char and char.isprintable() and not event.ctrl and not event.alt:
+                board.composer = text[: board.caret] + char + text[board.caret :]
+                board.caret += len(char)
+                self._redraw(context)
+                return {"RUNNING_MODAL"}
+            if event.type not in {
+                "MOUSEMOVE",
+                "LEFTMOUSE",
+                "RIGHTMOUSE",
+                "MIDDLEMOUSE",
+                "WHEELUPMOUSE",
+                "WHEELDOWNMOUSE",
+            }:
+                return {"RUNNING_MODAL"}
 
         if event.type == "MOUSEMOVE":
             if board.card_drag is not None:
@@ -524,6 +780,27 @@ class REMI_BOARD_OT_run(Operator):
             return {"RUNNING_MODAL"}
 
         if event.type == "LEFTMOUSE" and event.value == "PRESS":
+            width, height = board.region
+            zones = bar_zones(board, width, height)
+            if in_rect(mx, my, zones["input"]):
+                board.focused = True
+                board.caret = len(board.composer)
+                self._redraw(context)
+                return {"RUNNING_MODAL"}
+            if in_rect(mx, my, zones["model"]):
+                cycle_enum(context.scene.remi_image, "model")
+                self._redraw(context)
+                return {"RUNNING_MODAL"}
+            if in_rect(mx, my, zones["size"]):
+                cycle_enum(context.scene.remi_image, "size")
+                self._redraw(context)
+                return {"RUNNING_MODAL"}
+            if in_rect(mx, my, zones["create"]):
+                self._submit(context)
+                return {"RUNNING_MODAL"}
+            if in_rect(mx, my, zones["bar"]):
+                board.focused = False
+                return {"RUNNING_MODAL"}
             path = board.hit(mx, my)
             if path is None:
                 if not event.shift:
@@ -549,7 +826,7 @@ class REMI_BOARD_OT_run(Operator):
                 now = time.time()
                 board.last_click = (path, now)
                 if last_path == path and now - last_time < 0.35:
-                    self._open(context, path)
+                    open_image_window(context, path)
             self._redraw(context)
             return {"RUNNING_MODAL"}
 
@@ -581,19 +858,39 @@ class REMI_BOARD_OT_run(Operator):
         if context.area is not None:
             context.area.tag_redraw()
 
-    @staticmethod
-    def _open(context, path):
-        opener = getattr(bpy.ops.gen, "open_full", None)
-        if opener is None:
+    def _submit(self, context):
+        board = BOARD
+        if board is None:
             return
+        text = board.composer.strip()
+        if not text:
+            board.status = "Type a prompt first"
+            self._redraw(context)
+            return
+        settings = context.scene.remi_image
+        settings.prompt = text
+        if not bpy.ops.remi.generate_image.poll():
+            board.status = "Blocked — another job is running"
+            self._redraw(context)
+            return
+        board.status = ""
         try:
-            opener(path=bpy.path.abspath(path))
-        except Exception:
-            pass
+            result = bpy.ops.remi.generate_image("INVOKE_DEFAULT")
+        except Exception as exc:
+            board.status = f"{type(exc).__name__}: {exc}"
+            self._redraw(context)
+            return
+        if {"FINISHED", "RUNNING_MODAL"} & set(result):
+            board.pending = True
+        else:
+            board.status = "Generation refused"
+        self._redraw(context)
 
     def _finish(self, context):
         global BOARD
         board = BOARD
+        if bpy.app.timers.is_registered(board_tick):
+            bpy.app.timers.unregister(board_tick)
         if board is not None:
             try:
                 bpy.types.SpaceView3D.draw_handler_remove(board._handle, "WINDOW")

@@ -83,6 +83,37 @@ For each variant, keep the same window width and check:
 Also open the **Remi** tab next to `GEN` and flip between them — the comparison
 that matters is against today's layout, on your own gallery.
 
+## Image graph (wired prototype)
+
+`scripts/ui_nodes_sketch.py` registers a custom NodeTree and shows it in a Node
+Editor. It is a graph over Remi's existing operators — nothing in it replaces
+the add-on's own panels, and the graph itself adds nothing to the scene.
+
+```
+Prompt ──▶ Generate Image ──▶ Image ──▶ 3D Splats ──▶ Mesh
+```
+
+| Node | Calls | Result carried |
+|---|---|---|
+| Prompt | — | text into Generate |
+| Generate Image | `remi.generate_image` | newest gallery entry after the click |
+| Image | — | a manual path, or the upstream result |
+| 3D Splats | `remi.generate_splats` | the splat object name |
+| Mesh | `remi.create_mesh` | the mesh object name |
+
+Long jobs are not blocked on: the node sets `pending`, and a 0.5 s timer polls
+the add-on's own state (`remi_image.busy`, `remi_generation.busy`) until the job
+ends, then binds the result and stops itself.
+
+Limits worth knowing:
+
+- **Context is lineage only.** Iris-3B is text-to-image, so an `Image` wired into
+  a node cannot condition generation yet.
+- Result binding assumes **one job at a time** — it takes the newest gallery entry
+  newer than the click.
+- `3D Splats` and `Mesh` create real scene objects, because that is what the
+  pipeline produces; the graph UI itself still creates nothing.
+
 ## Findings so far
 
 - **Overlays are not available in a panel.** `UILayout` has no z-order and no

@@ -1203,25 +1203,10 @@ def board_draw():
 
     zoom = board.zoom
     pulse = 0.5 + 0.5 * math.sin(time.time() * 2.6)
+    board.toggle_hits = []
     for path in board.order:
         x, y, w, h = board.card_rect(path)
         if x + w < 0 or x > width or y + h < 0 or y > height:
-            continue
-        if path.startswith("splat:"):
-            draw_rect(x, y, w, h, (0.1, 0.1, 0.11, 1.0))
-            preview = board.splat_previews.get(path)
-            if preview is not None:
-                draw_image(preview[0], x, y, w, h)
-            if path in board.selected:
-                thickness = max(1.5, 2.0 * zoom)
-                draw_rect(x, y, w, thickness, ACCENT)
-                draw_rect(x, y, thickness, h, ACCENT)
-                draw_rect(x + w - thickness, y, thickness, h, ACCENT)
-                draw_rect(x, y + h - thickness, w, thickness, ACCENT)
-            if path == board.hover or path in board.selected:
-                handle = max(7.0, 9.0 * zoom)
-                draw_rect(x + w - handle / 2, y - handle / 2, handle, handle, ACCENT)
-            draw_text("3D", x + 8, y + 8, 11, ACCENT)
             continue
         if path.startswith("pending"):
             grey = 0.13 + 0.055 * pulse
@@ -1236,35 +1221,53 @@ def board_draw():
                 handle = max(7.0, 9.0 * zoom)
                 draw_rect(x + w - handle / 2, y - handle / 2, handle, handle, ACCENT)
             continue
-        cached = board.texture(path)
-        if cached is None:
-            continue
-        texture, image_w, image_h = cached
-        aspect = image_w / image_h
-        if aspect >= 1.0:
-            draw_w = w
-            draw_h = w / aspect
+        showing_3d = bool(board.view_3d.get(path)) and path in board.splat_previews
+        if showing_3d:
+            preview = board.splat_previews[path]
+            draw_rect(x, y, w, h, (0.09, 0.09, 0.1, 1.0))
+            draw_image(preview[0], x, y, w, h)
+            draw_x, draw_y, draw_w, draw_h = x, y, w, h
         else:
-            draw_h = h
-            draw_w = h * aspect
-        draw_x = x + (w - draw_w) / 2
-        draw_y = y + (h - draw_h) / 2
-        draw_image(texture, draw_x, draw_y, draw_w, draw_h)
+            cached = board.texture(path)
+            if cached is None:
+                continue
+            texture, image_w, image_h = cached
+            aspect = image_w / image_h
+            if aspect >= 1.0:
+                draw_w = w
+                draw_h = w / aspect
+            else:
+                draw_h = h
+                draw_w = h * aspect
+            draw_x = x + (w - draw_w) / 2
+            draw_y = y + (h - draw_h) / 2
+            draw_image(texture, draw_x, draw_y, draw_w, draw_h)
         if path in board.selected:
             thickness = max(1.5, 2.0 * zoom)
             draw_rect(draw_x, draw_y, draw_w, thickness, ACCENT)
             draw_rect(draw_x, draw_y, thickness, draw_h, ACCENT)
             draw_rect(draw_x + draw_w - thickness, draw_y, thickness, draw_h, ACCENT)
             draw_rect(draw_x, draw_y + draw_h - thickness, draw_w, thickness, ACCENT)
-        if path in board.splat_ready:
-            preview = board.splat_previews.get(path)
-            if preview is not None:
-                inset = max(56.0, min(120.0, 90.0 * zoom))
-                px = x + w - inset - 10
-                py = y + h - inset - 10
-                draw_rect(px - 3, py - 3, inset + 6, inset + 6, (0.06, 0.06, 0.07, 1.0))
-                draw_image(preview[0], px, py, inset, inset)
-            draw_text("3D", x + 8, y + 8, 11, ACCENT)
+        if path in board.splat_ready and path in board.splat_previews:
+            chip_w = 42.0
+            chip_h = 20.0
+            chip_x = x + 8
+            chip_y = y + h - chip_h - 8
+            draw_rect(
+                chip_x,
+                chip_y,
+                chip_w,
+                chip_h,
+                (0.2, 0.2, 0.21, 1.0) if showing_3d else ACCENT,
+            )
+            draw_text(
+                "Image" if showing_3d else "3D",
+                chip_x + 7,
+                chip_y + 5,
+                10,
+                TEXT if showing_3d else (0.06, 0.06, 0.07, 1.0),
+            )
+            board.toggle_hits.append(((chip_x, chip_y, chip_w, chip_h), path))
         if path == board.hover or path in board.selected:
             handle = max(7.0, 9.0 * zoom)
             hx, hy = draw_x + draw_w, draw_y
@@ -1744,6 +1747,15 @@ class REMI_BOARD_OT_run(Operator):
                     run_strip_action(context, action, target)
                     self._redraw(context)
                     return {"RUNNING_MODAL"}
+            for rect, target in board.toggle_hits:
+                if (
+                    rect[0] <= mx <= rect[0] + rect[2]
+                    and rect[1] <= my <= rect[1] + rect[3]
+                ):
+                    board.view_3d[target] = not board.view_3d.get(target, False)
+                    save_layout(context)
+                    self._redraw(context)
+                    return {"RUNNING_MODAL"}
             if not board.bar_rect[2]:
                 editor_layout(board, board.region[0])
             bx, by, bw, bh = board.bar_rect
@@ -1983,6 +1995,12 @@ def board_tick():
         key = board.pending_3d_key
         board.pending_3d = ""
         board.pending_3d_key = ""
+        if key:
+            if key in board.order:
+                board.order.remove(key)
+            board.positions.pop(key, None)
+            board.scales.pop(key, None)
+            board.selected.discard(key)
         splat = splat_for(path)
         if splat is not None:
             try:
@@ -1995,11 +2013,17 @@ def board_tick():
                 board.splat_previews[path] = preview
                 board.datablocks.append(preview[1])
             save_layout(context)
-        elif key:
-            if key in board.order:
-                board.order.remove(key)
-            board.positions.pop(key, None)
-            board.scales.pop(key, None)
+    if board.ticks % 2 == 0:
+        for path, name in board.splat_ready.items():
+            if path in board.splat_previews:
+                continue
+            obj = bpy.data.objects.get(name)
+            if obj is not None:
+                preview = build_splat_preview(obj)
+                if preview is not None:
+                    board.splat_previews[path] = preview
+                    board.datablocks.append(preview[1])
+            break
     if not state.busy and board.ticks % 3 == 0:
         entries = gallery_entries(context)
         if len(entries) > board.known:

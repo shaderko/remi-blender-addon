@@ -500,17 +500,33 @@ class RemiNodes_OT_Generate(Operator):
             return {"CANCELLED"}
         prompt = upstream_prompt(node).strip()
         if not prompt:
-            self.report({"ERROR"}, "Connect a Prompt node or type a prompt")
+            node.message = "No prompt — link a Prompt node or type one"
+            redraw()
             return {"CANCELLED"}
         context.scene.remi_image.prompt = prompt
+        if not bpy.ops.remi.generate_image.poll():
+            node.message = "Blocked — a session or another job is running"
+            redraw()
+            return {"CANCELLED"}
         node.pending = True
         node.started = time.time()
         node.message = ""
-        result = bpy.ops.remi.generate_image()
-        if "FINISHED" not in result:
+        try:
+            # Modal job operator: invoke, not exec.
+            result = bpy.ops.remi.generate_image("INVOKE_DEFAULT")
+        except Exception as exc:
             node.pending = False
+            node.message = f"{type(exc).__name__}: {exc}"
+            redraw()
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        if not ({"FINISHED", "RUNNING_MODAL"} & set(result)):
+            node.pending = False
+            node.message = image_state(context).status or "Refused — check the Info bar"
+            redraw()
             return {"CANCELLED"}
         arm_poll()
+        redraw()
         self.report({"INFO"}, "Generating from the graph")
         return {"FINISHED"}
 
@@ -536,16 +552,31 @@ class RemiNodes_OT_Splat(Operator):
             return {"CANCELLED"}
         source = upstream_image_path(node)
         if not source or not Path(bpy.path.abspath(source)).is_file():
-            self.report({"ERROR"}, "No image upstream")
+            node.message = "No image upstream"
+            redraw()
+            return {"CANCELLED"}
+        if not bpy.ops.remi.generate_splats.poll():
+            node.message = "Blocked — finish the current job first"
+            redraw()
             return {"CANCELLED"}
         node.pending = True
         node.started = time.time()
         node.message = ""
-        result = bpy.ops.remi.generate_splats(image_path=source)
-        if "FINISHED" not in result:
+        try:
+            result = bpy.ops.remi.generate_splats("INVOKE_DEFAULT", image_path=source)
+        except Exception as exc:
             node.pending = False
+            node.message = f"{type(exc).__name__}: {exc}"
+            redraw()
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        if not ({"FINISHED", "RUNNING_MODAL"} & set(result)):
+            node.pending = False
+            node.message = generation_state(context).status or "Refused — check the Info bar"
+            redraw()
             return {"CANCELLED"}
         arm_poll()
+        redraw()
         self.report({"INFO"}, "Generating splats from the graph")
         return {"FINISHED"}
 
@@ -572,7 +603,12 @@ class RemiNodes_OT_Mesh(Operator):
         source = upstream_image_path(node)
         splat = splat_for(source) if source else None
         if splat is None:
-            self.report({"ERROR"}, "No splats upstream")
+            node.message = "No splats upstream"
+            redraw()
+            return {"CANCELLED"}
+        if not bpy.ops.remi.create_mesh.poll():
+            node.message = "Blocked — finish the current job first"
+            redraw()
             return {"CANCELLED"}
         for obj in context.view_layer.objects:
             obj.select_set(False)
@@ -580,11 +616,22 @@ class RemiNodes_OT_Mesh(Operator):
         context.view_layer.objects.active = splat
         node.pending = True
         node.message = ""
-        result = bpy.ops.remi.create_mesh()
-        if "FINISHED" not in result:
+        try:
+            result = bpy.ops.remi.create_mesh("INVOKE_DEFAULT")
+        except Exception as exc:
             node.pending = False
+            node.message = f"{type(exc).__name__}: {exc}"
+            redraw()
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        if not ({"FINISHED", "RUNNING_MODAL"} & set(result)):
+            node.pending = False
+            node.message = generation_state(context).mesh_status or "Refused — check the Info bar"
+            redraw()
             return {"CANCELLED"}
         arm_poll()
+        redraw()
+        self.report({"INFO"}, "Building the mesh from the graph")
         return {"FINISHED"}
 
 

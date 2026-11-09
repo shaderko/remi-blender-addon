@@ -471,6 +471,7 @@ class Board:
         self.button_rect = (0.0, 0.0, 0.0, 0.0)
         self.history = []
         self.future = []
+        self.strip_hits = []
         self.text_drag = False
         self.text_word_drag = False
         self.text_clicks = (0.0, 0.0, 0.0, 0)
@@ -709,6 +710,67 @@ def draw_grid(board, width, height):
     draw_rects(dots, DOT)
 
 
+def prompt_for(board, path):
+    for entry in board.entries:
+        if str(entry.path) == path:
+            return entry.prompt or ""
+    return ""
+
+
+def draw_selection_strip(board, width):
+    """Small thumbnails of the selection, above the composer."""
+    board.strip_hits = []
+    selected = [
+        path
+        for path in board.order
+        if path in board.selected and not path.startswith("pending:")
+    ]
+    if not selected:
+        return
+    bx, by, bw, bh = board.bar_rect
+    y = by + bh + 10
+    size = 40.0
+    gap = 6.0
+    x = bx
+    single = len(selected) == 1
+    button_w = 46.0
+    button_h = 24.0
+    reserve = 2 * (button_w + 6) + 12 if single else 0.0
+    limit = bx + bw - reserve
+    shown = 0
+    for path in selected:
+        if x + size > limit:
+            break
+        cached = board.texture(path)
+        if cached is not None:
+            draw_image(cached[0], x, y, size, size)
+        else:
+            draw_rect(x, y, size, size, (0.17, 0.17, 0.18, 1.0))
+        draw_rect(x, y, size, 1.5, ACCENT)
+        board.strip_hits.append(((x, y, size, size), "select", path))
+        x += size + gap
+        shown += 1
+    remaining = len(selected) - shown
+    if remaining > 0:
+        draw_text(f"+{remaining}", x, y + 14, 11, DIM)
+        x += 28
+    if not single:
+        return
+    path = selected[0]
+    prompt = prompt_for(board, path)
+    use_x = bx + bw - button_w
+    copy_x = use_x - button_w - 6
+    text_x = x
+    text_limit = copy_x - 10 - text_x
+    label = clip_text(prompt, 11, text_limit) if prompt else "(no prompt saved)"
+    draw_text(label, text_x, y + 15, 11, TEXT if prompt else DIM)
+    for offset, (action, caption) in enumerate((("copy", "Copy"), ("use", "Use"))):
+        bx0 = copy_x + offset * (button_w + 6)
+        draw_rect(bx0, y + 8, button_w, button_h, (0.19, 0.19, 0.2, 1.0))
+        draw_text(caption, bx0 + 11, y + 16, 11, TEXT)
+        board.strip_hits.append(((bx0, y + 8, button_w, button_h), action, path))
+
+
 def draw_composer(board, width):
     lines = editor_layout(board, width)
     x, y, bar_w, bar_h = board.bar_rect
@@ -779,6 +841,32 @@ def draw_composer(board, width):
     )
 
 
+def run_strip_action(context, action, path):
+    board = BOARD
+    if board is None:
+        return
+    if action == "select":
+        board.raise_card(path)
+        board.selected = {path}
+        store_selection(context, board.selected)
+        return
+    prompt = prompt_for(board, path)
+    if not prompt:
+        return
+    if action == "copy":
+        try:
+            context.window_manager.clipboard = prompt
+        except Exception:
+            pass
+        return
+    if action == "use":
+        board.composer = prompt
+        board.caret = board.anchor = len(prompt)
+        board.focused = True
+        board.text_scroll = 0.0
+        editor_layout(board, board.region[0])
+
+
 def board_draw():
     board = BOARD
     if board is None:
@@ -846,6 +934,7 @@ def board_draw():
             draw_rect(hx - handle / 2, hy - handle / 2, handle, handle, ACCENT)
 
     draw_composer(board, width)
+    draw_selection_strip(board, width)
     gpu.state.blend_set("NONE")
 
 
@@ -1283,6 +1372,14 @@ class REMI_BOARD_OT_run(Operator):
             return {"RUNNING_MODAL"}
 
         if event.type == "LEFTMOUSE" and event.value == "PRESS":
+            for rect, action, target in board.strip_hits:
+                if (
+                    rect[0] <= mx <= rect[0] + rect[2]
+                    and rect[1] <= my <= rect[1] + rect[3]
+                ):
+                    run_strip_action(context, action, target)
+                    self._redraw(context)
+                    return {"RUNNING_MODAL"}
             if not board.bar_rect[2]:
                 editor_layout(board, board.region[0])
             bx, by, bw, bh = board.bar_rect

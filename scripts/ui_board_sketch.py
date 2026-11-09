@@ -35,7 +35,6 @@ from gpu_extras.batch import batch_for_shader
 
 BOOT = {"source": "not loaded", "error": ""}
 SELECTION_KEY = "remi_board_selection"
-LAYOUT_KEY = "remi_board_layout"
 
 CELL_W = 300.0
 CELL_H = 300.0
@@ -294,6 +293,7 @@ class Board:
         self.counter = 0
         self.ticks = 0
         self.known = 0
+        self.restored = False
 
     # data ---------------------------------------------------------------
     def load(self, context, entries):
@@ -310,6 +310,7 @@ class Board:
                     continue
                 if isinstance(position, (list, tuple)) and len(position) == 2:
                     self.positions[str(path)] = [float(position[0]), float(position[1])]
+            self.restored = bool(self.positions)
             self.zoom = float(layout.get("zoom", self.zoom))
             pan = layout.get("pan")
             if isinstance(pan, (list, tuple)) and len(pan) == 2:
@@ -621,7 +622,6 @@ def board_draw():
             hx, hy = draw_x + draw_w, draw_y
             draw_rect(hx - handle / 2, hy - handle / 2, handle, handle, ACCENT)
 
-    placeholder_cards(board, width, height)
     draw_composer(board, width)
     gpu.state.blend_set("NONE")
 
@@ -642,38 +642,74 @@ def store_selection(context, paths):
     context.scene[SELECTION_KEY] = "\n".join(sorted(paths))
 
 
+def layout_file():
+    override = os.environ.get("REMI_BOARD_LAYOUT")
+    if override:
+        return Path(override)
+    try:
+        base = Path(bpy.utils.user_resource("CONFIG")) / "remi"
+        base.mkdir(parents=True, exist_ok=True)
+        return base / "board_layout.json"
+    except Exception:
+        return None
+
+
+def layout_key(context):
+    try:
+        return str(Path(bpy.path.abspath(context.scene.remi_image.output)).resolve())
+    except Exception:
+        return "default"
+
+
 def load_layout(context):
-    raw = context.scene.get(LAYOUT_KEY, "")
-    if not raw:
+    path = layout_file()
+    if path is None:
         return {}
     try:
-        data = json.loads(str(raw))
-    except Exception:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
         return {}
-    return data if isinstance(data, dict) else {}
+    galleries = data.get("galleries") if isinstance(data, dict) else None
+    if not isinstance(galleries, dict):
+        return {}
+    entry = galleries.get(layout_key(context))
+    return entry if isinstance(entry, dict) else {}
 
 
 def save_layout(context):
     board = BOARD
     if board is None:
         return
+    path = layout_file()
+    if path is None:
+        return
     payload = {
         "positions": {
-            str(path): [round(float(pos[0]), 2), round(float(pos[1]), 2)]
-            for path, pos in board.positions.items()
-            if not str(path).startswith("pending:")
+            str(item): [round(float(pos[0]), 2), round(float(pos[1]), 2)]
+            for item, pos in board.positions.items()
+            if not str(item).startswith("pending:")
         },
         "scales": {
-            str(path): round(float(value), 4)
-            for path, value in board.scales.items()
-            if not str(path).startswith("pending:")
+            str(item): round(float(value), 4)
+            for item, value in board.scales.items()
+            if not str(item).startswith("pending:")
         },
         "zoom": round(float(board.zoom), 4),
         "pan": [round(float(board.pan[0]), 2), round(float(board.pan[1]), 2)],
     }
     try:
-        context.scene[LAYOUT_KEY] = json.dumps(payload)
-    except Exception:
+        data = {}
+        if path.is_file():
+            data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            data = {}
+        galleries = data.get("galleries")
+        if not isinstance(galleries, dict):
+            galleries = {}
+        galleries[layout_key(context)] = payload
+        data["galleries"] = galleries
+        path.write_text(json.dumps(data), encoding="utf-8")
+    except (OSError, ValueError):
         pass
 
 
@@ -729,7 +765,8 @@ class REMI_BOARD_OT_run(Operator):
             return {"CANCELLED"}
         board = Board(window)
         board.load(context, gallery_entries(context))
-        board.fit()
+        if not board.restored:
+            board.fit()
         BOARD = board
         area = context.area
         self._area_x = area.x if area is not None else 0

@@ -31,8 +31,8 @@ from bpy.types import Menu, Node, NodeTree, Operator, Panel
 BOOT = {"source": "not loaded", "error": ""}
 TREE_ID = "RemiImageGraph"
 GRAPH_NAME = "Remi Image Graph"
-CARD_SCALE = 7.0
-CARD_WIDTH = 420.0
+CARD_SCALE = 3.0
+CARD_WIDTH = 320.0
 NODE_ITEMS = (
     ("RemiNodePrompt", "Prompt", "TEXT"),
     ("RemiNodeMerge", "Merge Text", "SORTALPHA"),
@@ -249,11 +249,14 @@ def bind_editor(space, tree):
     return space.node_tree == tree
 
 
-def spawn_image_card(tree, source_node, path, index=0):
+def spawn_image_card(tree, source_node, path, index=0, prompt="", seed=0, model=""):
     card = tree.nodes.new("RemiNodeImage")
     card.location = (source_node.location.x + CARD_WIDTH + 80, source_node.location.y - (CARD_WIDTH * 0.75) * index)
     card.width = CARD_WIDTH
     card.path = path
+    card.prompt = prompt
+    card.seed = seed
+    card.model = model
     tree.links.new(source_node.outputs["Image"], card.inputs["Image"])
     return card
 
@@ -381,13 +384,16 @@ class RemiNodeGenerate(Node):
 
 
 class RemiNodeImage(Node):
-    """A board card: one concrete image, pinned to this node."""
+    """A board card: one concrete image with the settings that produced it."""
 
     bl_idname = "RemiNodeImage"
     bl_label = "Image"
     bl_icon = "IMAGE_DATA"
 
     path: StringProperty(name="Path", default="", subtype="FILE_PATH")
+    prompt: StringProperty(default="")
+    seed: IntProperty(default=0)
+    model: StringProperty(default="")
 
     def init(self, context):
         self.inputs.new("NodeSocketImage", "Image")
@@ -395,21 +401,32 @@ class RemiNodeImage(Node):
 
     def draw_buttons(self, context, layout):
         pinned = bool(self.path)
-        if pinned:
-            layout.label(text=Path(self.path).name, icon="PINNED")
-        elif self.inputs["Image"].is_linked:
-            layout.label(text="Follows the graph", icon="LINKED")
-        else:
-            layout.label(text="Empty card", icon="INFO")
         effective = self.path or input_image_path(self)
+        if not pinned and not effective:
+            layout.label(text="Empty card", icon="INFO")
+            row = layout.row(align=True)
+            row.operator("remi_nodes.use_latest", text="Latest", icon="FILE_REFRESH").node = self.name
+            layout.label(text="Previews are 32 px icons in a node — use Open", icon="INFO")
+            return
+        if not pinned:
+            layout.label(text="Follows the graph", icon="LINKED")
         icon = preview_icon(effective)
         if icon:
             layout.template_icon(icon_value=icon, scale=CARD_SCALE)
-        elif effective:
-            layout.label(text="No preview", icon="INFO")
+        if self.prompt:
+            for line in textwrap.wrap(self.prompt, 38)[:2]:
+                layout.label(text=line)
+        bits = [Path(effective).name]
+        if self.seed:
+            bits.append(f"seed {self.seed}")
+        if self.model:
+            bits.append(self.model)
+        layout.label(text=" · ".join(bits))
         row = layout.row(align=True)
-        row.operator("remi_nodes.card_pin", text="Pin", icon="PINNED").node = self.name
-        row.operator("remi_nodes.card_open", text="", icon="ZOOM_IN").node = self.name
+        row.scale_y = 1.2
+        row.operator("remi_nodes.card_open", text="Open Full Size", icon="ZOOM_IN").node = self.name
+        if not pinned:
+            row.operator("remi_nodes.card_pin", text="", icon="PINNED").node = self.name
 
 
 class RemiNodeSplat(Node):
@@ -544,7 +561,15 @@ def poll_results():
                 node.runs += 1
                 node.result_path = str(entry.path)
                 node.message = f"done · seed {entry.seed}"
-                spawn_image_card(tree, node, str(entry.path), node.runs - 1)
+                spawn_image_card(
+                    tree,
+                    node,
+                    str(entry.path),
+                    node.runs - 1,
+                    prompt=(input_text(node, "Prompt") or node.prompt),
+                    seed=entry.seed,
+                    model=entry.model_label,
+                )
             else:
                 node.message = image.status or "No result — check the Info bar"
             changed = True
@@ -853,6 +878,9 @@ class RemiNodes_OT_SyncBoard(Operator):
             card.location = (-420, -200 - 340 * index)
             card.width = CARD_WIDTH
             card.path = str(entry.path)
+            card.prompt = entry.prompt
+            card.seed = entry.seed
+            card.model = entry.model_label
             added += 1
         redraw()
         self.report({"INFO"}, f"Added {added} card(s)")

@@ -743,7 +743,22 @@ def draw_selection_strip(board, width):
             break
         cached = board.texture(path)
         if cached is not None:
-            draw_image(cached[0], x, y, size, size)
+            texture, image_w, image_h = cached
+            aspect = image_w / image_h
+            if aspect >= 1.0:
+                draw_w = size
+                draw_h = size / aspect
+            else:
+                draw_h = size
+                draw_w = size * aspect
+            draw_rect(x, y, size, size, (0.115, 0.115, 0.125, 1.0))
+            draw_image(
+                texture,
+                x + (size - draw_w) / 2,
+                y + (size - draw_h) / 2,
+                draw_w,
+                draw_h,
+            )
         else:
             draw_rect(x, y, size, size, (0.17, 0.17, 0.18, 1.0))
         draw_rect(x, y, size, 1.5, ACCENT)

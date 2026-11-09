@@ -31,7 +31,17 @@ from bpy.types import Menu, Node, NodeTree, Operator, Panel
 BOOT = {"source": "not loaded", "error": ""}
 TREE_ID = "RemiImageGraph"
 GRAPH_NAME = "Remi Image Graph"
-CARD_SCALE = 4.5
+CARD_SCALE = 7.0
+CARD_WIDTH = 420.0
+NODE_ITEMS = (
+    ("RemiNodePrompt", "Prompt", "TEXT"),
+    ("RemiNodeMerge", "Merge Text", "SORTALPHA"),
+    ("RemiNodeImage", "Image card", "IMAGE_DATA"),
+    ("RemiNodeGenerate", "Generate Image", "RENDER_STILL"),
+    ("RemiNodeSplat", "Generate 3D", "OUTLINER_OB_POINTCLOUD"),
+    ("RemiNodeSplats", "Splats card", "OUTLINER_OB_POINTCLOUD"),
+    ("RemiNodeMesh", "Mesh", "MOD_REMESH"),
+)
 
 
 def _script_location():
@@ -223,7 +233,15 @@ def seed_graph(tree):
     tree.nodes.active = generate
 
 
+def normalize_cards(tree):
+    """Widen existing image cards so their preview is not clipped."""
+    for node in tree.nodes:
+        if node.bl_idname == "RemiNodeImage" and node.width < CARD_WIDTH:
+            node.width = CARD_WIDTH
+
+
 def bind_editor(space, tree):
+    normalize_cards(tree)
     space.tree_type = TREE_ID
     space.node_tree = tree
     if hasattr(space, "show_region_ui"):
@@ -233,7 +251,8 @@ def bind_editor(space, tree):
 
 def spawn_image_card(tree, source_node, path, index=0):
     card = tree.nodes.new("RemiNodeImage")
-    card.location = (source_node.location.x + 420, source_node.location.y - 60 * index)
+    card.location = (source_node.location.x + CARD_WIDTH + 80, source_node.location.y - (CARD_WIDTH * 0.75) * index)
+    card.width = CARD_WIDTH
     card.path = path
     tree.links.new(source_node.outputs["Image"], card.inputs["Image"])
     return card
@@ -241,7 +260,8 @@ def spawn_image_card(tree, source_node, path, index=0):
 
 def spawn_splat_card(tree, source_node, object_name, image_path, index=0):
     card = tree.nodes.new("RemiNodeSplats")
-    card.location = (source_node.location.x + 420, source_node.location.y - 60 * index)
+    card.location = (source_node.location.x + 420, source_node.location.y - 260 * index)
+    card.width = 300.0
     card.object_name = object_name
     card.image_path = image_path
     tree.links.new(source_node.outputs["Image"], card.inputs["Image"])
@@ -830,7 +850,8 @@ class RemiNodes_OT_SyncBoard(Operator):
             if str(entry.path) in pinned:
                 continue
             card = tree.nodes.new("RemiNodeImage")
-            card.location = (-420, -200 - 260 * index)
+            card.location = (-420, -200 - 340 * index)
+            card.width = CARD_WIDTH
             card.path = str(entry.path)
             added += 1
         redraw()
@@ -849,6 +870,8 @@ class RemiNodes_OT_AddNode(Operator):
         tree = graph(create=True)
         node = tree.nodes.new(self.node_type)
         node.location = (0, -300)
+        if self.node_type == "RemiNodeImage":
+            node.width = CARD_WIDTH
         tree.nodes.active = node
         redraw()
         return {"FINISHED"}
@@ -906,17 +929,22 @@ class RemiNodes_MT_Add(Menu):
 
     def draw(self, context):
         layout = self.layout
-        for identifier, label, icon in (
-            ("RemiNodePrompt", "Prompt", "TEXT"),
-            ("RemiNodeMerge", "Merge Text", "SORTALPHA"),
-            ("RemiNodeImage", "Image card", "IMAGE_DATA"),
-            ("RemiNodeGenerate", "Generate Image", "RENDER_STILL"),
-            ("RemiNodeSplat", "Generate 3D", "OUTLINER_OB_POINTCLOUD"),
-            ("RemiNodeSplats", "Splats card", "OUTLINER_OB_POINTCLOUD"),
-            ("RemiNodeMesh", "Mesh", "MOD_REMESH"),
-        ):
+        for identifier, label, icon in NODE_ITEMS:
             button = layout.operator("remi_nodes.add", text=label, icon=icon)
             button.node_type = identifier
+
+
+def node_add_menu(self, context):
+    """Put Remi nodes into the node editor's own Shift+A menu."""
+    space = getattr(context, "space_data", None)
+    if space is None or getattr(space, "tree_type", "") != TREE_ID:
+        return
+    layout = self.layout
+    layout.separator()
+    layout.label(text="Remi")
+    for identifier, label, icon in NODE_ITEMS:
+        button = layout.operator("remi_nodes.add", text=label, icon=icon)
+        button.node_type = identifier
 
 
 class RemiNodes_PT_Panel(Panel):
@@ -972,11 +1000,20 @@ CLASSES = (
 def register():
     for cls in CLASSES:
         bpy.utils.register_class(cls)
+    try:
+        bpy.types.NODE_MT_add.remove(node_add_menu)
+    except (ValueError, RuntimeError):
+        pass
+    bpy.types.NODE_MT_add.append(node_add_menu)
 
 
 def unregister():
     if bpy.app.timers.is_registered(poll_results):
         bpy.app.timers.unregister(poll_results)
+    try:
+        bpy.types.NODE_MT_add.remove(node_add_menu)
+    except (ValueError, RuntimeError):
+        pass
     for cls in reversed(CLASSES):
         try:
             bpy.utils.unregister_class(cls)

@@ -481,8 +481,10 @@ class Board:
         self.future = []
         self.strip_hits = []
         self.splat_ready = {}
+        self.splat_cards = {}
         self.splat_previews = {}
         self.pending_3d = ""
+        self.pending_3d_key = ""
         self.text_drag = False
         self.text_word_drag = False
         self.text_clicks = (0.0, 0.0, 0.0, 0)
@@ -542,12 +544,16 @@ class Board:
         bottom = min(position[1] for position in self.positions.values())
         return [left, bottom - CELL_H - GAP]
 
-    def add_pending(self, prompt):
-        key = f"pending:{self.counter}"
+    def add_pending_card(self, prefix="pending:"):
+        key = f"{prefix}{self.counter}"
         self.counter += 1
-        self.pending.append({"key": key, "prompt": prompt})
         self.positions[key] = self.new_slot()
         self.order.append(key)
+        return key
+
+    def add_pending(self, prompt):
+        key = self.add_pending_card("pending:")
+        self.pending.append({"key": key, "prompt": prompt})
         return key
 
     def drop_oldest_pending(self):
@@ -929,7 +935,6 @@ def project_splats(positions, opacities, sh_dc, matrix, size=256):
     pixel_y = ((points @ up) / depth * focal * 0.5 + 0.5) * size
 
     rgb = np.clip(np.asarray(sh_dc, dtype=np.float64) * 0.28209479177387814 + 0.5, 0.0, 1.0)
-    linear = np.where(rgb <= 0.04045, rgb / 12.92, ((rgb + 0.055) / 1.055) ** 2.4)
     weight = np.clip(np.asarray(opacities, dtype=np.float64), 0.0, 1.0) / depth
 
     xs = np.clip(pixel_x.astype(np.int32), 0, size - 1)
@@ -937,7 +942,7 @@ def project_splats(positions, opacities, sh_dc, matrix, size=256):
     colour_buffer = np.zeros((size, size, 3), dtype=np.float64)
     weight_buffer = np.zeros((size, size), dtype=np.float64)
     for channel in range(3):
-        np.add.at(colour_buffer[:, :, channel], (ys, xs), linear[:, channel] * weight)
+        np.add.at(colour_buffer[:, :, channel], (ys, xs), rgb[:, channel] * weight)
     np.add.at(weight_buffer, (ys, xs), weight)
 
     colour_buffer = _blur(colour_buffer)
@@ -971,6 +976,7 @@ def build_splat_preview(obj, size=256):
         return None
     image = bpy.data.images.new(f"remi preview {obj.name}", size, size, alpha=True)
     image.pixels.foreach_set(rgba.ravel())
+    image.update()
     try:
         texture = gpu.texture.from_image(image)
     except Exception:
@@ -1002,6 +1008,7 @@ def start_splat(context):
         return False
     if {"FINISHED", "RUNNING_MODAL"} & set(result):
         board.pending_3d = path
+        board.pending_3d_key = board.add_pending_card("pending3d:")
         return True
     return False
 
@@ -1084,7 +1091,23 @@ def board_draw():
         x, y, w, h = board.card_rect(path)
         if x + w < 0 or x > width or y + h < 0 or y > height:
             continue
-        if path.startswith("pending:"):
+        if path.startswith("splat:"):
+            draw_rect(x, y, w, h, (0.1, 0.1, 0.11, 1.0))
+            preview = board.splat_previews.get(path)
+            if preview is not None:
+                draw_image(preview[0], x, y, w, h)
+            if path in board.selected:
+                thickness = max(1.5, 2.0 * zoom)
+                draw_rect(x, y, w, thickness, ACCENT)
+                draw_rect(x, y, thickness, h, ACCENT)
+                draw_rect(x + w - thickness, y, thickness, h, ACCENT)
+                draw_rect(x, y + h - thickness, w, thickness, ACCENT)
+            if path == board.hover or path in board.selected:
+                handle = max(7.0, 9.0 * zoom)
+                draw_rect(x + w - handle / 2, y - handle / 2, handle, handle, ACCENT)
+            draw_text("3D", x + 8, y + 8, 11, ACCENT)
+            continue
+        if path.startswith("pending"):
             grey = 0.13 + 0.055 * pulse
             draw_rect(x, y, w, h, (grey, grey, grey + 0.008, 1.0))
             if path in board.selected:
@@ -1197,12 +1220,12 @@ def save_layout(context):
         "positions": {
             str(item): [round(float(pos[0]), 2), round(float(pos[1]), 2)]
             for item, pos in board.positions.items()
-            if not str(item).startswith("pending:")
+            if not str(item).startswith(("pending", "splat:"))
         },
         "scales": {
             str(item): round(float(value), 4)
             for item, value in board.scales.items()
-            if not str(item).startswith("pending:")
+            if not str(item).startswith(("pending", "splat:"))
         },
         "zoom": round(float(board.zoom), 4),
         "pan": [round(float(board.pan[0]), 2), round(float(board.pan[1]), 2)],
@@ -1812,7 +1835,9 @@ def board_tick():
     generation = context.window_manager.remi_generation
     if board.pending_3d and not generation.busy:
         path = board.pending_3d
+        key = board.pending_3d_key
         board.pending_3d = ""
+        board.pending_3d_key = ""
         splat = splat_for(path)
         if splat is not None:
             try:
@@ -1821,9 +1846,25 @@ def board_tick():
                 pass
             board.splat_ready[path] = splat.name
             preview = build_splat_preview(splat)
-            if preview is not None:
+            if key and key in board.order:
+                index = board.order.index(key)
+                card = f"splat:{board.counter}"
+                board.counter += 1
+                board.positions[card] = board.positions.pop(key, [0.0, 0.0])
+                board.scales[card] = board.scales.pop(key, 1.0)
+                board.order[index] = card
+                board.splat_cards[card] = {"image": path, "object": splat.name}
+                if preview is not None:
+                    board.splat_previews[card] = preview
+                    board.datablocks.append(preview[1])
+            elif preview is not None:
                 board.splat_previews[path] = preview
                 board.datablocks.append(preview[1])
+        elif key:
+            if key in board.order:
+                board.order.remove(key)
+            board.positions.pop(key, None)
+            board.scales.pop(key, None)
     if not state.busy and board.ticks % 3 == 0:
         entries = gallery_entries(context)
         if len(entries) > board.known:

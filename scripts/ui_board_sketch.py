@@ -43,6 +43,7 @@ BG = (0.152, 0.152, 0.158, 1.0)
 DOT = (0.235, 0.235, 0.245, 1.0)
 CARD = (0.205, 0.205, 0.215, 1.0)
 CARD_HOT = (0.235, 0.235, 0.245, 1.0)
+CARD_SEL = (0.30, 0.22, 0.15, 1.0)
 TEXT = (0.86, 0.86, 0.9, 1.0)
 DIM = (0.55, 0.55, 0.6, 1.0)
 ACCENT = (1.0, 0.55, 0.15, 1.0)
@@ -360,7 +361,9 @@ def board_draw():
         x, y, w, h = board.card_rect(path)
         if x + w < 0 or x > width or y + h < 0 or y > height:
             continue
-        draw_rect(x, y, w, h, CARD_HOT if path == board.hover else CARD)
+        selected = path in board.selected
+        base = CARD_SEL if selected else (CARD_HOT if path == board.hover else CARD)
+        draw_rect(x, y, w, h, base)
         pad = 8 * zoom
         image_size = min(w - 2 * pad, h - 64 * zoom)
         ix = x + (w - image_size) / 2
@@ -370,12 +373,16 @@ def board_draw():
             draw_image(texture, ix, iy, image_size, image_size)
         else:
             draw_rect(ix, iy, image_size, image_size, (0.18, 0.18, 0.19, 1.0))
-        if path in board.selected:
+        if selected:
             thickness = max(2.0, 2.5 * zoom)
             draw_rect(x, y, w, thickness, ACCENT)
             draw_rect(x, y, thickness, h, ACCENT)
             draw_rect(x + w - thickness, y, thickness, h, ACCENT)
             draw_rect(x, y + h - thickness, w, thickness, ACCENT)
+            mark = max(10.0, 14 * zoom)
+            draw_rect(x + w - mark - 6, y + h - mark - 6, mark, mark, ACCENT)
+        elif path == board.hover:
+            draw_rect(x, y, w, max(1.0, 1.5 * zoom), DIM)
         if zoom > 0.32:
             draw_text(Path(path).name, x + pad, y + 38 * zoom, 11 * zoom + 3, TEXT)
             entry = next((item for item in board.entries if str(item.path) == path), None)
@@ -441,11 +448,30 @@ class REMI_BOARD_OT_run(Operator):
         board.load(gallery_entries(context))
         board.fit()
         BOARD = board
+        area = context.area
+        self._area_x = area.x if area is not None else 0
+        self._area_y = area.y if area is not None else 0
         board._handle = bpy.types.SpaceView3D.draw_handler_add(
             board_draw, (), "WINDOW", "POST_PIXEL"
         )
         context.window_manager.modal_handler_add(self)
         return {"RUNNING_MODAL"}
+
+    def _mouse(self, context, event):
+        """Window coordinates are reliable here; region ones are not."""
+        window = None
+        for candidate in bpy.context.window_manager.windows:
+            if BOARD is not None and candidate.as_pointer() == BOARD.window:
+                window = candidate
+                break
+        if window is not None:
+            areas = list(window.screen.areas)
+            area = next((item for item in areas if item.type == "VIEW_3D"), None)
+            if area is None and areas:
+                area = max(areas, key=lambda item: item.width * item.height)
+            if area is not None:
+                self._area_x, self._area_y = area.x, area.y
+        return event.mouse_x - self._area_x, event.mouse_y - self._area_y
 
     def modal(self, context, event):
         board = BOARD
@@ -457,7 +483,7 @@ class REMI_BOARD_OT_run(Operator):
         region = getattr(context, "region", None)
         if region is not None:
             board.region = (region.width, region.height)
-        mx, my = event.mouse_region_x, event.mouse_region_y
+        mx, my = self._mouse(context, event)
 
         if event.type == "ESC" and event.value == "PRESS":
             self._finish(context)

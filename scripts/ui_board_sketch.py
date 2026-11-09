@@ -45,6 +45,15 @@ RESIZE_PX = 16.0
 MIN_SCALE = 0.25
 MAX_SCALE = 4.0
 
+TEXT_SIZE = 13.0
+LINE_H = 18.0
+MIN_LINES = 1
+MAX_LINES = 7
+BAR_PAD = 12.0
+TEXT_PAD = 10.0
+BUTTON_W = 112.0
+BUTTON_H = 28.0
+
 BG = (0.152, 0.152, 0.158, 1.0)
 DOT = (0.235, 0.235, 0.245, 1.0)
 TEXT = (0.88, 0.88, 0.92, 1.0)
@@ -214,8 +223,11 @@ def draw_text(text, x, y, size=12, colour=TEXT):
 def text_width(text, size):
     if not text:
         return 0.0
-    blf.size(0, int(max(8, size)))
-    return blf.dimensions(0, text)[0]
+    try:
+        blf.size(0, int(max(8, size)))
+        return blf.dimensions(0, text)[0]
+    except Exception:
+        return len(text) * size * 0.55
 
 
 def clip_text(text, size, limit):
@@ -224,6 +236,92 @@ def clip_text(text, size, limit):
     while text and text_width(text + "…", size) > limit:
         text = text[:-1]
     return text + "…"
+
+
+def wrap_lines(text, size, width):
+    """Visual lines as (start, end) index pairs, wrapping on spaces."""
+    lines = []
+    line_start = 0
+    last_space = -1
+    used = 0.0
+    index = 0
+    total = len(text)
+    while index < total:
+        char = text[index]
+        if char == "\n":
+            lines.append((line_start, index))
+            index += 1
+            line_start = index
+            last_space = -1
+            used = 0.0
+            continue
+        advance = text_width(char, size)
+        if used + advance > width and index > line_start:
+            if last_space >= line_start:
+                lines.append((line_start, last_space))
+                line_start = last_space + 1
+                index = line_start
+            else:
+                lines.append((line_start, index))
+                line_start = index
+            last_space = -1
+            used = 0.0
+            continue
+        if char == " ":
+            last_space = index
+        used += advance
+        index += 1
+    lines.append((line_start, total))
+    return lines
+
+
+def caret_line(lines, caret):
+    for number, (start, end) in enumerate(lines):
+        if start <= caret <= end:
+            return number, caret - start
+    last = len(lines) - 1
+    start, end = lines[last]
+    return last, caret - start
+
+
+def caret_from_point(lines, text, x, y, size, text_x, text_top):
+    line_index = int(max(0.0, (text_top - y) // LINE_H))
+    line_index = min(line_index, len(lines) - 1)
+    start, end = lines[line_index]
+    best = start
+    best_distance = None
+    for offset in range(end - start + 1):
+        width = text_width(text[start : start + offset], size)
+        distance = abs(width - x)
+        if best_distance is None or distance < best_distance:
+            best_distance = distance
+            best = start + offset
+    return best
+
+
+def editor_layout(board, width):
+    """Bar rectangle, text origin and visible line count for the current text."""
+    bar_w = max(420.0, min(560.0, width - 100.0))
+    field_w = bar_w - 2 * BAR_PAD
+    lines = wrap_lines(board.composer, TEXT_SIZE, field_w)
+    visible = max(MIN_LINES, min(len(lines), MAX_LINES))
+    text_h = visible * LINE_H
+    bar_h = text_h + 2 * BAR_PAD + BUTTON_H + 8
+    x = (width - bar_w) / 2
+    y = 24.0
+    board.text_lines = lines
+    board.text_visible = visible
+    board.text_field_w = field_w
+    board.text_x = x + BAR_PAD
+    board.text_top = y + bar_h - BAR_PAD
+    board.bar_rect = (x, y, bar_w, bar_h)
+    board.button_rect = (
+        x + bar_w - BAR_PAD - BUTTON_W,
+        y + BAR_PAD - 2,
+        BUTTON_W,
+        BUTTON_H,
+    )
+    return lines
 
 
 def open_image_window(context, path):
@@ -287,6 +385,18 @@ class Board:
         self.card_drag = None
         self.resize_drag = None
         self.last_click = (None, 0.0)
+        self.composer = ""
+        self.caret = 0
+        self.anchor = 0
+        self.focused = False
+        self.text_scroll = 0.0
+        self.text_lines = []
+        self.text_visible = 1
+        self.text_field_w = 0.0
+        self.text_x = 0.0
+        self.text_top = 0.0
+        self.bar_rect = (0.0, 0.0, 0.0, 0.0)
+        self.button_rect = (0.0, 0.0, 0.0, 0.0)
         self.queue = []
         self.running = ""
         self.pending = []
@@ -523,34 +633,70 @@ def draw_grid(board, width, height):
 
 
 def draw_composer(board, width):
-    bar_w = max(380.0, min(520.0, width - 120.0))
-    bar_h = 46.0
-    x = (width - bar_w) / 2
-    y = 24.0
+    lines = editor_layout(board, width)
+    x, y, bar_w, bar_h = board.bar_rect
     draw_rect(x, y, bar_w, bar_h, (0.105, 0.105, 0.115, 0.97))
+    if board.focused:
+        draw_rect(x, y, bar_w, 1.5, ACCENT)
 
-    field_x = x + 10
-    field_w = bar_w - 146
-    draw_rect(field_x, y + 8, field_w, 30, (0.075, 0.075, 0.085, 1.0))
-    prompt = bpy.context.scene.remi_image.prompt or ""
-    label = clip_text(prompt, 13, field_w - 18) if prompt else "Describe an image…"
-    draw_text(label, field_x + 9, y + 19, 13, TEXT if prompt else DIM)
+    total = len(lines)
+    visible = board.text_visible
+    first = int(max(0.0, min(board.text_scroll, total - visible)))
+    sel_start, sel_end = sorted((board.caret, board.anchor))
+    caret_row, _column = caret_line(lines, board.caret)
 
-    button_w = 118.0
-    button_x = x + bar_w - button_w - 12
+    for row in range(visible):
+        line_index = first + row
+        if line_index >= total:
+            break
+        start, end = lines[line_index]
+        baseline = board.text_top - (row + 1) * LINE_H + 4
+        if sel_start != sel_end and not (sel_end <= start or sel_start >= end):
+            low = max(sel_start, start)
+            high = min(sel_end, end)
+            x1 = board.text_x + text_width(board.composer[start:low], TEXT_SIZE)
+            x2 = board.text_x + text_width(board.composer[start:high], TEXT_SIZE)
+            draw_rect(
+                x1,
+                baseline - 3,
+                max(2.0, x2 - x1),
+                LINE_H - 2,
+                (0.26, 0.34, 0.52, 1.0),
+            )
+        if start < end:
+            draw_text(
+                board.composer[start:end],
+                board.text_x,
+                baseline,
+                TEXT_SIZE,
+                TEXT,
+            )
+    if not board.composer:
+        draw_text(
+            "Describe an image…",
+            board.text_x,
+            board.text_top - LINE_H + 4,
+            TEXT_SIZE,
+            DIM,
+        )
+    if board.focused and (time.time() % 1.0) < 0.55:
+        row = caret_row - first
+        if 0 <= row < visible:
+            start = lines[caret_row][0]
+            caret_x = board.text_x + text_width(
+                board.composer[start : board.caret], TEXT_SIZE
+            )
+            caret_y = board.text_top - (row + 1) * LINE_H + 3
+            draw_rect(caret_x, caret_y, 1.4, LINE_H - 2, TEXT)
+
+    bx, by, bw, bh = board.button_rect
     state = bpy.context.window_manager.remi_image
     busy = state.busy or bool(board.queue)
-    draw_rect(
-        button_x,
-        y + 8,
-        button_w,
-        30,
-        (0.24, 0.24, 0.25, 1.0) if busy else ACCENT,
-    )
+    draw_rect(bx, by, bw, bh, (0.24, 0.24, 0.25, 1.0) if busy else ACCENT)
     draw_text(
         "Create",
-        button_x + 34,
-        y + 19,
+        bx + 32,
+        by + 8,
         12,
         TEXT if busy else (0.06, 0.06, 0.07, 1.0),
     )
@@ -767,6 +913,9 @@ class REMI_BOARD_OT_run(Operator):
         board.load(context, gallery_entries(context))
         if not board.restored:
             board.fit()
+        board.composer = context.scene.remi_image.prompt or ""
+        board.caret = len(board.composer)
+        board.anchor = board.caret
         BOARD = board
         area = context.area
         self._area_x = area.x if area is not None else 0
@@ -794,6 +943,111 @@ class REMI_BOARD_OT_run(Operator):
                 self._area_x, self._area_y = area.x, area.y
         return event.mouse_x - self._area_x, event.mouse_y - self._area_y
 
+    def _selection(self, board):
+        return sorted((board.caret, board.anchor))
+
+    def _replace_selection(self, board, text):
+        low, high = self._selection(board)
+        board.composer = board.composer[:low] + text + board.composer[high:]
+        board.caret = low + len(text)
+        board.anchor = board.caret
+
+    def _refresh_text(self, board):
+        editor_layout(board, board.region[0])
+        row, _column = caret_line(board.text_lines, board.caret)
+        visible = board.text_visible
+        if row < board.text_scroll:
+            board.text_scroll = float(row)
+        elif row >= board.text_scroll + visible:
+            board.text_scroll = float(row - visible + 1)
+
+    def _text_event(self, context, board, event):
+        if event.value != "PRESS":
+            return False
+        text = board.composer
+        key = event.type
+        if key == "ESC":
+            board.focused = False
+            return True
+        if key == "RETURN":
+            if event.shift:
+                self._replace_selection(board, "\n")
+                self._refresh_text(board)
+            else:
+                submit_current(context)
+            return True
+        if key == "BACK_SPACE":
+            low, high = self._selection(board)
+            if low != high:
+                board.composer = text[:low] + text[high:]
+                board.caret = board.anchor = low
+            elif board.caret > 0:
+                board.composer = text[: board.caret - 1] + text[board.caret :]
+                board.caret -= 1
+                board.anchor = board.caret
+            self._refresh_text(board)
+            return True
+        if key == "DELETE":
+            low, high = self._selection(board)
+            if low != high:
+                board.composer = text[:low] + text[high:]
+                board.caret = board.anchor = low
+            elif board.caret < len(text):
+                board.composer = text[: board.caret] + text[board.caret + 1 :]
+            self._refresh_text(board)
+            return True
+        if key in {"LEFT_ARROW", "RIGHT_ARROW", "UP_ARROW", "DOWN_ARROW", "HOME", "END"}:
+            lines = board.text_lines or wrap_lines(text, TEXT_SIZE, board.text_field_w)
+            if key in {"LEFT_ARROW", "RIGHT_ARROW"}:
+                step = -1 if key == "LEFT_ARROW" else 1
+                board.caret = max(0, min(len(text), board.caret + step))
+            elif key in {"HOME", "END"}:
+                row, _column = caret_line(lines, board.caret)
+                start, end = lines[row]
+                board.caret = start if key == "HOME" else end
+            else:
+                row, _column = caret_line(lines, board.caret)
+                target = max(0, min(len(lines) - 1, row + (-1 if key == "UP_ARROW" else 1)))
+                start, end = lines[target]
+                offset = board.caret - lines[row][0]
+                board.caret = min(start + offset, end)
+            if not event.shift:
+                board.anchor = board.caret
+            self._refresh_text(board)
+            return True
+        if event.ctrl and key == "A":
+            board.anchor = 0
+            board.caret = len(text)
+            return True
+        if event.ctrl and key in {"C", "X"}:
+            low, high = self._selection(board)
+            selected = text[low:high]
+            if selected:
+                try:
+                    context.window_manager.clipboard = selected
+                except Exception:
+                    pass
+                if key == "X":
+                    board.composer = text[:low] + text[high:]
+                    board.caret = board.anchor = low
+                    self._refresh_text(board)
+            return True
+        if event.ctrl and key == "V":
+            try:
+                clip = context.window_manager.clipboard or ""
+            except Exception:
+                clip = ""
+            if clip:
+                self._replace_selection(board, clip)
+                self._refresh_text(board)
+            return True
+        char = getattr(event, "unicode", "")
+        if char and char.isprintable() and not event.ctrl and not event.alt:
+            self._replace_selection(board, char)
+            self._refresh_text(board)
+            return True
+        return False
+
     def modal(self, context, event):
         board = BOARD
         if board is None:
@@ -805,6 +1059,19 @@ class REMI_BOARD_OT_run(Operator):
         if region is not None:
             board.region = (region.width, region.height)
         mx, my = self._mouse(context, event)
+
+        if board.focused:
+            if self._text_event(context, board, event):
+                self._redraw(context)
+                return {"RUNNING_MODAL"}
+            if event.type not in {
+                "MOUSEMOVE",
+                "LEFTMOUSE",
+                "MIDDLEMOUSE",
+                "WHEELUPMOUSE",
+                "WHEELDOWNMOUSE",
+            }:
+                return {"RUNNING_MODAL"}
 
         if event.type == "ESC" and event.value == "PRESS":
             self._finish(context)
@@ -838,6 +1105,15 @@ class REMI_BOARD_OT_run(Operator):
             return {"RUNNING_MODAL"}
 
         if event.type in {"WHEELUPMOUSE", "WHEELDOWNMOUSE"} and event.value == "PRESS":
+            editor_layout(board, board.region[0])
+            bx, by, bw, bh = board.bar_rect
+            over_bar = bx <= mx <= bx + bw and by <= my <= by + bh
+            if board.focused and over_bar and len(board.text_lines) > board.text_visible:
+                step = -1 if event.type == "WHEELUPMOUSE" else 1
+                limit = len(board.text_lines) - board.text_visible
+                board.text_scroll = max(0.0, min(float(limit), board.text_scroll + step))
+                self._redraw(context)
+                return {"RUNNING_MODAL"}
             factor = 1.15 if event.type == "WHEELUPMOUSE" else 1 / 1.15
             old = board.zoom
             new = max(0.12, min(old * factor, 3.0))
@@ -861,27 +1137,28 @@ class REMI_BOARD_OT_run(Operator):
             return {"RUNNING_MODAL"}
 
         if event.type == "LEFTMOUSE" and event.value == "PRESS":
-            width = board.region[0]
-            bar_w = max(380.0, min(520.0, width - 120.0))
-            bar_x = (width - bar_w) / 2
-            field_rect = (bar_x + 10, 32, bar_w - 146, 30)
-            button_rect = (bar_x + bar_w - 130, 32, 118, 30)
-            if (
-                field_rect[0] <= mx <= field_rect[0] + field_rect[2]
-                and field_rect[1] <= my <= field_rect[1] + field_rect[3]
-            ):
-                try:
-                    bpy.ops.wm.call_panel(name="REMI_BOARD_PT_composer", keep_open=True)
-                except Exception:
-                    pass
-                return {"RUNNING_MODAL"}
-            if (
-                button_rect[0] <= mx <= button_rect[0] + button_rect[2]
-                and button_rect[1] <= my <= button_rect[1] + button_rect[3]
-            ):
-                submit_current(context)
+            editor_layout(board, board.region[0])
+            bx, by, bw, bh = board.bar_rect
+            if bx <= mx <= bx + bw and by <= my <= by + bh:
+                btx, bty, btw, bth = board.button_rect
+                if btx <= mx <= btx + btw and bty <= my <= bty + bth:
+                    submit_current(context)
+                else:
+                    board.focused = True
+                    board.caret = caret_from_point(
+                        board.text_lines,
+                        board.composer,
+                        mx,
+                        my,
+                        TEXT_SIZE,
+                        board.text_x,
+                        board.text_top,
+                    )
+                    board.anchor = board.caret
+                    self._refresh_text(board)
                 self._redraw(context)
                 return {"RUNNING_MODAL"}
+            board.focused = False
             corner = board.resize_target(mx, my)
             if corner is not None:
                 board.raise_card(corner)
@@ -983,15 +1260,21 @@ class REMI_BOARD_OT_run(Operator):
 
 
 def submit_current(context):
-    """Queue the prompt currently in the scene's native text field."""
+    """Queue whatever is typed in the board's composer."""
     board = BOARD
     if board is None:
         return False
-    text = context.scene.remi_image.prompt.strip()
+    text = board.composer.strip()
     if not text:
         return False
+    context.scene.remi_image.prompt = text
     board.add_pending(text)
     board.queue.append(text)
+    board.composer = ""
+    board.caret = 0
+    board.anchor = 0
+    board.text_scroll = 0.0
+    board.focused = False
     save_layout(context)
     start_next(context)
     return True
@@ -1189,39 +1472,6 @@ class REMI_BOARD_OT_create(Operator):
         return {"FINISHED"}
 
 
-class REMI_BOARD_PT_composer(Panel):
-    """The native prompt field, opened from the board's bottom bar."""
-
-    bl_label = "Prompt"
-    bl_idname = "REMI_BOARD_PT_composer"
-    bl_space_type = "VIEW_3D"
-    bl_region_type = "HEADER"
-    bl_ui_units_x = 34
-
-    def draw(self, context):
-        layout = self.layout
-        settings = context.scene.remi_image
-        layout.use_property_split = False
-        layout.prop(settings, "prompt", text="")
-        row = layout.row(align=True)
-        row.prop(settings, "model", text="")
-        row.prop(settings, "size", text="")
-        row = layout.row(align=True)
-        row.prop(settings, "count", text="Images")
-        row.prop(settings, "steps", text="Steps")
-        state = context.window_manager.remi_image
-        if state.busy:
-            layout.progress(
-                factor=float(state.progress),
-                type="BAR",
-                text=f"{int(state.progress * 100)}%",
-            )
-        else:
-            column = layout.column()
-            column.scale_y = 1.4
-            column.operator("remi_board.create", text="Create image", icon="PLAY")
-
-
 class REMI_BOARD_PT_panel(Panel):
     bl_label = "Image board"
     bl_idname = "REMI_BOARD_PT_panel"
@@ -1246,7 +1496,6 @@ CLASSES = (
     REMI_BOARD_OT_create,
     REMI_BOARD_OT_delete,
     REMI_BOARD_MT_image,
-    REMI_BOARD_PT_composer,
     REMI_BOARD_PT_panel,
 )
 

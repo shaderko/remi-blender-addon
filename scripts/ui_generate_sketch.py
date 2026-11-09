@@ -275,17 +275,18 @@ def image_cell(row, context, entry, scale, label="3D"):
 
     row = cell.row(align=True)
     wide = scale >= 6.0
-    split = row.split(factor=0.72 if wide else 0.82)
+    split = row.split(factor=0.6 if wide else 0.72)
     if splat is None:
         play = split.operator("remi.generate_splats", text=label, icon="PLAY")
         play.image_path = str(entry.path)
     else:
         use = split.operator("remi.activate_splat", text="3D", icon="CHECKMARK")
         use.image_path = str(entry.path)
+    side = split.row(align=True)
     if wide:
-        zoom = split.operator("gen.open_full", text="", icon="ZOOM_IN")
+        zoom = side.operator("gen.open_full", text="", icon="ZOOM_IN")
         zoom.path = str(entry.path)
-    more = split.operator("gen.cell_menu", text="", icon="COLLAPSEMENU")
+    more = side.operator("gen.cell_menu", text="", icon="COLLAPSEMENU")
     more.path = str(entry.path)
 
 

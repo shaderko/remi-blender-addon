@@ -1,4 +1,4 @@
-"""Workspace separation, minimal generation controls and hidden runtime setup."""
+"""Native sidebar launches the board and retains optional mesh tools."""
 import importlib.util
 from pathlib import Path
 import sys
@@ -22,6 +22,7 @@ from remi.blender.gaussian_splats import native_splats_available
 from remi.features.edit_tools.panel import Remi_PT_EditToolsPanel
 from remi.features.generation.panel import Remi_PT_GenerationSettings
 from remi.features.generation import settings as generation_settings
+from remi.features.board import editing, workspace as board_workspace
 
 
 class Layout:
@@ -76,26 +77,43 @@ try:
     image_state = wm.remi_image
     image_settings = bpy.context.scene.remi_image
     image_settings.output = str(ROOT / "tests" / "__no_generated_images__")
-    assert wm.remi_ui.workspace == "GENERATE"
+    assert wm.remi_ui.workspace == "OPTIMIZE"
+    choices = wm.remi_ui.bl_rna.properties["workspace"].enum_items
+    assert {item.identifier for item in choices} == {"OPTIMIZE", "TEXTURE"}
     original = bpy.context.active_object
     bpy.context.view_layer.objects.active = None
     entries = draw()
-    assert {entry[1] for entry in entries_of(entries, "prop")} == {"prompt"}
+    assert not entries_of(entries, "prop")
     operators = {entry[1]: entry for entry in entries_of(entries, "operator")}
     assert "remi.start_session" not in operators
     assert "remi.run_full_flow" not in operators
-    assert "remi.generate_image" in operators
-    assert "remi.add_image" in operators
-    assert not operators["remi.generate_image"][3].enabled  # Empty prompt.
-    gear = entries_of(entries, "popover")
-    assert len(gear) == 1 and gear[0][1] == "Remi_PT_ImageSettings"
-    assert gear[0][2]["text"] == "" and gear[0][2]["icon"] == "PREFERENCES"
-    assert "Prompt" in [entry[1] for entry in entries_of(entries, "label")]
-    assert not Remi_PT_EditToolsPanel.poll(bpy.context)
+    assert "remi_board.open" in operators
+    assert not {"remi.generate_image", "remi.add_image", "remi_board.apply_edit",
+                "remi_board.return_to_board"} & operators.keys()
+    assert not entries_of(entries, "popover")
+    assert "Generate" not in [entry[2].get("text") for entry in entries_of(entries, "operator")]
 
     image_settings.prompt = "A test image"
     operators = {entry[1]: entry for entry in entries_of(draw(), "operator")}
-    assert "remi.generate_image" in operators
+    assert "remi.generate_image" not in operators
+    header = Layout()
+    editing.draw_edit_header(SimpleNamespace(layout=header), bpy.context)
+    assert "remi_board.open" in {entry[1] for entry in entries_of(header.entries, "operator")}
+    menu = Layout()
+    board_workspace.draw_board_menu(SimpleNamespace(layout=menu), bpy.context)
+    assert "remi_board.open" in {entry[1] for entry in entries_of(menu.entries, "operator")}
+    with mock.patch.object(editing, "editing_scene", return_value=bpy.context.scene), \
+         mock.patch.object(editing, "can_apply", return_value=True):
+        header = Layout()
+        editing.draw_edit_header(SimpleNamespace(layout=header), bpy.context)
+        assert {"remi_board.apply_edit", "remi_board.return_to_board"} <= {
+            entry[1] for entry in entries_of(header.entries, "operator")}
+        assert not {"remi_board.apply_edit", "remi_board.return_to_board"} & {
+            entry[1] for entry in entries_of(draw(), "operator")}
+        assert "remi_board.open" not in {entry[1] for entry in entries_of(draw(), "operator")}
+        menu = Layout()
+        board_workspace.draw_board_menu(SimpleNamespace(layout=menu), bpy.context)
+        assert "remi_board.return_to_board" in {entry[1] for entry in entries_of(menu.entries, "operator")}
 
     settings_layout = Layout()
     from remi.features.images.panel import Remi_PT_ImageSettings
@@ -116,7 +134,7 @@ try:
     image_state.status = "Generating…"
     bpy.context.view_layer.objects.active = original
     wm.remi_ui.workspace = "OPTIMIZE"
-    assert active_workspace(bpy.context) == "GENERATE"
+    assert active_workspace(bpy.context) == "OPTIMIZE"
     assert not bpy.ops.remi.select_workspace.poll()
     assert not bpy.ops.remi.start_session.poll()
     assert not bpy.ops.remi.run_full_flow.poll()
@@ -130,8 +148,8 @@ try:
     assert not Remi_PT_EditToolsPanel.poll(bpy.context)
     entries = draw()
     operators = {entry[1] for entry in entries_of(entries, "operator")}
-    assert "remi.cancel_image" in operators and "remi.start_session" not in operators
-    assert any(entry[0] == "progress" for entry in entries)
+    assert not {"remi.cancel_image", "remi.generate_image"} & operators
+    assert not any(entry[0] == "progress" for entry in entries)
     image_state.busy = False
     image_state.progress = 0.0
     image_state.status = ""
@@ -144,7 +162,7 @@ try:
     assert {"remi.start_session", "remi.run_full_flow"} <= operators
     assert "remi.generate_image" not in operators and "remi.add_image" not in operators
 
-    wm.remi_ui.workspace = "GENERATE"
+    wm.remi_ui.workspace = "TEXTURE"
     wm.remi_session.active = True
     assert active_workspace(bpy.context) == "OPTIMIZE"
     assert not bpy.ops.remi.select_workspace.poll()

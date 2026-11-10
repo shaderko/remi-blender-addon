@@ -36,17 +36,16 @@ def advance():
         area.tag_redraw()
     elif step == 1:
         region = next(region for region in area.regions if region.type == "UI")
-        region.active_panel_category = "Remi"
         (output / "region.json").write_text(json.dumps({
             "x": region.x, "y": region.y, "width": region.width, "height": region.height,
         }), encoding="utf-8")
         area.tag_redraw()
     elif step == 2:
-        bpy.ops.screen.screenshot(filepath=str(output / "generate.png"))
+        bpy.ops.screen.screenshot(filepath=str(output / "native-tools.png"))
         bpy.ops.remi.select_workspace(workspace="OPTIMIZE")
     elif step == 3:
         bpy.ops.screen.screenshot(filepath=str(output / "optimize.png"))
-        bpy.ops.remi.select_workspace(workspace="GENERATE")
+        bpy.ops.remi.select_workspace(workspace="TEXTURE")
     elif step == 4:
         region = next(region for region in area.regions if region.type == "UI")
         bpy.context.window.cursor_warp(region.x + region.width - 55, region.y + region.height - 100)
@@ -54,7 +53,7 @@ def advance():
             bpy.ops.wm.call_panel("INVOKE_DEFAULT", name="Remi_PT_GenerationSettings", keep_open=True)
     elif step == 5:
         bpy.ops.screen.screenshot(filepath=str(output / "settings.png"))
-        (output / "ui_smoke_passed.txt").write_text("Generate/Optimize sidebar and settings popover drawn successfully.\n")
+        (output / "ui_smoke_passed.txt").write_text("Optimize/Texture sidebar and board settings popover drawn successfully.\n")
         print(f"REMI_WORKSPACE_UI_SMOKE_OK: {output}", flush=True)
         bpy.ops.wm.quit_blender()
         return None

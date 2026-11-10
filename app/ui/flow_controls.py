@@ -6,7 +6,7 @@ from ..application import get_application
 from ..flow import selected_document, automatic_actions, DEFAULT_ACTIONS
 
 
-def draw_flow_controls(layout, context):
+def draw_flow_controls(layout, context, *, include_run=True):
     flow = context.scene.remi_flow
     box = layout.box()
     box.label(text="Automatic · Full Flow", icon="SEQ_SEQUENCER")
@@ -45,10 +45,11 @@ def draw_flow_controls(layout, context):
             label = "UV Unwrap" if action_id == "UV" else label
             box.label(text=f"{index}. {label}")
     box.operator("remi.save_flow_preset", text="Save Current Settings as Preset", icon="ADD")
-    run = box.column()
-    run.enabled = document is not None
-    run.scale_y = 1.5
-    run.operator("remi.run_full_flow", text="Run Full Flow", icon="PLAY")
+    if include_run:
+        run = box.column()
+        run.enabled = document is not None
+        run.scale_y = 1.5
+        run.operator("remi.run_full_flow", text="Run Full Flow", icon="PLAY")
     if flow.last_result:
         for line in textwrap.wrap(flow.last_result, 48):
             box.label(text=line)

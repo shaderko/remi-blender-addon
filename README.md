@@ -38,7 +38,7 @@ The Blender add-on remains free and open source for local work and manual tools.
 
 | Need | Tool |
 |---|---|
-| Generate images and 3D sources | **Generate** tab with local Iris-3B and a single image/3D gallery |
+| Generate images and 3D sources | **Remi Board** with local Iris-3B and separate image/3D/mesh cards |
 | Process a model end to end | Preset-driven **Run Full Flow** |
 | Recover without scene duplicates | Single-mesh sessions with **Back**, **Redo**, and **Start** |
 | Close holes, cracks, or fragmented surfaces | Manual patches, Boundary, Hybrid, Alpha-Guided, or Closing Volume repair |
@@ -62,56 +62,203 @@ See [automatic Instant Meshes guidance](docs/instant_meshes_guidance.md).
 
 ### Model generation beta
 
-The `model-generation` branch is developed separately as **2.7.0-beta.6**.
-It includes image-to-splats generation, mesh reconstruction, layered texture
-projection and on-demand model downloads. This is a **prerelease**, not a
+The asset-board workflow is available as **2.7.0-beta.7**, separately from the
+stable release. It includes the installable board, isolated Blender mesh editing,
+image-to-splats generation, mesh reconstruction, and texture baking. This is a **prerelease**, not a
 replacement for the stable release. Back up your `.blend` files before testing.
-See [beta release notes and setup](docs/releases/2.7.0-beta.6.md).
+See [beta release notes and setup](docs/releases/2.7.0-beta.7.md).
 
 ### Local image and 3D generation (beta)
 
-The **Generate** tab combines local text-to-image with **Iris-3B** and
-**Iris-3B Turbo** and 3D generation in one card grid. Downloadable weights,
-prompt controls, uploads, and generation settings live under one gear. Each
-image card has a play action that generates its 3D source in place, with
-progress shown on the card. Iris is text-to-image only; reference-image
+The **Remi Board** combines local text-to-image with **Iris-3B** and
+**Iris-3B Turbo** and 3D generation as separate linked cards. Downloadable
+weights and generation settings live under the board's gear; the composer and
+image uploads are on the canvas. Select an image to generate a separate 3D
+source, with progress on its card. Iris is text-to-image only; reference-image
 conditioning is not supported. Turbo needs about 15 GB on disk (6 GB model +
 9 GB Qwen text encoder), runs on a 12 GB CUDA GPU in low-memory mode, and is
 much faster than the 12 GB base model. See
 [local image generation](docs/iris_image_generation.md).
 
-**Supported packages:** Blender 5.1 or 5.2 on **Windows x64** and **macOS Apple Silicon**.
+**Target version:** Blender **5.3** with native Gaussian rendering. Blender 5.1
+and 5.2 are not supported by this build. This beta ships a **Windows x64** ZIP,
+validated with Blender 5.3 beta. Other platforms are not validated or distributed
+for this beta.
 
-1. Download the ZIP matching your computer (`windows-x64` or `macos-arm64`) from [GitHub Releases](https://github.com/shaderko/remi-blender-addon/releases).
+1. Download the `windows-x64` ZIP from [GitHub Releases](https://github.com/shaderko/remi-blender-addon/releases).
 2. In Blender, open **Edit → Preferences → Get Extensions**.
 3. Open the top-right menu, choose **Install from Disk**, and select the ZIP.
-4. In the 3D Viewport, press `N` and open **Remi**.
+4. Make sure **Remi** is enabled. In the 3D Viewport, press `N`, open **Remi**,
+   and click **Open Remi Board**. You can also use **Remi Board** in the viewport
+   header, **View → Open Remi Board**, or press `F3` and search **Open Remi Board**.
 
 The package includes MeshLab, Alpha Wrap, native Instant Meshes, and the UV
 backend. Do not unzip it or install a second copy in Blender's legacy
-`scripts/addons` directory.
+`scripts/addons` directory. **No `.bat`, Python launch script, or development
+checkout is needed.** Start Blender normally after installing. Enabling Remi
+does not open a board, change your workspace, or start a job automatically.
+Save Blender's preferences if automatic preference saving is disabled. Save
+your `.blend` with the board open to restore that workspace when reopening it.
+Optional AI generation still needs the external CUDA/PyTorch environment and
+downloaded models described in the setup guides; configure their paths from
+the board's settings gear.
+
+### Docked generation workspace
+
+Click **Remi Board** in the 3D Viewport header to open the image/3D
+board beside a Blender viewport in the **same window**. The original workspace
+is left untouched. Switch Blender's workspace tabs freely; queued generations
+continue while the board is hidden. Hover the board and press **Ctrl+Space**
+to maximize or restore it. Double-click an image to inspect it in place, then
+press **Esc** to return.
+
+The Remi sidebar has the **Open Remi Board** launcher and the optional
+**Optimize** / **Texture** tools; the old Generate tab is removed.
+Mesh-edit **Apply to Card** / **Back to Board** controls stay in
+the viewport header, not the sidebar. Native Undo/Redo reattaches the existing
+board host and input handler without resetting cards or queued jobs. The header
+launcher can reopen or repair the board if its editor/workspace is lost.
+
+The board keeps **Image → 3D source → Mesh → processed version** as separate,
+linked assets. Automatic results appear beside their sources; source files are preserved. Generation
+and mesh/flow jobs do not import hidden objects into the working scene.
+**Add to Scene** imports an asset only when requested. Mesh flows reuse Remi's
+automatic presets in an isolated local Blender worker and produce a portable
+GLB. Interactive drawing/retopology tools still use their native 3D workspace.
+
+The **fixed left toolbar** has no panel background. From top to bottom:
+**Generate 3D**, **Create Mesh**, **Run Remi Flow**, **Texture Mesh**,
+**Edit in Blender**, **Add to Scene**, **Add Images**, **Export Asset**, and
+**Cancel Job**. Icons stay in place and enable for the current selection:
+Image → Generate 3D, 3D source → Create Mesh, Mesh → Run Remi Flow.
+Hover an icon for its name and any unavailable-action explanation.
+
+**Left-click runs immediately with the saved settings. Right-click** Generate
+3D, Create Mesh, Run Remi Flow, or Texture Mesh to configure its defaults without
+starting a job—even when that action is disabled. Defaults are saved in the
+`.blend`; each queued job keeps its own settings snapshot. Generation settings
+are locked while a generation is active. Texture Mesh uses an explicit appearance
+link or the mesh's original 3D-source lineage.
+
+The bottom composer always offers **Create Image**; the selection strip shows
+thumbnails and status, not changing action buttons. Right-click a card for
+secondary actions: **Copy Prompt / Use Prompt**, **Reset Preview to Front**,
+**Job Files**, and error **Details**, where applicable.
+
+### Edit a mesh in ordinary Blender
+
+1. Select a completed **Mesh** card and click **Edit in Blender**. Each card gets
+   its own scene with independent mesh/material data, in a normal **Mesh Editor**
+   workspace. Your main scene, its objects, and its original layout stay intact.
+2. Work normally: Blender Undo/Redo, Edit Mode, sculpting, UVs, materials,
+   modifiers, and adding or splitting mesh parts. No Remi session or automatic
+   flow starts. The existing Remi sidebar tools remain available if you want them;
+   the Gaussian appearance source is inferred from the card's links/lineage.
+3. Click **Apply to Card** in the viewport header. The **same card** updates,
+   retaining its identity, position, and connections. A fresh GLB contains the
+   mesh parts, evaluated modifiers, UVs, and GLB-compatible material textures.
+   Earlier files are retained as backups; already-placed objects in your main
+   scene are not replaced. An export failure leaves the card and edit intact.
+4. **Back to Board** returns to your original scene without applying/discarding
+   the edit. Reopen the card to resume its scene, including editable modifiers.
+   Save the `.blend` to retain these editing scenes across restarts; keep the
+   source/output folders as well. Only **Apply to Card** updates the board file.
+
+The board is an asset library and automatic-job launcher, not a replacement for
+the native editing tools. **Add to Scene** remains a separate action. Automatic
+**Run Remi Flow** is available in the fixed toolbar and the mesh's right-click menu.
+
+3D source cards use Blender 5.3's **native Gaussian renderer**, with the complete
+data. **Mesh cards have the same interactive in-card viewport**, showing their
+mesh parts, vertex colors, materials, and embedded textures. Both use temporary
+isolated scenes; orbiting never adds objects to your working scene or starts an
+editing session. No custom splat shader or ellipsoid preview is used.
+**Alt-drag any 3D source or Mesh card** to orbit;
+**Reset Preview to Front** in the card menu resets its view. Idle cards use captured PNG thumbnails, including
+after reopening the board. Native previews load only on orbit, stay warm for
+**30 seconds after interaction**, and are capped at **3 loaded previews**.
+The least recently used preview is unloaded first. Neither drawing a thumbnail
+nor dragging a card extends that timer; the last captured view stays visible.
+Live orbit reuses its native scene and GPU target instead of rebuilding them
+every frame. Thumbnail decoding/capture pauses during board navigation, and
+idle cards do not continuously redraw. Preview scenes are discarded before saving.
+
+### Drop a 3D source onto a mesh to texture it
+
+There is a playful shortcut: **drag the body of a 3D source card onto a Mesh
+card**. The mesh lights up with **Release to texture**, and the splat becomes a
+small lifted thumbnail so you can still see the target.
+
+Release to queue the existing local texture bake immediately, using the current
+Texture settings. A new **Textured Mesh** card shows travelling colored splats,
+a scanning mesh preview, an orbital loader, and real worker status. A short
+completion burst plays only when the bake succeeds. Albedo and normals are
+embedded together in the GLB; missing UVs are created automatically.
+
+- The splat returns to its original board position. Neither source card/file,
+  the mesh's existing appearance link, nor your Blender working scene is changed.
+- **Ctrl-drag** moves/overlaps cards without baking; **Esc** cancels the highlighted
+  drop. Group moves, orbiting, and drops outside a ready mesh do not trigger it.
+- Repeating an identical drop while its bake is queued/running selects the
+  existing result instead of launching a duplicate. **Cancel** remains available.
+- The effect uses cached thumbnails and lightweight 2D graphics, not extra live
+  Gaussian renderers. It stops when the job ends and does not animate while hidden.
+
+For explicit settings, the existing graph-style option is still available:
+drag a 3D card's **right-edge handle** onto a mesh to link appearance without
+starting a job, then use **Texture Mesh** in the toolbar or right-click the mesh →
+**Create Textured Mesh**. Use **Unlink 3D
+Texture Source** to remove that optional link. **Add to Scene** remains separate.
+
+**Board controls:** left-click a card to select it; left-drag to move the selected
+cards together. Left-drag empty space for box selection (**Shift** adds,
+**Ctrl** subtracts). **Middle-drag anywhere** pans the board without moving cards.
+Use the wheel to zoom and **Alt-left-drag** a 3D source or Mesh card to orbit its preview.
+Press **F** to frame the board. Drop one or more image files directly onto the
+canvas to add them. **X** / **Delete**, or right-click → **Delete Selected Cards
+and Files**, deletes the whole selection after one confirmation. Unselected
+versions and original uploaded files are kept; files shared with unselected
+cards are not deleted. Right-click also offers export. Existing
+generation files are recovered through their source-image metadata.
+
+Keep the generation/output folders: the board stores file references, asset
+identities, settings, and lineage, not a packed copy of every artifact in the
+`.blend`. Jobs continue across workspace switches; interrupted jobs are not
+silently replayed after loading a file or restarting Blender. Compute is local;
+the file-in/file-out job boundary is prepared for a later cloud runner.
+
+For development, `scripts/run-ui-sketch.bat` opens this workspace directly.
+The board is part of the installable extension, not a separate application.
+
+The Windows sketch launcher uses a separate profile under
+`%LOCALAPPDATA%\Remi\ui-sketch`, with **Tablet API → Windows Ink**. This avoids
+a roughly 36-second startup timeout observed with an unresponsive Wacom/WinTab
+driver. It does not change normal Blender preferences or GPU settings. If
+regular Blender has the same delay, try **Preferences → Input → Tablet →
+Tablet API → Windows Ink** and save preferences. WinTab-specific tablet
+behavior may differ; this is a development-launcher workaround, not an add-on
+setting forced on customers.
 
 ## Quick start
 
 ### Experimental: image to Gaussian splats
 
-Open **N-panel → Remi → Generate** to generate with the local
+Open **Remi Board** from the viewport header to generate with the local
 `rand6_100_ncm` model. This uses an external CUDA/PyTorch environment, saves
 native Gaussian-splat PLY files, and imports lossless splat data with a
-**native Gaussian point cloud on Blender 5.3+**. Blender 5.1/5.2 use a
-non-destructive ellipsoid preview instead. **Create Mesh** now requires Blender
-5.3+ on Windows x64 with a Vulkan GPU and the optional verified surface tool.
-It reconstructs a vertex-colored, camera-aware surface constrained by rendered
-silhouettes. **Dense** surface optimization is the default; **Fast** skips the
-optimization. It switches to Optimize without automatically reducing geometry.
-Each splat object
+**native Gaussian point cloud on Blender 5.3**. **Create Mesh** requires Blender
+5.3 with the `remi-splat-mesh` backend in the external Python environment.
+It reconstructs a vertex-colored opacity iso-surface from the Gaussian data.
+**Dense** uses a 512³ field; **Fast** uses 256³. No separate surface executable
+is required. **Create Mesh** adds a separate mesh card without changing the
+working scene or automatically reducing geometry. Each 3D card
 keeps its own result; multiple models in one file are supported without an
 archive cache. This is a
 lossy approximation of the splats, not a native splat render. The external
 generation worker keeps its model warm for 5 minutes by default; adjust this in
 the generation gear or set it to 0 to reload every run. See
 [setup and usage](docs/image_generation.md). Native rendering is tested on
-Blender 5.3 beta; this does not qualify all other tools for 5.3. Runtime paths
+Blender 5.3 beta. Runtime paths
 and advanced controls live in the gear menu. Choose **Optimize** for the
 existing mesh workflow.
 
@@ -302,11 +449,11 @@ normal layers composite over an existing or 3D-projected base normal.
 
 **Project 3D** is optional: it samples the Gaussian field at every UV texel for
 a full-surface base, tangent-space normal, and confidence map. It does not rely
-on a viewport camera and is available on Blender 5.1+. The drawn area applies to
+on a viewport camera. The drawn area applies to
 view layers, not the 3D bake.
 
 - View projection requires Blender 5.3+ native Gaussian rendering.
-- Projection runs in the external Python configured in **Generate** and needs
+- Projection runs in the external Python configured in the **Remi Board** gear and needs
   `numpy`, `scipy`, and `Pillow`.
 - It runs after geometry cleanup. Re-project after Remesh, Retopology, or UV
   changes; the splat remains the appearance source.

@@ -364,7 +364,6 @@ def workspace_tabs(layout, context):
     row.scale_y = 1.1
     live = MODE == "LIVE"
     for identifier, label in (
-        ("GENERATE", "Generate"),
         ("OPTIMIZE", "Optimize"),
         ("TEXTURE", "Texture"),
     ):

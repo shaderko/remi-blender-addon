@@ -276,7 +276,7 @@ def reset(context):
     session.current_vertices = 0
     session.checkpoint_megabytes = 0.0
     session.stage = "REPAIR"
-    wm.remi_ui.workspace = "GENERATE"
+    wm.remi_ui.workspace = "OPTIMIZE"
     wm.remi_generation.busy = False
     wm.remi_generation.mesh_busy = False
     wm.remi_generation.status = ""
@@ -308,8 +308,7 @@ def start_session(context, stage, step=None):
 def cases():
     """(label, setup(context) -> None) in rough order of user journey."""
     return [
-        ("generate · empty", lambda ctx: ctx.window_manager.remi_ui.__setattr__("workspace", "GENERATE")),
-        ("generate · busy", _generate_busy),
+        ("board job · busy", _generate_busy),
         ("texture · no mesh", _texture_no_mesh),
         ("texture · mesh", _texture_mesh),
         ("optimize · idle", _optimize_idle),
@@ -326,7 +325,7 @@ def cases():
 
 
 def _generate_busy(ctx):
-    ctx.window_manager.remi_ui.workspace = "GENERATE"
+    ctx.window_manager.remi_ui.workspace = "OPTIMIZE"
     state = ctx.window_manager.remi_image
     state.busy = True
     state.status = "Generating image…"

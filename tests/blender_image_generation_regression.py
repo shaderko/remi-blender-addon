@@ -113,7 +113,7 @@ try:
     wm = bpy.context.window_manager
     scene = bpy.context.scene
     assert hasattr(scene, "remi_image") and hasattr(wm, "remi_image")
-    assert active_workspace(bpy.context) == "GENERATE"
+    assert active_workspace(bpy.context) == "OPTIMIZE"
     assert "IMAGES" not in [item.identifier for item in
                             bpy.types.WindowManager.bl_rna.properties["remi_ui"].fixed_type.properties["workspace"].enum_items]
 
@@ -205,7 +205,7 @@ try:
         entries = draw()
         progress = [entry for entry in entries if entry[0] == "progress"]
         assert progress and progress[0][1] == 0.5
-        assert active_workspace(bpy.context) == "GENERATE"
+        assert active_workspace(bpy.context) == "OPTIMIZE"
         assert not bpy.ops.remi.select_workspace.poll()
         assert not bpy.ops.remi.generate_image.poll()
         wm.remi_image.busy = False
@@ -236,7 +236,7 @@ try:
         settings.prompt = "A red fox"
         assert bpy.ops.remi.generate_image.poll()
         wm.remi_image.busy = True
-        assert active_workspace(bpy.context) == "GENERATE"
+        assert active_workspace(bpy.context) == "OPTIMIZE"
         assert not bpy.ops.remi.select_workspace.poll()
         assert not bpy.ops.remi.generate_image.poll()
         try:

@@ -381,7 +381,7 @@ class Remi_OT_SelectImage(Operator):
 class Remi_OT_UseImageFor3D(Operator):
     bl_idname = "remi.use_image_for_3d"
     bl_label = "Use for 3D"
-    bl_description = "Set this image as the Generate input and switch to the 3D workflow"
+    bl_description = "Set this image as the input for 3D generation on the board"
 
     path: StringProperty(subtype="FILE_PATH")
 
@@ -395,8 +395,7 @@ class Remi_OT_UseImageFor3D(Operator):
             self.report({"ERROR"}, f"Image not found: {path}")
             return {"CANCELLED"}
         context.scene.remi_generation.image = path
-        context.window_manager.remi_ui.workspace = "GENERATE"
-        self.report({"INFO"}, "Image selected. Click Generate in the Generate tab to create splats.")
+        self.report({"INFO"}, "Image selected. Use Generate 3D on its Remi Board card.")
         return {"FINISHED"}
 
 

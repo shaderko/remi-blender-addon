@@ -5,11 +5,10 @@ from Blender. No mesh needs to be selected. A generated splat can then be
 reconstructed into a **vertex-colored polygon mesh** with **Create Mesh** and
 passed directly into Optimize.
 
-Create Mesh uses camera-aware opacity extraction with constraints from rendered
-foreground silhouettes. The default **Dense** mode first optimizes the surface
-against 72 calibrated Gaussian renders. **Fast** extracts directly from the
-selected Gaussians, using the same cameras and silhouette gate. Both retain
-vertex colors and dense geometry without automatic simplification.
+Create Mesh uses the external **remi-splat-mesh** backend to extract an opacity
+iso-surface from the anisotropic Gaussian field. **Dense** uses a 512³ field;
+**Fast** uses 256³. Both retain vertex colors without automatic simplification.
+The older silhouette/Spirula pipeline is no longer used.
 
 Both output files use Blender Z-up coordinates (the model's native frame).
 Remi bypasses upstream's default viewer-oriented, Y-down PLY transform, rather
@@ -56,7 +55,7 @@ redistribution mechanism.
 ### Download weights from Hetzner (installed add-ons)
 
 You do not need the research checkout when a model release has been published.
-In **Generate → gear**, the **Model Download URL** defaults to the public release
+In the **Remi Board settings gear**, the **Model Download URL** defaults to the public release
 `https://remipublic.hel1.your-objectstorage.com/models/triposplat-rand6_100_ncm-step1500-af36bcb6-v1/blender/`.
 Choose a writable **Model Folder** and click
 **Download Models**. Enable **Allow Online Access** in Blender Preferences first.
@@ -83,46 +82,45 @@ private user uploads, and redistribution rights must be checked before upload.
 
 ### Generate locally
 
-1. Load the updated add-on and open **3D View → N → Remi** in Object Mode.
-2. Choose the **Generate** tab. **Optimize** contains the mesh workflow separately.
-3. Choose the image. Transparent input is supported;
+1. Load the updated add-on and click **Remi Board** in the 3D Viewport header.
+2. Add an image to the board. The old sidebar Generate tab is removed;
+   **Optimize** and **Texture** remain native mesh tools.
+3. Select the image card. Transparent input is supported;
    opaque images have their background removed with BiRefNet.
 4. Python is detected automatically. The **gear** opens optional settings for
    Gaussian count, seed, Python override, **Model Folder** (`models/triposplat`),
    model-cache idle time, and the output folder. These details stay out of the
    main view.
-5. Click **Generate**. Blender stays interactive while the worker loads and
-   generates. The cancel icon or `Esc` stops the process. The icon beside
-   **Generate** imports an existing result; the folder icon after completion
-   opens its output directory.
+5. Click **Generate 3D**. Blender stays interactive while the worker loads and
+   generates a separate 3D card. Use its **Cancel** action to stop the job.
 
-The workspace tabs lock to the running task during generation or a mesh
-session, so progress and session-recovery controls remain visible.
+Progress stays on the board even while another Blender workspace is active.
+Native Remi editing sessions keep their existing recovery controls.
 
 ### Create a mesh
 
-Requires **Blender 5.3+ with native Gaussian rendering, Windows x64, and a
-Vulkan-capable GPU**. Generation and the other mesh tools retain their separate
-platform requirements; an older ellipsoid preview is not a reconstruction renderer.
-In **Generate → gear**, choose **Surface Tool Folder**, then **Install Surface
-Tool**. Confirm the 49 MB download from the upstream Spirula GitHub release
-(`v2026.10.16`, GPL-3.0). Blender's **Allow Online Access** must be enabled for
-installation only. The archive and executable are SHA-256 verified; the tool is
-external, not bundled in the extension. No input images or scene data are uploaded.
+This beta targets **Blender 5.3 on Windows x64**. Install the reconstruction
+backend into the configured external Python environment, not Blender's Python:
 
-After generation, the active splat shows **Create Mesh** in the Generate tab.
-Click it; the external worker builds the surface and imports a new
-vertex-colored mesh. The source splat is hidden but kept in the scene. The
-result is associated with that specific splat, so every model in a `.blend`
-file can be converted independently.
+```powershell
+python -m pip install -r integrations/splat_mesh/requirements-splatmesh.txt
+```
 
-Create Mesh reads the Gaussian data from the selected object, not from the
-generation folder. The original `splats.npz` may be moved or deleted after
-import; the worker receives a temporary exchange archive that is removed when
-the job ends. A separate source snapshot is retained with the reconstruction.
-Object translation, rotation, and scale are preserved. Remi switches to
-**Optimize** and selects the **Reconstructed · Decimate** preset, but **does not
-run it**. Keep the dense result or explicitly run reduction after inspection.
+Use the requirements file inside the installed extension or the source checkout.
+It pins `remi-splat-mesh` and installs its NumPy/SciPy/scikit-image dependencies.
+The backend can run on CPU; compatible CUDA/PyTorch accelerates field building.
+No Spirula executable, Surface Tool Folder, or Install Surface Tool action is
+needed. Existing generation models are separate from this meshing backend.
+
+After generation, select the 3D card and click **Create Mesh**. The external
+worker creates a separate vertex-colored mesh card; neither asset is imported
+into the working scene automatically. Every 3D card can be converted independently.
+
+Board jobs read the card's file-backed Gaussian archive, so keep the generation
+folders and `splats.npz`. Use **Edit in Blender** to inspect the mesh in its own
+ordinary Blender scene, or **Add to Scene** to place it in your project.
+No Optimize session or reduction starts automatically. **Apply to Card** sends
+manual mesh changes back to that same card while retaining previous files.
 Run UV and Bake manually if the reconstructed topology accepts them; fragments,
 sliver triangles, and open/non-manifold regions can still need cleanup.
 
@@ -132,35 +130,27 @@ surface-derived normal onto the cleaned mesh, with a confidence map for holes.
 It is re-runnable after remesh/UV changes and does not depend on the mesh's
 vertex colors. See [texture_projection.md](texture_projection.md).
 
-The gear menu contains **Mesh Quality**, **Surface Tool Folder**, and **Mesh Output**:
+Right-click **Create Mesh** in the fixed toolbar to set **Mesh Quality**, **Mesh
+Output**, and the external **Python**. Left-click runs those saved defaults:
 
-- **Dense · Surface Optimized** (default): 72 views at 1512 px, 32 EEVEE samples,
-  8,000 optimization steps, and up to 1,000,000 fitted Gaussians. The local RTX
-  5070 ship test produced about 3.5M vertices / 7M triangles in 162 seconds.
-- **Fast · Direct Surface**: the same views, extraction, and silhouette checks,
-  without surface optimization. The same asset produced about 472k vertices /
-  943k triangles in 32 seconds. Times and topology depend on the asset/GPU.
+- **Dense** (default): 512³ extraction, retaining more surface detail at greater
+  memory cost.
+- **Fast**: 256³ extraction for a quicker, coarser result.
 
-Neither mode smooths, decimates, fills holes, merges extraction edges, or removes
-components by size. Upstream extraction can still split non-manifold vertices.
-The silhouette gate rejects vertices/face centroids with insufficient foreground
-support or excessive background contradictions, preserving thin structures better
-than the old density baseline without guaranteeing a watertight surface.
+The backend cleans sub-threshold components and smooths the extracted surface;
+component removal and topology statistics are reported. This is not automatic
+polygon-budget reduction or deformation-ready retopology.
 
-The configured external Python requires `torch`, `scipy`, `Pillow`, `numpy`, and
-`trimesh`. Install dependencies into that environment, not Blender's Python.
-CUDA accelerates the silhouette check when available; the surface tool uses
-Vulkan and Gaussian rendering uses EEVEE. Remi releases its own warm generation
-worker before reconstruction to free GPU memory. Blender stays interactive;
-**Cancel** or `Esc` stops the worker and its owned rendering/optimizer processes.
-Progress and stage logs are retained in the unique Mesh Output directory, with
-`raw/mesh.ply`, `constrained/mesh.ply`, the final `mesh.ply`, and `report.json`.
-Failures/cancellation do not replace the source object.
+Remi releases its own warm generation worker before reconstruction to free GPU
+memory. Blender stays interactive. **Cancel Job** stops the selected job.
+Progress, `mesh.ply`, and `report.json` remain in the unique Mesh Output job
+directory. Failure/cancellation never replaces the source card or scene object.
 
 This remains a **lossy reconstruction**, not ground-truth or guaranteed hidden
 geometry. Inspect fine rigging, disconnected fragments, and topology before
-reducing the mesh. See [surface reconstruction details](surface_mesh_reconstruction.md)
-and [pilot comparisons](surface_mesh_pilot_results.md).
+reducing the mesh. See the [backend release notes](releases/2.7.0-beta.6.md).
+The older [surface reconstruction details](surface_mesh_reconstruction.md) and
+[pilot comparisons](surface_mesh_pilot_results.md) describe the superseded pipeline.
 
 Start at 65,536 splats. Larger counts may exhaust GPU memory; a failed worker
 leaves the scene unchanged and reports the error in its log.
@@ -174,13 +164,12 @@ available until its cache timeout.
 
 For installed copies, machine-local defaults can be stored in
 `remi-generation.json` inside that Blender version's user **config** folder,
-with string fields `python`, `models`, `output`, `mesh_output`, `surface_tools`, and `download_url`. This avoids changing the
+with string fields `python`, `models`, `output`, `mesh_output`, and `download_url`. This avoids changing the
 user's `startup.blend` or copying model weights into the extension. Defaults
 are read when Remi loads; saved scene values still take precedence, and
 `REMI_TRIPOSPLAT_MODELS` overrides the configured model default. The local 5.3
 installation uses this file to point at the already-prepared Remi model bundle.
-`REMI_SURFACE_TOOLS` overrides the surface-tool folder default. Saved scene
-settings take precedence over defaults.
+Saved scene settings take precedence over defaults.
 
 By default the external worker keeps the checkpoint, image encoders, and
 decoder loaded for **5 minutes** after a generation. Repeated generations in

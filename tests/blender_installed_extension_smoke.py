@@ -5,6 +5,9 @@ import importlib
 import os
 import site
 import time
+import json
+from pathlib import Path
+import tempfile
 
 module_name = "bl_ext.user_default.remi"
 result = bpy.ops.preferences.addon_enable(module=module_name)
@@ -14,6 +17,9 @@ version_core = os.environ["REMI_EXPECTED_VERSION"].split("-", 1)[0].split("+", 1
 expected_version = tuple(int(part) for part in version_core.split("."))
 assert addon.bl_info["version"] == expected_version, addon.bl_info["version"]
 assert addon.__package__ == module_name, addon.__package__
+assert addon.bl_info["blender"] == (5, 3, 0)
+gaussians = importlib.import_module(module_name + ".blender.gaussian_splats")
+assert gaussians.native_splats_available(), "Blender 5.3 native Gaussians are required"
 assert not site.ENABLE_USER_SITE
 pymeshlab = importlib.import_module("pymeshlab")
 assert os.path.realpath(pymeshlab.__file__).startswith(
@@ -30,6 +36,37 @@ assert hasattr(bpy.ops.remi, "download_iris")
 assert (iris_worker.VENDOR / "iris3b" / "config.py").is_file()
 assert image_panel.gallery is not None
 print("REMI_INSTALLED_IRIS_IMAGES_OK")
+board_canvas = importlib.import_module(module_name + ".features.board.canvas")
+board_workspace = importlib.import_module(module_name + ".features.board.workspace")
+board_toolbar = importlib.import_module(module_name + ".features.board.toolbar")
+board_preview = importlib.import_module(module_name + ".features.board.splat_preview")
+assert issubclass(board_preview.NativeMeshPreview, board_preview.NativePreview)
+assert board_canvas.NativeMeshPreview is board_preview.NativeMeshPreview
+assert board_canvas.gallery is image_panel.gallery
+assert hasattr(bpy.ops.remi_board, "open")
+assert board_canvas.BOARD is None  # Enabling must not rearrange a customer's screen.
+assert not bpy.app.timers.is_registered(board_workspace.monitor_workspace)  # Headless.
+for operator in ("create_mesh", "run_flow", "add_asset", "export_asset", "edit_mesh"):
+    assert "asset_id" in getattr(bpy.ops.remi_board, operator).get_rna_type().properties
+assert (Path(addon.__file__).parent / "features/board/local_worker.py").is_file()
+board_editing = importlib.import_module(module_name + ".features.board.editing")
+assert "return_to_board" in bpy.ops.remi_board.apply_edit.get_rna_type().properties
+assert bpy.ops.remi_board.return_to_board.get_rna_type()
+assert bpy.context.window_manager.remi_ui.workspace == "OPTIMIZE"
+assert {item.identifier for item in bpy.context.window_manager.remi_ui.bl_rna.properties["workspace"].enum_items} == {"OPTIMIZE", "TEXTURE"}
+assert not hasattr(board_editing, "draw_edit_controls")
+board_effects = importlib.import_module(module_name + ".features.board.texture_effects")
+assert callable(board_canvas.queue_texture) and callable(board_effects.draw_working_card)
+assert board_canvas.toolbar is board_toolbar
+assert [tool.id for tool in board_toolbar.TOOLS] == [
+    "generate3d", "mesh", "flow", "texture", "editmesh", "add3d", "import", "export", "cancel",
+]
+assert {tool.id for tool in board_toolbar.TOOLS if tool.settings} == {"generate3d", "mesh", "flow", "texture"}
+assert {"action", "asset_id"} <= set(bpy.ops.remi_board.tool_action.get_rna_type().properties.keys())
+assert "tool" in bpy.ops.remi_board.tool_settings.get_rna_type().properties
+assert not hasattr(board_canvas, "primary_action")
+print("REMI_INSTALLED_BOARD_TOOLBAR_OK")
+print("REMI_INSTALLED_DOCKED_WORKSPACE_OK")
 instant_native = importlib.import_module(module_name + ".features.retopology.instant_meshes._native")
 assert instant_native.Session is not None
 assert instant_native.GUIDE_API_VERSION == 1
@@ -158,5 +195,56 @@ after_faces = len(app.session.object(bpy.context).data.polygons)
 assert 0 < after_faces < before_faces, (before_faces, after_faces)
 app.session.cancel(bpy.context)
 print("REMI_INSTALLED_TEXTURED_DECIMATION_SMOKE_OK")
+# Exercise the packaged file-in/file-out worker, not just checkout imports.
+board_jobs = importlib.import_module(module_name + ".features.board.jobs")
+with tempfile.TemporaryDirectory(prefix="remi-installed-board-") as temporary:
+    directory = Path(temporary)
+    source_path = directory / "source.glb"
+    bpy.ops.export_scene.gltf(filepath=str(source_path), export_format="GLB", use_selection=True)
+    before_objects = [(obj.name, obj.data.as_pointer(), obj.select_get()) for obj in bpy.context.scene.objects]
+    before_active = bpy.context.active_object
+    job = board_jobs.LocalBlenderJob.start(output=directory, request={
+        "operation": "FLOW", "input": str(source_path), "flow": {
+            "version": 1, "name": "Installed Board UV", "actions": ["DECIMATE", "UV"],
+            "settings": {"bake_texture_size": 256, "decimation_passes": 1,
+                         "target_percentage": 0.75, "decimation_with_texture": False}}})
+    deadline = time.monotonic() + 120
+    while job.poll() is None:
+        if time.monotonic() > deadline:
+            job.cancel()
+            raise AssertionError("Installed board worker timed out")
+        time.sleep(0.05)
+    try:
+        artifact = job.result()
+    except Exception:
+        print((job.directory / "worker.log").read_text(encoding="utf-8", errors="replace"))
+        raise
+    assert artifact.suffix == ".glb" and artifact.is_file()
+    result = json.loads((job.directory / "result.json").read_text(encoding="utf-8"))
+    assert Path(result["preview"]).is_file(), result
+    assert before_objects == [(obj.name, obj.data.as_pointer(), obj.select_get()) for obj in bpy.context.scene.objects]
+    assert bpy.context.active_object == before_active
+    # The installed bridge must also work without a mounted Image Editor.
+    assets = importlib.import_module(module_name + ".features.board.assets")
+    bpy.context.scene.remi_image.output = str(directory)
+    parent = assets.Asset("installed-mesh", "MESH", artifact=str(source_path), title="Installed source")
+    bpy.context.scene[assets.SCENE_ASSETS_KEY] = json.dumps({
+        "gallery": board_canvas.layout_key(bpy.context), "assets": [parent.document()]})
+    source_bytes = source_path.read_bytes()
+    owner = bpy.context.scene
+    edit_scene = board_editing.open_edit_scene(bpy.context, parent.id)
+    with bpy.context.temp_override(scene=edit_scene, view_layer=edit_scene.view_layers[0]):
+        working = bpy.context.view_layer.objects.active
+        assert working != before_active and assets.OBJECT_ASSET_KEY not in working
+        assert before_active.name not in edit_scene.objects
+        version = board_editing.apply_to_card(bpy.context)
+    assert version.id == parent.id and version.revisions[0]["artifact"] == str(source_path)
+    assert Path(version.artifact).is_file() and source_path.read_bytes() == source_bytes
+    assert not bpy.context.window_manager.remi_session.active
+    assert bpy.data.objects.get(before_active.name) == before_active
+    assert version.id in {item["id"] for item in json.loads(owner[assets.SCENE_ASSETS_KEY])["assets"]}
+    bpy.context.window.scene = owner
+print("REMI_INSTALLED_BOARD_EDITING_OK")
+print("REMI_INSTALLED_BOARD_WORKER_OK")
 bpy.ops.preferences.addon_disable(module=module_name)
 print("REMI_INSTALLED_EXTENSION_SMOKE_OK")

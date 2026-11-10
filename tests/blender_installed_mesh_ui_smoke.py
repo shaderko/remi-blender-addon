@@ -1,4 +1,4 @@
-"""Optional UI screenshot: installed Create Mesh button in the Generate tab."""
+"""Optional UI screenshot: installed native mesh sidebar and board launcher."""
 import importlib
 from pathlib import Path
 import sys
@@ -12,7 +12,7 @@ out = Path(sys.argv[sys.argv.index("--") + 2]).resolve()
 out.parent.mkdir(parents=True, exist_ok=True)
 adapter = importlib.import_module(module_name + ".blender.gaussian_splats")
 adapter.import_splats(bpy.context, archive, display="NATIVE")
-bpy.context.window_manager.remi_ui.workspace = "GENERATE"
+bpy.context.window_manager.remi_ui.workspace = "OPTIMIZE"
 area = next(area for area in bpy.context.screen.areas if area.type == "VIEW_3D")
 area.spaces.active.show_region_ui = True
 area.tag_redraw()

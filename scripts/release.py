@@ -38,8 +38,8 @@ TESTS = (
     "blender_voxel_surface_regression.py",
     "blender_generation_regression.py",
     "blender_image_generation_regression.py",
-    "blender_mesh_conversion_regression.py",
     "blender_workspace_ui_regression.py",
+    "blender_board_assets_regression.py",
     "blender_texture_projection_regression.py",
 )
 
@@ -200,6 +200,9 @@ def verify_archive(artifact, target):
         }
         if not iris_required.issubset(archive.namelist()):
             raise RuntimeError("Archive is missing the Iris image-generation integration")
+        if not {f"features/board/{name}.py" for name in
+                ("__init__", "canvas", "workspace", "assets", "jobs", "local_worker", "splat_preview", "editing", "texture_effects", "toolbar")}.issubset(archive.namelist()):
+            raise RuntimeError("Archive is missing the docked generation workspace")
         if any(name.startswith("scripts/") or name.lower().endswith("spirula.exe") for name in archive.namelist()):
             raise RuntimeError("Developer scripts and external surface executables must not be bundled")
         if any(name.endswith((".nbc", ".nbi")) for name in archive.namelist()):
@@ -245,9 +248,36 @@ def installed_smoke(blender, artifact):
             "--python", ROOT / "tests" / "blender_installed_extension_smoke.py", env=environment)
 
 
+def installed_ui_smoke(blender, artifact, output):
+    """Exercise normal saved add-on enablement, not the development launcher."""
+    output.mkdir(parents=True, exist_ok=True)
+    output = Path(tempfile.mkdtemp(prefix="installed-board-ui-", dir=output))
+    script = ROOT / "tests" / "blender_installed_board_ui_smoke.py"
+    with tempfile.TemporaryDirectory(prefix="profile-", dir=output) as temporary:
+        environment = {key: value for key, value in os.environ.items()
+                       if not key.startswith("REMI_") and key not in {"PYTHONPATH", "PYTHONHOME"}}
+        environment.update(
+            BLENDER_USER_CONFIG=str(Path(temporary) / "config"),
+            BLENDER_USER_EXTENSIONS=str(Path(temporary) / "extensions"),
+            BLENDER_USER_DATAFILES=str(Path(temporary) / "datafiles"),
+            PYTHONNOUSERSITE="1", REMI_INSTALLED_UI_OUTPUT=str(output),
+        )
+        for key in ("BLENDER_USER_CONFIG", "BLENDER_USER_EXTENSIONS", "BLENDER_USER_DATAFILES"):
+            Path(environment[key]).mkdir()
+        run(blender, "--command", "extension", "install-file", "-r", "user_default", artifact,
+            env=environment)
+        run(blender, "--background", "--factory-startup", "--python-exit-code", "1",
+            "--python", script, "--", "--prepare", env=environment)
+        run(blender, "--enable-event-simulate", "--python-exit-code", "1",
+            "--python", script, "--", "--first-run", env=environment)
+        run(blender, output / "installed-board.blend", "--enable-event-simulate", "--python-exit-code", "1",
+            "--python", script, "--", "--restart", env=environment)
+    print(f"Installed board UI checks: {output}", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("fetch", "native", "build", "smoke", "check"))
+    parser.add_argument("command", choices=("fetch", "native", "build", "smoke", "smoke-ui", "check"))
     parser.add_argument("--blender", default=shutil.which("blender") or
                         "/Applications/Blender.app/Contents/MacOS/Blender")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "dist")
@@ -262,6 +292,10 @@ def main():
         if args.artifact is None:
             parser.error("smoke requires --artifact")
         installed_smoke(args.blender, args.artifact.resolve())
+    elif args.command == "smoke-ui":
+        if args.artifact is None:
+            parser.error("smoke-ui requires --artifact")
+        installed_ui_smoke(args.blender, args.artifact.resolve(), args.output_dir.resolve())
     else:
         if args.command == "check":
             for pattern in ("test_platform_support.py", "test_model_download.py", "test_iris_setup.py"):
@@ -277,9 +311,11 @@ def main():
                         environment = os.environ.copy()
                         environment["REMI_TEST_DEPENDENCIES"] = temporary
                         run(args.blender, "--background", "--factory-startup", "--python-exit-code", "1",
-                            "--python", ROOT / "tests" / test, env=environment)
+                             "--python", ROOT / "tests" / "blender_checkout_bootstrap.py",
+                             "--python", ROOT / "tests" / test, env=environment)
                 else:
                     run(args.blender, "--background", "--factory-startup", "--python-exit-code", "1",
+                        "--python", ROOT / "tests" / "blender_checkout_bootstrap.py",
                         "--python", ROOT / "tests" / test)
         artifact = build_extension(args.blender, args.output_dir.resolve(), target)
         if args.command == "check":

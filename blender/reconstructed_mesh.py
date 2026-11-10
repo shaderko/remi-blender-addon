@@ -39,7 +39,10 @@ def _vertex_color_material(name, layer_name):
         shader = nodes.new("ShaderNodeBsdfPrincipled")
         shader.inputs["Roughness"].default_value = 0.7
         output = nodes.new("ShaderNodeOutputMaterial")
-        links.new(color.outputs["Color"], shader.inputs["Base Color"])
+        if layer_name:
+            links.new(color.outputs["Color"], shader.inputs["Base Color"])
+        else:
+            shader.inputs["Base Color"].default_value = (0.55, 0.58, 0.62, 1.0)
         links.new(shader.outputs["BSDF"], output.inputs["Surface"])
         return material
     except Exception:

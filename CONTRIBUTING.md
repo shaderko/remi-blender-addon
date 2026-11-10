@@ -105,6 +105,19 @@ Back/Redo, UV, baking, edit tools, Instant Meshes, archive construction, and a
 real extension installation. A passing build proves those automated paths; it
 does not replace interactive viewport testing for UX changes.
 
+For the installed board's normal Blender lifecycle, run:
+
+```powershell
+python scripts/release.py smoke-ui --blender "C:\Blender\blender.exe" --artifact "dist\remi-<version>-windows-x64.zip"
+```
+
+This installs the ZIP in temporary preferences, saves enablement, launches
+Blender normally (without `--factory-startup` or the `.bat` launcher), opens the
+board through native F3 search, tests in-card orbit and isolated mesh editing,
+then restarts Blender with the saved project and checks disable/re-enable.
+The test driver never registers the checkout. Screenshots and reports are kept
+under the output directory; the user's ordinary Blender profile is unchanged.
+
 The installed-extension regression executes real voxel remeshing, bundled
 MeshLab decimation, UV generation, and all-map baking with user site-packages
 disabled. Missing or damaged packaged dependencies are tested separately as an
@@ -115,7 +128,7 @@ expected preflight failure before any scene changes.
 
 Build on Windows x64 with CPython 3.13 x64, CMake, and Visual Studio 2022
 Build Tools with **Desktop development with C++** (including the Windows SDK).
-Use the official Blender 5.1 or 5.2 Windows x64 ZIP. Python is needed only on
+Use the official Blender 5.3 Windows x64 ZIP. Python is needed only on
 the build machine; users install the finished extension ZIP in Blender.
 
 From the repository root in PowerShell:
@@ -133,11 +146,12 @@ site-packages disabled. It then exercises Alpha Wrap, the full remesh-to-bake
 flow, textured decimation, and the packaged native modules. No runtime pip
 installation is required. Windows ARM64 is not a build target.
 
-The **Release check** GitHub Actions workflow builds both native modules and
-runs the same gate on Windows x64 and macOS arm64, against both Blender versions.
-Successful Blender 5.2 jobs upload platform-specific ZIP artifacts. Download
-the Windows artifact only after both Windows jobs pass, then attach its inner
-ZIP to the new release. CI does not publish or overwrite GitHub Releases.
+The existing **Release check** GitHub Actions matrix still targets Blender
+5.1/5.2 for the older branches; those jobs do **not** validate the Blender 5.3
+board beta. The board beta is gated locally with Blender 5.3, including the
+clean-installed GUI lifecycle test, and currently ships Windows x64 only. Do
+not publish legacy CI artifacts as Blender 5.3 builds. CI does not publish or
+overwrite GitHub Releases.
 
 The Python release tool also runs on macOS; existing shell commands delegate
 to it and require Python 3.11+. Use Python 3.13 for `native`. Builds stage only

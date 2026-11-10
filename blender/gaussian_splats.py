@@ -200,7 +200,7 @@ def _tag(obj, path, count, display, preview_count):
     obj["remi_splat_frame"] = "Z-up; rotations WXYZ; activated scales/opacity; SH DC"
 
 
-def _import_native(context, path, data):
+def create_native_splat(path, data, collection):
     """Match Blender 5.3's own PLY/glTF importers, without re-encoding data.
 
     radiance:base is FLOAT4 (raw SH DC, linear opacity), NOT a color attribute.
@@ -211,8 +211,6 @@ def _import_native(context, path, data):
     count = len(data["positions"])
     cloud = bpy.data.pointclouds.new(f"{path.parent.name} · Native Gaussian data")
     obj = None
-    selected = list(context.selected_objects)
-    active = context.view_layer.objects.active
     try:
         cloud.resize(count)
         cloud.type = "GAUSSIAN_SPLAT"
@@ -223,20 +221,22 @@ def _import_native(context, path, data):
         _attribute(cloud, "radiance:base", "FLOAT4", radiance)
         obj = bpy.data.objects.new(f"Remi Splats · {path.parent.name}", cloud)
         _tag(obj, path, count, "NATIVE", count)
-        context.collection.objects.link(obj)
-        for other in selected:
-            other.select_set(False)
-        obj.select_set(True)
-        context.view_layer.objects.active = obj
+        collection.objects.link(obj)
         return obj
     except Exception:
         if obj is not None:
             bpy.data.objects.remove(obj, do_unlink=True)
         bpy.data.pointclouds.remove(cloud)
-        for other in selected:
-            other.select_set(True)
-        context.view_layer.objects.active = active
         raise
+
+
+def _import_native(context, path, data):
+    obj = create_native_splat(path, data, context.collection)
+    for other in context.selected_objects:
+        other.select_set(False)
+    obj.select_set(True)
+    context.view_layer.objects.active = obj
+    return obj
 
 
 def _named(nodes, name, kind="FLOAT_VECTOR"):

@@ -6,9 +6,9 @@ import sys
 from types import SimpleNamespace
 
 
-ADDON_PARENT = Path(__file__).resolve().parents[2]
-if str(ADDON_PARENT) not in sys.path:
-    sys.path.insert(0, str(ADDON_PARENT))
+ROOT = Path(__file__).resolve().parents[1]
+exec(compile((ROOT / "tests" / "blender_checkout_bootstrap.py").read_text(encoding="utf-8"),
+             str(ROOT / "tests" / "blender_checkout_bootstrap.py"), "exec"))
 
 from remi.app.application import (
     RemiApplication,
@@ -125,10 +125,10 @@ assert "bake_texture_size" in scene_settings
 assert "bake_auto_cage" in scene_settings
 assert "bake_include_metallic" in scene_settings
 
-feature_root = ADDON_PARENT / "remi" / "features"
+feature_root = ROOT / "features"
 service_paths = tuple(feature_root.glob("*/service.py")) + (
-    ADDON_PARENT / "remi" / "features" / "remesh" / "decimation.py",
-    ADDON_PARENT / "remi" / "features" / "retopology" / "autoremesher_service.py",
+    ROOT / "features" / "remesh" / "decimation.py",
+    ROOT / "features" / "retopology" / "autoremesher_service.py",
 )
 for service_path in service_paths:
     tree = ast.parse(service_path.read_text(encoding="utf-8"), filename=str(service_path))
@@ -163,7 +163,7 @@ canonical_paths = (
     "integrations/meshlab/worker.py",
 )
 for relative_path in canonical_paths:
-    assert (ADDON_PARENT / "remi" / relative_path).is_file(), relative_path
+    assert (ROOT / relative_path).is_file(), relative_path
 
 legacy_paths = (
     "alpha_wrap.py",
@@ -188,10 +188,10 @@ legacy_paths = (
     "uv_mapping",
 )
 for relative_path in legacy_paths:
-    assert not (ADDON_PARENT / "remi" / relative_path).exists(), relative_path
+    assert not (ROOT / relative_path).exists(), relative_path
 
 root_python_files = {
-    path.name for path in (ADDON_PARENT / "remi").glob("*.py")
+    path.name for path in ROOT.glob("*.py")
 }
 assert root_python_files == {"__init__.py"}, root_python_files
 
@@ -218,7 +218,7 @@ for feature_path in feature_root.rglob("*.py"):
     assert not legacy_imports, (feature_path, legacy_imports)
 
 session_tree = ast.parse(
-    (ADDON_PARENT / "remi" / "workflow" / "session.py").read_text(encoding="utf-8")
+    (ROOT / "workflow" / "session.py").read_text(encoding="utf-8")
 )
 assert not [
     node

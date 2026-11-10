@@ -1,11 +1,11 @@
 # Local image generation with Iris-3B
 
-The **Generate** tab generates concept images locally with
+The **Remi Board** generates concept images locally with
 [Iris-3B](https://github.com/speridlabs/iris-3b), then generates 3D sources from
-the same card grid.
+separate linked image, 3D, and mesh cards. The old sidebar Generate tab is removed.
 
 ```text
-Generate (Iris-3B image → Gaussian splats) → Optimize → Texture
+Remi Board (image → Gaussian splats → mesh) → Edit in Blender → Apply to Card
 ```
 
 ## What Iris-3B can and cannot do
@@ -37,7 +37,7 @@ that becomes a requirement.
 - Disk space: about 15 GB for Turbo + text encoder, or about 21 GB for base +
   text encoder. Downloading both variants adds another 6–12 GB.
 
-The add-on does not install Python packages at runtime. Open **Generate → gear**
+The add-on does not install Python packages at runtime. Open **Remi Board → gear**
 and point **Python** at a CUDA/PyTorch environment that has these packages. The
 same external Python is used by 3D generation and Texture.
 
@@ -64,7 +64,7 @@ for a warm 512×512 request.
 
 ## Download
 
-Use **Download Model** in **Generate → gear**. The downloader is pinned to:
+Use **Download Model** in **Remi Board → gear**. The downloader is pinned to:
 
 - `speridlabs/iris-3b` revision `adc05b909fb05d4276d26aae5a52b36406b2ef26`
 - `Qwen/Qwen3-VL-4B-Instruct` revision `ebb281ec70b05090aa6165b016eac8ec08e71b17`
@@ -76,18 +76,18 @@ selected variant is stored under `Models/iris-3b`, and the encoder under
 
 ## Workflow
 
-1. Open **N-panel → Remi → Generate**.
-2. Write a plain descriptive prompt and click **Generate Image**. Use the gear
+1. Click **Remi Board** in the 3D Viewport header.
+2. Write a plain descriptive prompt in the composer and submit it. Use the gear
    for model (Turbo/Base), native resolution, seed, image count, steps, CFG,
    negative prompt, downloads, and runtime settings.
 3. Finished images appear as thumbnail cards. Image-generation progress is
-   shown above the grid.
-4. Click a card's **play** action to generate its 3D source in place. The card
-   shows a progress strip while the worker runs; a checkmark appears when the
-   splat is ready. **Add Image** imports external PNG/JPG/WebP files as extra
-   3D source cards.
+   shown on the pending card.
+4. Select an image and choose **Generate 3D**. A separate 3D card shows progress
+   while the worker runs. Drop external PNG/JPG/WebP files onto the board to add
+   image cards.
 5. Select a 3D-ready card and use **Create Mesh** (when the optional surface
-   tool is installed), then **Optimize** and **Texture** as before.
+   tool is installed), then **Edit in Blender**. The existing **Optimize** and
+   **Texture** tools are optional; **Apply to Card** updates the same mesh card.
 
 Each request stores a job folder with `image_000.png`, `meta.json`,
 `request.json`, `status.json`, and `complete.json`. The gallery scans the output

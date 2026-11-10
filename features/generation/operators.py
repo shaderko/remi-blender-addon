@@ -81,6 +81,7 @@ def can_generate(context):
     return bool(
         context.mode == "OBJECT"
         and not (session and session.active)
+        and not (generation and generation.busy)
         and not (generation and generation.mesh_busy)
         and not (texture and texture.busy)
         and not (images and images.busy)

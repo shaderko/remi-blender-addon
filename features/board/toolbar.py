@@ -22,9 +22,11 @@ TOOLS = (
     Tool("mesh", "Create Mesh", ("SPLAT",), True),
     Tool("flow", "Run Remi Flow", ("MESH",), True),
     Tool("texture", "Texture Mesh", ("MESH",), True),
+    Tool("lods", "Create LODs", ("MESH",), True),
     Tool("editmesh", "Edit in Blender", ("MESH",)),
     Tool("add3d", "Add to Scene", ("SPLAT", "MESH")),
     Tool("import", "Add Images"),
+    Tool("addobject", "Add Selected Object"),
     Tool("export", "Export Asset", ("IMAGE", "SPLAT", "MESH")),
     Tool("cancel", "Cancel Job"),
 )
@@ -41,33 +43,71 @@ def selected_asset(board, identifier=""):
     return asset if asset is not None and not asset.hidden else None
 
 
+def chosen_assets(board, identifier=""):
+    """Resolve a group action target: the whole selection, or one context card."""
+    if board is None:
+        return []
+    if identifier:
+        asset = board.catalog.assets.get(identifier)
+        return [asset] if asset is not None and not asset.hidden else []
+    return [item for item in board.catalog.assets.values()
+            if item.id in board.selected and not item.hidden]
+
+
 def enabled(board, tool, context=None, identifier=""):
     """Return an actionable explanation instead of changing/hiding the icon."""
     from . import canvas
     context = context or bpy.context
-    asset = selected_asset(board, identifier)
+    assets = chosen_assets(board, identifier)
     if tool.id == "import":
         return True, "Add image files to the board"
+    if tool.id == "addobject":
+        if board is None or context.scene != board.scene:
+            return False, "Open the Remi Board in this scene"
+        if context.mode != "OBJECT":
+            return False, "Switch to Object Mode first"
+        from ...blender import gaussian_splats
+        if not any(obj.select_get() and (obj.type == "MESH"
+                                         or gaussian_splats.is_splat_object(obj))
+                   for obj in context.view_layer.objects):
+            return False, "Select a mesh or Gaussian object in the viewport"
+        return True, "Add the selected object(s) to the board"
     if tool.id == "cancel":
-        if asset is not None and asset.state in {"QUEUED", "RUNNING"}:
-            return True, "Cancel the selected job; keep its source"
+        active = [asset for asset in assets if asset.state in {"QUEUED", "RUNNING"}]
+        if active:
+            return True, (f"Cancel {len(active)} selected job(s); keep their sources"
+                          if len(active) > 1 else "Cancel the selected job; keep its source")
         current_image = (not board.selected or (len(board.selected) == 1 and board.pending
                          and next(iter(board.selected)) == board.pending[0]["key"]))
-        if asset is None and current_image and board.running and context.window_manager.remi_image.busy:
+        if not assets and current_image and board.running and context.window_manager.remi_image.busy:
             return True, "Cancel the current image generation"
-        return False, "Select a queued or running job"
+        return False, "Select one or more queued or running jobs"
     names = {"IMAGE": "Image", "SPLAT": "3D source", "MESH": "Mesh"}
     required = " or ".join(names[kind] for kind in tool.kinds)
-    if asset is None or asset.state != "READY" or asset.kind not in tool.kinds:
-        return False, "Select one ready " + required + " card"
-    if tool.id == "texture" and canvas.texture_source(board, asset) is None:
-        return False, "Link a 3D appearance source first"
-    if tool.id in {"editmesh", "add3d"} and context.mode != "OBJECT":
+    if not assets:
+        return False, "Select one or more ready " + required + " cards"
+    if any(asset.state != "READY" for asset in assets):
+        return False, "Wait for selected cards to finish or cancel their jobs"
+    if any(asset.kind not in tool.kinds for asset in assets):
+        return False, "Select only " + required + " cards"
+    if len({asset.kind for asset in assets}) > 1:
+        return False, "Select cards of one type for a group action"
+    if tool.id == "editmesh" and len(assets) != 1:
+        return False, "Select one mesh to edit in Blender"
+    if tool.id == "texture":
+        missing = [asset for asset in assets if canvas.texture_source(board, asset) is None]
+        if missing:
+            return False, (f"{len(missing)} selected mesh(es) need a linked 3D source"
+                           if len(assets) > 1 else "Link a 3D appearance source first")
+    if tool.id in {"editmesh", "add3d", "lods"} and context.mode != "OBJECT":
         return False, "Switch to Object Mode first"
-    if tool.id == "editmesh":
+    if tool.id in {"editmesh", "lods"}:
         from .jobs import busy_elsewhere
         if busy_elsewhere(context):
             return False, "Finish the active Remi tool first"
+    if len(assets) > 1:
+        return True, f"{len(assets)} selected · " + (
+            "uses the saved settings" if tool.settings else tool.title.lower())
     return True, "Uses the saved settings" if tool.settings else tool.title
 
 
@@ -100,27 +140,42 @@ def run(context, action, identifier=""):
     ready, reason = enabled(board, tool, context, identifier)
     if not ready:
         raise ValueError(reason)
-    asset = selected_asset(board, identifier)
+    assets = chosen_assets(board, identifier)
+    group = len(assets) > 1
     if action == "import":
         return bpy.ops.remi.add_image("INVOKE_DEFAULT")
+    if action == "addobject":
+        return bpy.ops.remi_board.add_object()
     if action == "cancel":
-        if asset is None:
+        if not assets:
             return bpy.ops.remi.cancel_image()
-        canvas.run_strip_action(context, "cancel", asset.id)
+        for asset in assets:
+            canvas.run_strip_action(context, "cancel", asset.id)
         return {"FINISHED"}
     if action == "generate3d":
-        board.selected = {asset.id}
+        board.selected = {asset.id for asset in assets}
         if not canvas.start_splat(context):
-            raise ValueError("Choose a completed image card")
+            raise ValueError("Choose completed image cards")
         return {"FINISHED"}
-    operators = {"mesh": bpy.ops.remi_board.create_mesh, "flow": bpy.ops.remi_board.run_flow,
-                 "editmesh": bpy.ops.remi_board.edit_mesh, "add3d": bpy.ops.remi_board.add_asset,
-                 "export": bpy.ops.remi_board.export_asset}
+    if action == "mesh":
+        return bpy.ops.remi_board.create_mesh(
+            "EXEC_DEFAULT", asset_id="" if group else assets[0].id)
+    if action == "flow":
+        return bpy.ops.remi_board.run_flow(
+            "EXEC_DEFAULT", asset_id="" if group else assets[0].id)
     if action == "texture":
-        canvas.queue_texture(context, asset.id)
+        canvas.queue_textures(context, [asset.id for asset in assets])
         return {"FINISHED"}
-    mode = "INVOKE_DEFAULT" if action == "export" else "EXEC_DEFAULT"
-    return operators[action](mode, asset_id=asset.id)
+    if action == "lods":
+        return bpy.ops.remi_board.create_lods("EXEC_DEFAULT", asset_id="" if group else assets[0].id)
+    if action == "editmesh":
+        return bpy.ops.remi_board.edit_mesh("EXEC_DEFAULT", asset_id=assets[0].id)
+    if action == "add3d":
+        return bpy.ops.remi_board.add_asset(
+            "EXEC_DEFAULT", asset_id="" if group else assets[0].id)
+    if group:
+        return bpy.ops.remi_board.export_group("INVOKE_DEFAULT")
+    return bpy.ops.remi_board.export_asset("INVOKE_DEFAULT", asset_id=assets[0].id)
 
 
 def handle_event(context, board, event, mx, my, dragging):
@@ -172,6 +227,9 @@ def _paths(action):
     if action == "texture":
         circle = [(12+9*math.cos(i*math.tau/32), 12+9*math.sin(i*math.tau/32)) for i in range(33)]
         return [circle, [(12, 3), (12, 21)], [(3, 12), (21, 12)], [(6, 6), (12, 12), (18, 18)]]
+    if action == "lods":
+        return [[(2, 18), (12, 23), (22, 18), (12, 13), (2, 18)],
+                [(2, 12), (12, 7), (22, 12)], [(2, 6), (12, 1), (22, 6)]]
     if action == "editmesh":
         return [[(4, 4), (5, 10), (17, 22), (22, 17), (10, 5), (4, 4)],
                 [(14, 19), (19, 14)], [(5, 10), (10, 5)], [(3, 1), (21, 1)]]
@@ -182,6 +240,8 @@ def _paths(action):
                 [(3, 7), (9, 13), (14, 9), (17, 12), (21, 8)], [(7, 17), (9, 17)]]
     if action == "export":
         return [[(3, 8), (3, 3), (21, 3), (21, 8)], [(12, 9), (12, 22)], [(7, 17), (12, 22), (17, 17)]]
+    if action == "addobject":
+        return cube + [[(1, 4), (7, 4)], [(4, 1), (4, 7)]]
     return [[(5, 5), (5, 19), (19, 19), (19, 5), (5, 5)]]
 
 
@@ -275,15 +335,22 @@ class REMI_BOARD_OT_tool_settings(Operator):
             settings = context.scene.remi_texture
             for name in ("texture_size", "match_distance", "layer_width", "normal_smoothing"):
                 layout.prop(settings, name)
+        elif self.tool == "lods":
+            from ..remesh.lods import draw_settings
+            draw_settings(layout, context.scene.remi_settings)
         else:
             settings = context.scene.remi_generation
             state = context.window_manager.remi_generation
             controls = layout.column()
             controls.enabled = not (state.busy or state.mesh_busy)
             fields = (("mesh_quality", "mesh_output", "python") if self.tool == "mesh" else
-                      ("gaussians", "seed", "model_cache_minutes", "python", "models", "output"))
+                      ("model", "gaussians", "seed", "model_cache_minutes", "python", "models", "output"))
             for name in fields:
                 controls.prop(settings, name)
+            if self.tool == "generate3d" and settings.model == "triposplat":
+                controls.prop(settings, "triposplat_steps")
+                controls.prop(settings, "triposplat_guidance")
+                controls.prop(settings, "triposplat_shift")
             if self.tool == "generate3d":
                 controls.operator("remi.download_models", text="Download 3D Model", icon="IMPORT")
             if state.busy or state.mesh_busy:

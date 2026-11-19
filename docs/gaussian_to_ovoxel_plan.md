@@ -134,10 +134,10 @@ Important distinction:
 
 - **Original-GLB target** teaches the full object, including the unseen back.
   It is also a harder, more generative task.
-- **Teacher-mesh target** from MILo/GOF/2DGS on the same splat teaches
-  splat-consistent denoising. MILo is per-scene optimization and may be
-  non-commercial; use it as an offline teacher/benchmark, not as the runtime
-  model.
+- **Teacher-mesh target** from Remi's own surface-aware optimizer
+  (`scripts/run_surface_reconstruction.py`) on the same splat teaches
+  splat-consistent denoising. It is the same path that powers Create Mesh, so no
+  third-party research code or non-commercial weights are involved.
 - Use both initially: original mesh for complete shape, teacher mesh for
   splat-consistent local detail. Weight or curriculum them.
 
@@ -187,7 +187,7 @@ Hold out entire assets, not views. Compare:
 
 - our TSDF baseline;
 - O-Voxel baseline A/B/C;
-- MILo/GOF teacher mesh;
+- Remi surface-aware optimizer mesh;
 - original source GLB (upper bound, not the same input information);
 - AnyGS2Mesh once code is available.
 
@@ -224,8 +224,7 @@ overall score. A model that wins Chamfer but erases ropes is not useful here.
    input. Mitigate with teacher distillation and visible-side/back-side
    evaluation.
 2. **Data scale and licensing:** Objaverse-XL and Tripo data need license review;
-   MILo code may be non-commercial; TRELLIS.2 is MIT but its model materials
-   have a research disclaimer.
+   TRELLIS.2 is MIT but its model materials have a research disclaimer.
 3. **O-Voxel resolution:** 256³ may not retain ropes; 512³ is likely needed for
    high detail. Measure active cells and memory first.
 4. **Small-model capacity:** 0.3–1M may underfit topology; start 1–4M and
@@ -245,7 +244,7 @@ overall score. A model that wins Chamfer but erases ropes is not useful here.
 3. Implement candidate-cell generation + shared encoder + Baseline B
    (occupancy/direct dual vertex).
 4. Add Hybrid C (edge flags + QEF) and compare on held-out assets against TSDF
-   and MILo teacher.
+   and the surface-aware optimizer.
 5. Go/no-go: thin-structure retention, held-out Chamfer/F-score, and runtime.
    Only then scale data and add rendering fine-tuning.
 
@@ -254,4 +253,3 @@ overall score. A model that wins Chamfer but erases ropes is not useful here.
 - Need a licensed GLB dataset with enough diversity (local pilot is not enough).
 - Need to verify `o_voxel` builds/runs on the available Windows/RTX or Linux
   worker.
-- Need to decide whether MILo/teacher use is acceptable for research only.

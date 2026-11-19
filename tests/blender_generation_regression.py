@@ -18,7 +18,8 @@ else:
     remi = sys.modules["remi"]
 
 from remi.blender.gaussian_splats import import_splats, is_splat_object, native_splats_available, uses_native_splats
-from remi.features.generation.operators import runtime as generation_runtime
+from remi.features.generation.operators import runtime as generation_runtime, _progress_fraction
+assert 0.28 < _progress_fraction("Sampling TripoSplat latent - 5/10") < 0.82
 from remi.integrations.triposplat.splat_data import save
 from remi.workflow.session import runtime as session_runtime
 
@@ -64,6 +65,8 @@ with tempfile.TemporaryDirectory(prefix="remi-generation-config-") as directory:
             assert generation_settings._configuration_defaults() == {}
 assert "torch" not in sys.modules
 assert bpy.context.scene.remi_generation.model_cache_minutes == 5
+assert bpy.context.scene.remi_generation.model == "rand6_100_ncm"
+assert bpy.context.scene.remi_generation.triposplat_steps == 20
 assert bpy.ops.remi.generate_splats.poll()
 assert bpy.ops.remi.import_splats.poll()
 assert bpy.ops.remi.download_models.poll()
@@ -78,6 +81,11 @@ from remi.features.generation.panel import Remi_PT_GenerationSettings
 settings_layout = Layout()
 Remi_PT_GenerationSettings.draw(type("Panel", (), {"layout": settings_layout})(), bpy.context)
 assert "remi.download_models" in settings_layout.operators
+bpy.context.scene.remi_generation.model = "triposplat"
+settings_layout = Layout()
+Remi_PT_GenerationSettings.draw(type("Panel", (), {"layout": settings_layout})(), bpy.context)
+assert "remi.download_models" in settings_layout.operators
+bpy.context.scene.remi_generation.model = "rand6_100_ncm"
 
 # Exercise download modal success/cancel and offline gating without network access.
 from types import SimpleNamespace
@@ -85,16 +93,20 @@ from remi.features.generation.model_operators import Remi_OT_DownloadModels
 from remi.features.generation import model_operators
 download_state = SimpleNamespace(busy=False, status="", status_kind="IDLE", directory="")
 download_settings = SimpleNamespace(download_url="https://models.example/release/blender/",
-                                    models=tempfile.gettempdir(), python="")
+                                    models=tempfile.gettempdir(), python="",
+                                    model="rand6_100_ncm")
 manager = mock.Mock()
 manager.remi_generation = download_state
 download_context = SimpleNamespace(scene=SimpleNamespace(remi_generation=download_settings),
                                    window_manager=manager, window=object(), area=mock.Mock())
-download_operator = SimpleNamespace(_check_access=mock.Mock(), report=mock.Mock())
+download_operator = SimpleNamespace(_check_access=mock.Mock(), report=mock.Mock(), layout=Layout())
 download_job = mock.Mock()
 download_job.directory = Path(tempfile.gettempdir())
 download_job.status.return_value = {"phase": "Downloading models · 50%"}
 download_job.poll.return_value = None
+download_settings.model = "triposplat"
+Remi_OT_DownloadModels.draw(download_operator, download_context)
+download_settings.model = "rand6_100_ncm"
 with mock.patch.object(model_operators.ModelDownloadJob, "start", return_value=download_job), \
      mock.patch.object(model_operators, "shutdown_generation_server"):
     assert Remi_OT_DownloadModels.execute(download_operator, download_context) == {"RUNNING_MODAL"}

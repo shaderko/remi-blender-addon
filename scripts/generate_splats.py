@@ -16,9 +16,15 @@ def main():
     parser.add_argument("--output", type=Path, default=ROOT / "generations")
     parser.add_argument("--gaussians", type=int, default=65536, choices=(32768, 65536, 131072, 262144))
     parser.add_argument("--seed", type=int, default=20261023)
+    parser.add_argument("--model", default="rand6_100_ncm", choices=("rand6_100_ncm", "triposplat"))
+    parser.add_argument("--steps", type=int, default=20, help="TripoSplat Euler steps")
+    parser.add_argument("--guidance", type=float, default=3.0, help="TripoSplat CFG scale")
+    parser.add_argument("--shift", type=float, default=3.0, help="TripoSplat timestep shift")
     args = parser.parse_args()
     job = GenerationJob.start(python=sys.executable, models=args.models, image=args.image,
-                              output=args.output, gaussians=args.gaussians, seed=args.seed)
+                              output=args.output, gaussians=args.gaussians, seed=args.seed,
+                              model=args.model, steps=args.steps, guidance=args.guidance,
+                              shift=args.shift)
     print(f"Output and live worker.log: {job.directory}", flush=True)
     try:
         job.process.wait()

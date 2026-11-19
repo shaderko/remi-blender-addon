@@ -1,6 +1,6 @@
 """Research-only surface-aware reoptimization of frozen Gaussian RGB renders.
 
-Runs an external, pinned Spirula Windows tool. No DA3 or native depth is used.
+Runs an external, pinned Spirula Windows tool. No native splat depth is used.
 Outputs and optimizer state stay separate from the original Gaussian model.
 """
 from __future__ import annotations

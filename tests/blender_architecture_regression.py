@@ -105,6 +105,7 @@ assert tuple(
     "remi.sdf_remesh",
     "remi.apply_remesh",
     "remi.decimate",
+    "remi.create_lods",
     "remi.autoremesher",
     "remi.generate_uv",
     "remi.bake_all_maps",
@@ -114,7 +115,9 @@ assert tuple(
     "remi.bake_ao",
 )
 scene_settings = compose_scene_settings(default_registry)
-assert len(scene_settings) == 60
+assert len(scene_settings) == 62
+assert {"lod_levels", "lod_ratio"} <= scene_settings.keys()
+assert not {"lod_texture_size", "lod_output"} & scene_settings.keys()
 assert "hole_repair_method" in scene_settings
 assert "voxel_size" in scene_settings
 assert "voxel_surface_offset" in scene_settings

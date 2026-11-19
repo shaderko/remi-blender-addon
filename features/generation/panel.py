@@ -91,8 +91,13 @@ def draw_generation_settings(layout, context):
     )
     settings = context.scene.remi_generation
     controls.label(text="3D Generation", icon="OUTLINER_OB_POINTCLOUD")
+    controls.prop(settings, "model")
     controls.prop(settings, "gaussians")
     controls.prop(settings, "seed")
+    if settings.model == "triposplat":
+        controls.prop(settings, "triposplat_steps")
+        controls.prop(settings, "triposplat_guidance")
+        controls.prop(settings, "triposplat_shift")
     if not native_splats_available():
         controls.prop(settings, "preview_limit")
     controls.separator()

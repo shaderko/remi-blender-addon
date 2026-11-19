@@ -60,6 +60,22 @@ circular rims, cylindrical flow, and reliable curvature directions, plus true
 closed-loop manual guides and a measured ordinary/guided preview comparison.
 See [automatic Instant Meshes guidance](docs/instant_meshes_guidance.md).
 
+The development branch also includes an opt-in **Adaptive Quads** prototype
+with Full/Half/Quarter comparisons and sampled shape-error guards. It is not
+part of the published beta.7 release and is not enabled by default. See
+[prototype usage and limitations](docs/adaptive_quad_density.md) and
+[pilot measurements](docs/adaptive_quad_density_results.md).
+
+The latest development experiment is **Field-Aligned adaptive density**. It
+re-solves the native cross-field at the lowest density that meets a measured
+detail limit, so edges follow continuous loops and poles stay rare. The earlier
+triangle-dual "Surface Rebuild" is removed: on `Untitled.glb` it produced only
+46% regular vertices, 5,079 poles, aspect 5.2 and 58° skew. The field-aligned
+route produced **6,472 quads, 99.4% regular, 36 poles, aspect 1.15, 8.8° skew**
+on the same mesh. Density is global per solve; local sizing is not implemented.
+Packaged locally as beta.11, not published. Failed rebuilds cannot be accepted.
+See [field-aligned usage, measurements and limitations](docs/surface_adaptive.md).
+
 ### Model generation beta
 
 The asset-board workflow is available as **2.7.0-beta.7**, separately from the
@@ -79,6 +95,10 @@ conditioning is not supported. Turbo needs about 15 GB on disk (6 GB model +
 9 GB Qwen text encoder), runs on a 12 GB CUDA GPU in low-memory mode, and is
 much faster than the 12 GB base model. See
 [local image generation](docs/iris_image_generation.md).
+
+3D generation is **Built with DINOv3** (Meta). The shared FLUX.2 VAE is
+Apache-2.0 and BiRefNet is MIT; see [`licenses/`](licenses/) and
+[Third-party notices](THIRD_PARTY_NOTICES.md).
 
 **Target version:** Blender **5.3** with native Gaussian rendering. Blender 5.1
 and 5.2 are not supported by this build. This beta ships a **Windows x64** ZIP,
@@ -122,28 +142,71 @@ launcher can reopen or repair the board if its editor/workspace is lost.
 The board keeps **Image → 3D source → Mesh → processed version** as separate,
 linked assets. Automatic results appear beside their sources; source files are preserved. Generation
 and mesh/flow jobs do not import hidden objects into the working scene.
-**Add to Scene** imports an asset only when requested. Mesh flows reuse Remi's
-automatic presets in an isolated local Blender worker and produce a portable
-GLB. Interactive drawing/retopology tools still use their native 3D workspace.
+**Add to Scene** imports an asset only when requested. **Add Selected Object**
+snapshots the selected mesh or Gaussian object from the working scene into a new
+card, with a native `.blend` mesh snapshot and portable GLB; the source objects
+and their modifier stacks are not modified. Mesh flows reuse Remi's automatic
+presets in an isolated local Blender worker and produce a portable GLB.
+Interactive drawing/retopology tools still use their native 3D workspace.
 
 The **fixed left toolbar** has no panel background. From top to bottom:
 **Generate 3D**, **Create Mesh**, **Run Remi Flow**, **Texture Mesh**,
-**Edit in Blender**, **Add to Scene**, **Add Images**, **Export Asset**, and
-**Cancel Job**. Icons stay in place and enable for the current selection:
-Image → Generate 3D, 3D source → Create Mesh, Mesh → Run Remi Flow.
+**Edit in Blender**, **Add to Scene**, **Add Images**, **Add Selected Object**,
+**Export Asset**, and **Cancel Job**. Icons stay in place and enable for the
+current selection: Image → Generate 3D, 3D source → Create Mesh, Mesh → Run Remi Flow.
+A viewport mesh or Gaussian object → Add Selected Object.
 Hover an icon for its name and any unavailable-action explanation.
 
 **Left-click runs immediately with the saved settings. Right-click** Generate
 3D, Create Mesh, Run Remi Flow, or Texture Mesh to configure its defaults without
 starting a job—even when that action is disabled. Defaults are saved in the
 `.blend`; each queued job keeps its own settings snapshot. Generation settings
-are locked while a generation is active. Texture Mesh uses an explicit appearance
-link or the mesh's original 3D-source lineage.
+are locked while a generation is active. Texture Mesh uses an explicit 3D source
+or mesh appearance link, or the mesh's original 3D-source lineage.
+
+**Group actions:** select multiple ready cards of the same type and run the
+toolbar action once. Each card gets its own independent queued job: Generate 3D
+for a group of images, Create Mesh for a group of 3D sources, or Run Remi Flow /
+Texture Mesh for a group of meshes. Add to Scene, Export Asset, and Cancel Job
+also apply to the whole same-type selection. Edit in Blender remains a one-card
+action because it opens one editable scene.
 
 The bottom composer always offers **Create Image**; the selection strip shows
 thumbnails and status, not changing action buttons. Right-click a card for
 secondary actions: **Copy Prompt / Use Prompt**, **Reset Preview to Front**,
 **Job Files**, and error **Details**, where applicable.
+
+### Create LODs inside Blender with the original texture maps
+
+Select a ready Mesh card and click **Create LODs** (stacked-layers icon), or use
+the card's right-click menu. Right-click the toolbar icon to set the number of
+reduced levels and triangle fraction. The source is LOD0; defaults add LOD1/2/3
+at approximately 50/25/12.5% of its triangles.
+
+- This creates **real mesh objects in Blender**, in a `Source · LODs` Outliner
+  collection. Reduced copies are initially hidden in the viewport and render
+  so they do not overlap the original. Toggle their eyes/cameras to compare.
+- All LODs reference the **exact same original material and image datablocks**:
+  albedo, normal, roughness, metallic, alpha, and other existing maps. No copies,
+  resized variants, rebakes, new atlases, GLBs or ZIPs are generated. Texture
+  resolution stays unchanged; texture mip selection/streaming belongs to the
+  engine, separately from mesh LOD selection.
+- Blender's native collapse reducer preserves every UV channel. Vertices along
+  UV seams (in every channel), material seams, sharp edges and open boundaries
+  are pinned. Mirrored, overlapping, repeating and UDIM UVs are not repacked.
+- Source meshes, shader graphs, image pixels/paths and packed-image states are
+  unchanged. Board sources already in the scene are reused directly; a card not
+  yet in Blender is imported once and all of its LODs share those loaded maps.
+- Multipart cards retain their parts and material links. Group selection makes
+  one LOD collection per source card, not background file-export jobs.
+- Seam constraints may prevent the exact requested triangle count. If a level
+  cannot get any smaller, creation fails cleanly; use fewer levels. Reusing a
+  tangent-space normal map is intentional and can produce some shading change
+  at aggressive geometry reductions.
+
+For an active scene mesh, use **Remesh → LODs · Original Textures** or search
+**Create LODs · Original Textures** with F3. It has the same scene-only behavior.
+Export, if needed later, is a separate action under your control.
 
 ### Edit a mesh in ordinary Blender
 
@@ -155,14 +218,23 @@ secondary actions: **Copy Prompt / Use Prompt**, **Reset Preview to Front**,
    flow starts. The existing Remi sidebar tools remain available if you want them;
    the Gaussian appearance source is inferred from the card's links/lineage.
 3. Click **Apply to Card** in the viewport header. The **same card** updates,
-   retaining its identity, position, and connections. A fresh GLB contains the
-   mesh parts, evaluated modifiers, UVs, and GLB-compatible material textures.
+   retaining its identity, position, and connections. The development beta.8
+   keeps a native `.blend` mesh snapshot alongside the portable GLB. Add to Scene,
+   fresh editing and workers use the native snapshot, preserving quads, shared
+   vertices, UV seams, material assignments and separate mesh parts. Modifiers
+   are evaluated in the snapshot; their editable stacks stay in the edit scene.
    Earlier files are retained as backups; already-placed objects in your main
    scene are not replaced. An export failure leaves the card and edit intact.
 4. **Back to Board** returns to your original scene without applying/discarding
    the edit. Reopen the card to resume its scene, including editable modifiers.
    Save the `.blend` to retain these editing scenes across restarts; keep the
    source/output folders as well. Only **Apply to Card** updates the board file.
+
+**Older GLB-only cards:** reopen the preserved quad editing scene and click
+**Apply to Card** once after upgrading. GLB stores triangles and can split
+vertices at attribute seams; missing quad connectivity cannot reliably be
+recovered from that export alone. Export Asset still delivers GLB, with its
+normal triangulation. Keep both native and portable files in each asset folder.
 
 The board is an asset library and automatic-job launcher, not a replacement for
 the native editing tools. **Add to Scene** remains a separate action. Automatic
@@ -183,31 +255,39 @@ Live orbit reuses its native scene and GPU target instead of rebuilding them
 every frame. Thumbnail decoding/capture pauses during board navigation, and
 idle cards do not continuously redraw. Preview scenes are discarded before saving.
 
-### Drop a 3D source onto a mesh to texture it
+### Drop a 3D source or mesh onto a mesh to texture it
 
-There is a playful shortcut: **drag the body of a 3D source card onto a Mesh
-card**. The mesh lights up with **Release to texture**, and the splat becomes a
-small lifted thumbnail so you can still see the target.
+There is a playful shortcut: **drag the body of a 3D source card or another Mesh
+card onto a Mesh card**. The mesh lights up with **Release to texture**, and the
+source becomes a small lifted thumbnail so you can still see the target.
 
-Release to queue the existing local texture bake immediately, using the current
-Texture settings. A new **Textured Mesh** card shows travelling colored splats,
-a scanning mesh preview, an orbital loader, and real worker status. A short
+Release to queue the local texture bake immediately, using the current Texture
+settings. A new **Textured Mesh** card shows travelling colored splats, a
+scanning mesh preview, an orbital loader, and real worker status. A short
 completion burst plays only when the bake succeeds. Albedo and normals are
 embedded together in the GLB; missing UVs are created automatically.
 
-- The splat returns to its original board position. Neither source card/file,
+Dropping a **Mesh onto another Mesh** runs a selected-to-active bake of the
+source's Principled Base Color (albedo), roughness, tangent-space normal and
+ambient occlusion (AO) onto the target. All four maps are saved as PNGs, packed
+into the editable asset, and included in the portable GLB (which may channel-pack
+roughness and AO). The two meshes must overlap in world space; generated board
+cards normally share the same canonical space. The source and target cards are
+not modified.
+
+- The source returns to its original board position. Neither source card/file,
   the mesh's existing appearance link, nor your Blender working scene is changed.
 - **Ctrl-drag** moves/overlaps cards without baking; **Esc** cancels the highlighted
   drop. Group moves, orbiting, and drops outside a ready mesh do not trigger it.
 - Repeating an identical drop while its bake is queued/running selects the
   existing result instead of launching a duplicate. **Cancel** remains available.
 - The effect uses cached thumbnails and lightweight 2D graphics, not extra live
-  Gaussian renderers. It stops when the job ends and does not animate while hidden.
+  renderers. It stops when the job ends and does not animate while hidden.
 
 For explicit settings, the existing graph-style option is still available:
-drag a 3D card's **right-edge handle** onto a mesh to link appearance without
-starting a job, then use **Texture Mesh** in the toolbar or right-click the mesh →
-**Create Textured Mesh**. Use **Unlink 3D
+drag a 3D source or Mesh card's **right-edge handle** onto a mesh to link
+appearance without starting a job, then use **Texture Mesh** in the toolbar or
+right-click the mesh → **Create Textured Mesh**. Use **Unlink 3D
 Texture Source** to remove that optional link. **Add to Scene** remains separate.
 
 **Board controls:** left-click a card to select it; left-drag to move the selected
@@ -215,11 +295,52 @@ cards together. Left-drag empty space for box selection (**Shift** adds,
 **Ctrl** subtracts). **Middle-drag anywhere** pans the board without moving cards.
 Use the wheel to zoom and **Alt-left-drag** a 3D source or Mesh card to orbit its preview.
 Press **F** to frame the board. Drop one or more image files directly onto the
-canvas to add them. **X** / **Delete**, or right-click → **Delete Selected Cards
+canvas to add them. Select a mesh or Gaussian object in the 3D Viewport and click
+**Add Selected Object** (or right-click the object → **Add Selected Object to
+Remi Board**) to create a card without changing the scene. New object cards are
+placed in free space in the **current view**, without moving existing cards. If
+the view is full, the board reveals the nearest available spot. **Ctrl+D** or
+right-click → **Duplicate** creates independent copies of the selected cards;
+artifacts are shared safely, so deleting one copy keeps the files used by the
+other. **X** / **Delete**, or right-click → **Delete Selected Cards
 and Files**, deletes the whole selection after one confirmation. Unselected
 versions and original uploaded files are kept; files shared with unselected
 cards are not deleted. Right-click also offers export. Existing
 generation files are recovered through their source-image metadata.
+
+**Names and nested groups:** select a card or group header and press **F2** (or
+right-click → **Rename**). Names are display-only: image prompts, filenames and
+generation lineage stay unchanged. Select cards and/or group headers, then press
+**Ctrl+G** to create a named group. Groups can contain other groups; frames fit
+their contents automatically, including padding and child-group headers, without
+rearranging cards. Drag a header to move the whole group; **Esc** cancels that
+drag. **Shift-click** headers to select multiple groups. Right-click → **Move
+Into Group** reparents a selection, or moves it outside all groups. **Ctrl+Shift+G**
+ungroups. **X/Delete on selected group headers removes only the frames**, keeping
+every card and asset file. Names, nested membership and layout persist in the
+`.blend` file.
+
+**Layer navigation:** while hovering the Remi Board, press **N**, then open
+**Remi → Layers**. Cards appear with their thumbnails and names; groups form an
+expandable nested tree. Click an entry to select and frame it on the board, or
+**Shift-click** to extend the selection. Search by name to find entries even
+inside collapsed groups. The fold arrows affect only this list, not the board
+or scene. Group fold state is saved with the layout.
+
+Use the **Move to Group** button at the right of a layer row to move that entry
+(or its selected peers) into a group, including a nested group, or outside all
+groups. The list and board share the same membership. On the board, **drag a card
+or group header into a group frame** to join it; the target highlights before you
+drop. Drag onto clear board space to move it outside all groups. **Esc** cancels
+the drag; **Ctrl-drag** moves without changing group membership or baking textures.
+Dropping a 3D source/mesh directly onto a mesh still takes precedence as a texture
+transfer. Layer-menu moves preserve card positions; frames refit with padding.
+
+**Thumbnail loading:** every card keeps a persistent 64 px proxy. Visible cards
+progressively add 256 px and 512 px tiers as they grow on screen; zoomed-out or
+off-screen cards release the larger tiers and keep the proxy. Returning to a card
+therefore shows an immediate low-resolution preview instead of an empty
+placeholder while the sharper tier loads.
 
 Keep the generation/output folders: the board stores file references, asset
 identities, settings, and lineage, not a packed copy of every artifact in the
@@ -244,8 +365,9 @@ setting forced on customers.
 ### Experimental: image to Gaussian splats
 
 Open **Remi Board** from the viewport header to generate with the local
-`rand6_100_ncm` model. This uses an external CUDA/PyTorch environment, saves
-native Gaussian-splat PLY files, and imports lossless splat data with a
+`rand6_100_ncm` model or the optional upstream TripoSplat flow model. This uses
+an external CUDA/PyTorch environment, saves native Gaussian-splat PLY files, and
+imports lossless splat data with a
 **native Gaussian point cloud on Blender 5.3**. **Create Mesh** requires Blender
 5.3 with the `remi-splat-mesh` backend in the external Python environment.
 It reconstructs a vertex-colored opacity iso-surface from the Gaussian data.
@@ -513,3 +635,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for code ownership and
 Remi is free and open source under [GPL-3.0-or-later](LICENSE). See
 [Third-party notices](THIRD_PARTY_NOTICES.md) for Instant Meshes, xatlas, Eigen,
 TBB, and other bundled components.
+
+The image-to-3D path is **Built with DINOv3** (Meta), used under the
+[DINOv3 License](https://ai.meta.com/resources/models-and-libraries/dinov3-license/).
+The shared FLUX.2 VAE is Apache-2.0 and the BiRefNet background-removal
+checkpoint is MIT. These weights are downloaded separately and are not part of
+the extension archive. License texts are retained under [`licenses/`](licenses/).

@@ -22,6 +22,7 @@ spec.loader.exec_module(remi)
 from remi.features.board.assets import Asset, Catalog
 from remi.features.board.jobs import LocalBlenderJob, Runner
 from remi.features.board.splat_preview import camera_frame
+from remi.features.board import native_assets
 from remi.features.generation.settings import default_python
 
 
@@ -103,6 +104,7 @@ try:
         runner.tick(bpy.context, catalog)
         assert result.state == "READY", result.status
         assert Path(result.artifact).suffix == ".glb" and Path(result.preview).is_file()
+        assert Path(result.native_artifact).suffix == ".blend" and Path(result.native_artifact).is_file()
         assert hashlib.sha256(ply.read_bytes()).hexdigest() == digest
         assert bpy.context.active_object == active
         assert len(bpy.context.scene.objects) == len(before)
@@ -132,6 +134,20 @@ try:
         bpy.ops.object.mode_set(mode="OBJECT")
         plane_glb = temporary / "texture_plane.glb"
         bpy.ops.export_scene.gltf(filepath=str(plane_glb), export_format="GLB", use_selection=True)
+        plane_native = native_assets.write(bpy.context, [plane], temporary / "texture_plane.blend")
+        native_parent = Asset("native-plane", "MESH", artifact=str(plane_glb), native_artifact=str(plane_native))
+        catalog.assets[native_parent.id] = native_parent
+        uv_only = {"version": 1, "name": "Native UV pass", "actions": ["UV"], "settings": {"bake_texture_size": 256}}
+        uv_result = catalog.derive(native_parent.id, "MESH", "FLOW", {"flow": uv_only,
+            "mesh_artifact": str(plane_native), "output": str(temporary)})
+        runner.start(bpy.context, catalog, uv_result)
+        wait(runner.job)
+        runner.tick(bpy.context, catalog)
+        assert uv_result.state == "READY", uv_result.status
+        native_plane = native_assets.read(bpy.context, uv_result.native_artifact)[0]
+        assert len(native_plane.data.vertices) == 4 and len(native_plane.data.polygons) == 1
+        assert len(native_plane.data.polygons[0].vertices) == 4, "FLOW triangulated a native quad input"
+        assert len(native_plane.data.uv_layers)
         from remi.integrations.triposplat.splat_data import save as save_splats
         values = np.linspace(-0.9, 0.9, 12, dtype=np.float32)
         gx, gy = np.meshgrid(values, values)
@@ -149,6 +165,7 @@ try:
         splat.state, splat.artifact = "READY", str(gaussian_archive)
         textured_parent = catalog.derive(splat.id, "MESH", "CREATE_MESH")
         textured_parent.state, textured_parent.artifact = "READY", str(plane_glb)
+        textured_parent.native_artifact = uv_result.native_artifact
         textured_parent.links["texture_source"] = splat.id
         textured = catalog.derive(textured_parent.id, "MESH", "TEXTURE", {
             "python": default_python(),
@@ -160,6 +177,11 @@ try:
         runner.tick(bpy.context, catalog)
         assert textured.state == "READY", textured.status
         assert Path(textured.artifact).suffix == ".glb" and Path(textured.preview).is_file()
+        textured_native = native_assets.read(bpy.context, textured.native_artifact)[0]
+        assert len(textured_native.data.vertices) == 4 and len(textured_native.data.polygons) == 1
+        assert len(textured_native.data.polygons[0].vertices) == 4, "TEXTURE triangulated a native quad input"
+        assert all(node.image.packed_file for mat in textured_native.data.materials if mat
+                   for node in mat.node_tree.nodes if node.type == "TEX_IMAGE")
         glb = Path(textured.artifact).read_bytes()
         length, kind = struct.unpack_from("<II", glb, 12)
         gltf = json.loads(glb[20:20+length])
@@ -168,15 +190,17 @@ try:
 
         # Applying a manual edit to the same parent card while a bake is queued
         # must not silently substitute a newer mesh for the captured recipe.
-        snapshot_options = dict(textured.settings, mesh_artifact=str(plane_glb))
+        snapshot_options = dict(textured.settings, mesh_artifact=str(plane_native))
         snapshot = catalog.derive(textured_parent.id, "MESH", "TEXTURE", snapshot_options)
         textured_parent.artifact = str(temporary / "newer-mesh-not-the-input.glb")
+        textured_parent.native_artifact = str(temporary / "newer-mesh-not-the-input.blend")
         with mock.patch.object(LocalBlenderJob, "start", return_value=SimpleNamespace(directory=temporary)) as launch:
             runner.start(bpy.context, catalog, snapshot)
-            assert launch.call_args.kwargs["request"]["input"] == str(plane_glb)
+            assert launch.call_args.kwargs["request"]["input"] == str(plane_native)
         runner.job, runner.asset_id = None, ""
         catalog.assets.pop(snapshot.id)
         textured_parent.artifact = str(plane_glb)
+        textured_parent.native_artifact = uv_result.native_artifact
 
         cancelled = catalog.derive(mesh.id, "MESH", "FLOW", {"flow": document})
         runner.cancel(bpy.context, catalog, cancelled.id)

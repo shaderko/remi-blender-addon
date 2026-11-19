@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 import uuid
 
-from .worker import COMPONENTS
+from .worker import COMPONENTS, DEFAULT_MODEL, components_for_model
 
 
 class GenerationServer:
@@ -24,7 +24,7 @@ class GenerationServer:
     def matches(self, executable, models):
         return self.executable == str(executable) and self.models == Path(models)
 
-    def start(self, idle_timeout):
+    def start(self, idle_timeout, model=DEFAULT_MODEL):
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         queue = self.cache_dir / "queue"
         queue.mkdir(parents=True, exist_ok=True)
@@ -49,6 +49,8 @@ class GenerationServer:
                     str(self.models),
                     "--idle-timeout",
                     str(max(0.0, float(idle_timeout))),
+                    "--model",
+                    model,
                 ],
                 cwd=self.cache_dir,
                 stdin=subprocess.DEVNULL,
@@ -118,7 +120,7 @@ def _executable(python):
     return Path(executable)
 
 
-def _ensure_server(python, models, cache_dir, idle_timeout):
+def _ensure_server(python, models, cache_dir, idle_timeout, model=DEFAULT_MODEL):
     global _SERVER
     executable = _executable(python)
     models = Path(models).resolve()
@@ -132,7 +134,7 @@ def _ensure_server(python, models, cache_dir, idle_timeout):
     if _SERVER is not None:
         _SERVER.shutdown()
     _SERVER = GenerationServer(executable, models, cache_dir)
-    _SERVER.start(idle_timeout)
+    _SERVER.start(idle_timeout, model)
     return _SERVER
 
 
@@ -164,6 +166,10 @@ class GenerationJob:
         output,
         gaussians,
         seed,
+        model=DEFAULT_MODEL,
+        steps=20,
+        guidance=3.0,
+        shift=3.0,
         cache_minutes=0,
         cache_dir=None,
     ):
@@ -171,7 +177,7 @@ class GenerationJob:
         models, image, output = Path(models), Path(image), Path(output)
         if not image.is_file():
             raise ValueError(f"Input image not found: {image}")
-        missing = [name for name in COMPONENTS if not (models / name).is_file()]
+        missing = [name for name in components_for_model(model) if not (models / name).is_file()]
         if missing:
             raise ValueError(f"Missing model files: {', '.join(missing)}. Use Download Models in generation settings.")
         if int(gaussians) not in (32768, 65536, 131072, 262144):
@@ -189,8 +195,14 @@ class GenerationJob:
                 {
                     "models": str(models.resolve()),
                     "image": str(image.resolve()),
+                    "model": model,
                     "gaussians": int(gaussians),
                     "seed": int(seed),
+                    "sampler": {
+                        "steps": int(steps),
+                        "guidance_scale": float(guidance),
+                        "shift": float(shift),
+                    },
                 },
                 indent=2,
             ),
@@ -199,7 +211,7 @@ class GenerationJob:
         if cache_minutes > 0:
             idle_seconds = float(cache_minutes * 60)
             cache_dir = Path(cache_dir) if cache_dir is not None else _default_cache_dir()
-            server = _ensure_server(executable, models, cache_dir, idle_seconds)
+            server = _ensure_server(executable, models, cache_dir, idle_seconds, model)
             log_path = directory / "worker.log"
             log_path.write_text(
                 f"Persistent generation worker\nServer log: {server.log_path}\n",
@@ -313,7 +325,7 @@ class ModelDownloadJob(GenerationJob):
     """Use the same cancellable process boundary without loading inference packages."""
 
     @classmethod
-    def start(cls, *, python, models, base_url):
+    def start(cls, *, python, models, base_url, model=DEFAULT_MODEL):
         from .download import model_base
 
         executable = _executable(python)
@@ -321,13 +333,15 @@ class ModelDownloadJob(GenerationJob):
         directory = Path(tempfile.mkdtemp(prefix="remi-model-download-"))
         token = uuid.uuid4().hex
         models = Path(models).resolve()
+        components = components_for_model(model)
         log = (directory / "worker.log").open("wb")
         try:
             process = subprocess.Popen(
                 [str(executable), "-I", "-B", "-u",
                  str(Path(__file__).with_name("download.py")),
                  "--base-url", base_url, "--models", str(models),
-                 "--status-dir", str(directory), "--token", token],
+                 "--status-dir", str(directory), "--token", token,
+                 "--model", model],
                 cwd=directory, stdin=subprocess.DEVNULL, stdout=log,
                 stderr=subprocess.STDOUT,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
@@ -336,7 +350,7 @@ class ModelDownloadJob(GenerationJob):
             log.close()
             raise
         job = cls(process, directory, log)
-        job.models, job.token = models, token
+        job.models, job.token, job.components = models, token, components
         return job
 
     def result(self):
@@ -353,7 +367,7 @@ class ModelDownloadJob(GenerationJob):
 
         super().cancel()
         # Only delete this process's incomplete files, never another job's files.
-        for name in COMPONENTS:
+        for name in self.components:
             try:
                 partial_path(self.models, name, self.token).unlink(missing_ok=True)
             except (OSError, ValueError):

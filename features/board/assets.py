@@ -34,6 +34,9 @@ class Asset:
     hidden: bool = False
     links: dict = field(default_factory=dict)
     revisions: list = field(default_factory=list)
+    native_artifact: str = ""
+    package_artifact: str = ""
+    label: str = ""  # User-visible name; never replaces an image's source prompt.
 
     def document(self):
         return asdict(self)
@@ -46,7 +49,7 @@ class Asset:
             raise ValueError("Invalid board asset identity")
         fields = {name: value[name] for name in cls.__dataclass_fields__ if name in value}
         asset = cls(**fields)
-        for name in ("artifact", "parent", "title", "operation", "state", "status", "preview", "directory"):
+        for name in ("artifact", "native_artifact", "package_artifact", "label", "parent", "title", "operation", "state", "status", "preview", "directory"):
             if not isinstance(getattr(asset, name), str):
                 raise ValueError(f"Invalid asset {name}")
         if (asset.state not in STATES or not isinstance(asset.settings, dict)
@@ -55,7 +58,7 @@ class Asset:
         if not isinstance(asset.hidden, bool):
             raise ValueError("Invalid asset visibility")
         if (not isinstance(asset.revisions, list) or any(not isinstance(item, dict)
-                or any(not isinstance(item.get(key, ""), str) for key in ("artifact", "directory", "preview"))
+                 or any(not isinstance(item.get(key, ""), str) for key in ("artifact", "native_artifact", "package_artifact", "directory", "preview"))
                 for item in asset.revisions)):
             raise ValueError("Invalid asset revisions")
         if (not isinstance(asset.preview_view, list) or len(asset.preview_view) not in {0, 2}
@@ -74,8 +77,15 @@ class Asset:
 
     def files(self):
         """Current and retained revision files, for shared-file-safe deletion."""
-        return ({self.artifact, self.preview} | {value for item in self.revisions
-                for value in (item.get("artifact", ""), item.get("preview", ""))}) - {""}
+        return ({self.artifact, self.native_artifact, self.package_artifact, self.preview} | {value for item in self.revisions
+                for value in (item.get("artifact", ""), item.get("native_artifact", ""), item.get("package_artifact", ""), item.get("preview", ""))}) - {""}
+
+    def export_source(self):
+        return self.package_artifact or self.artifact
+
+    def mesh_source(self):
+        """Use the exact native revision when available, not a GLB round-trip."""
+        return self.native_artifact or self.artifact
 
 
 class Catalog:

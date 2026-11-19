@@ -22,17 +22,10 @@ It compares shipped density, density without component cleanup/mesh smoothing,
 and learned-stereo fusion from identical held-out cameras. Create Mesh is
 unchanged until this experiment demonstrates a quality improvement.
 
-The [posed DA3 multiview experiment](multiview_mesh_reconstruction.md) adds a
-separate geometry-first candidate: jointly inferred RGB depths with known
-cameras, dense 512-grid fusion without decimation/smoothing, explicit raw-depth
-ablation, and clay geometry comparisons. It does not reuse native splat Z or
-change Create Mesh.
-
-Its [two recorded ship runs](multiview_mesh_pilot_results.md) fail the quality
-gate, including a 2.53-million-triangle surface-band ablation. The next offline
-candidate is [surface-aware reoptimization](surface_mesh_reconstruction.md)
-using a native Windows external tool, not density extraction or another
-unvalidated increase in voxel resolution.
+The implemented candidate is
+[surface-aware reoptimization](surface_mesh_reconstruction.md), using a native
+Windows external tool rather than density extraction or another unvalidated
+increase in voxel resolution.
 
 The [surface pilot results](surface_mesh_pilot_results.md) now record a real
 improvement on the ship: camera-aware opacity extraction plus explicit
@@ -82,17 +75,24 @@ projection would improve appearance but would not recover missing geometry.
 
 | Method | What it adds | Input / cost | Fit for Remi now |
 | --- | --- | --- | --- |
-| **SuGaR** (CVPR 2024) | Encourages flat, surface-aligned Gaussians, then Poisson extraction | Multi-view images, per-scene optimization; non-commercial license | High quality potential; would require re-optimizing Remi splats |
 | **2D Gaussian Splatting** (SIGGRAPH 2024) | 2D oriented disks with depth-distortion and normal losses; TSDF extraction | Posed images, CUDA rasterizer, optimization | Strong surface prior; same re-optimization requirement |
 | **Gaussian Surfels** (SIGGRAPH 2024) | Flattened Gaussians, normal-depth consistency, screened Poisson | Posed images, optimization, monocular normals | Similar; better thin-surface behavior |
 | **Gaussian Opacity Fields** (SIGGRAPH Asia 2024) | Ray-traced opacity level set, adaptive marching tetrahedra | Trained 3DGS, optimization; non-commercial | Directly extracts a surface, but still needs surface regularization for a clean result |
 | **PGSR** (TVCG 2024) | Unbiased planar depth/normal rendering | Posed images, optimization | High-quality planar surfaces; training required |
-| **MILo** (SIGGRAPH Asia 2025) | Differentiable mesh-in-the-loop extraction; mesh and Gaussians co-optimized | Posed images, CUDA, training | Closest to a clean detailed mesh, but a substantial engineering port |
 | **TopoSurfel** (2026) | Mesh-guided surfel evolution, density control, hole filling | Posed images, optimization | Addresses floaters/holes directly |
 | **MAtCha** (CVPR 2025) | Atlas of charts, monocular depth, 2DGS, adaptive mesh extraction | A few posed images, MASt3R/DepthAnything, CUDA; mixed licenses | Strong sparse-view geometry, but reconstructs from input images again |
 | **MeshSplat** (AAAI 2026) | Feed-forward 2DGS from 1–2 posed images | Trained network, CUDA rasterizer | Generalizable, but trained for indoor scenes; quality on object splats unverified |
 | **GS2Mesh** (ECCV 2024) | Renders stereo pairs, learned stereo depth, TSDF | Existing 3DGS + pretrained stereo model | Worth testing: exact poses/native splat depth are not ground-truth surface geometry; learned stereo provides a distinct geometric prior |
 | **Confidence-based extraction** (2026) | Learns confidence to balance photometric/geometric supervision | Per-scene training | Could suppress view-dependent artifacts, but still training-based |
+
+### Evaluated and rejected
+
+**SuGaR** (CVPR 2024) and **MILo** (SIGGRAPH Asia 2025) are not used. Both are
+per-scene optimizations that need the original posed images (or renders) and GPU
+training, and both are released under non-commercial licenses. Remi's
+surface-aware path addresses the same surface-alignment goal independently,
+using camera-aware opacity extraction plus training-silhouette constraints, so
+no upstream code or weights from either project are required.
 
 ## KIRI 3DGStoMesh 2.0
 
@@ -115,17 +115,16 @@ appearance/reference source for texture transfer.
   model weights and runtime.
 - Effort: medium, depending on the chosen model's Windows/CUDA support.
 
-### B. Surface-aware 3DGS reconstruction (closest to the requested result)
+### B. Surface-aware 3DGS reconstruction (implemented)
 
-Port or integrate a 2DGS/SuGaR/MILo-style optimization, initialized from the
-Remi splats and supervised by renders from many virtual cameras. This is the
-only path that can plausibly approach KIRI-level geometry while staying derived
-from the splats.
+The production path: [surface-aware reoptimization](surface_mesh_reconstruction.md)
+re-optimizes a separate Gaussian copy against calibrated renders and extracts a
+camera-aware occupancy mesh. It runs the external Spirula tool and does not
+vendor a 2DGS/SuGaR/MILo implementation.
 
-- Pros: preserves the 3DGS source, can produce detailed surfaces.
-- Cons: CUDA extensions, per-scene optimization, license constraints,
-  research-grade integration; not a quick UI feature.
-- Effort: high.
+- Pros: preserves the 3DGS source and produces detailed surfaces.
+- Cons: per-scene optimization and an external GPL tool; not instant.
+- Status: Dense mode in Create Mesh.
 
 ### C. External mesh service/API
 
@@ -140,12 +139,13 @@ misrepresent the feature's quality.
 
 ## Current code status
 
-The production path is now **Create Mesh**, using the vendored Modly/ComfyUI
-density + Surface Nets mesher under `integrations/splat_mesh/`. It reads the
-selected object's Gaussian data, writes only an ephemeral exchange archive, and
-associates each result with its source object, so multiple models in one file
-work independently. The `Reconstructed · Decimate` preset is selected
-automatically after import.
-Surface Nets topology is not always UV-friendly, so UV/Bake remain manual for
-now. The prototype scripts under `scripts/` are retained as research tools and
-are not packaged. `phft` remains read-only.
+The production path is now **Create Mesh**, using Remi's camera-aware opacity
+extraction and training-silhouette constraints. The Modly/ComfyUI density +
+Surface Nets mesher under `integrations/splat_mesh/` is retained as a research
+baseline, not the active backend. The mesher reads the selected object's
+Gaussian data, writes only an ephemeral exchange archive, and associates each
+result with its source object, so multiple models in one file work
+independently. The `Reconstructed · Decimate` preset is selected automatically
+after import. Surface Nets topology is not always UV-friendly, so UV/Bake remain
+manual for now. The prototype scripts under `scripts/` are retained as research
+tools and are not packaged. `phft` remains read-only.

@@ -69,7 +69,7 @@ source_id = "bridge-mesh"
 instance_name = edit_name = mesh_name = None
 workspace_count = area_count = None
 main_objects = None
-first_artifact = first_hash = None
+first_artifact = first_hash = first_native = None
 undo_phase = 0
 
 
@@ -96,7 +96,7 @@ def assert_source():
 
 
 def advance():
-    global step, waits, instance_name, edit_name, mesh_name, workspace_count, area_count, window, main_objects, first_artifact, first_hash, undo_phase
+    global step, waits, instance_name, edit_name, mesh_name, workspace_count, area_count, window, main_objects, first_artifact, first_hash, first_native, undo_phase
     waits += 1
     assert waits < 150, f"Timed out at step {step}"
     if step == 0:
@@ -207,10 +207,14 @@ def advance():
         assert "normalTexture" in document["materials"][0]
         assert len(bpy.data.scenes[edit_name].objects[mesh_name].modifiers) == 1
         first_artifact, first_hash = asset.artifact, hashlib.sha256(data).hexdigest()
+        first_native = asset.native_artifact
+        assert Path(first_native).is_file() and first_native in asset.files()
         assert_source()
         # An explicit Add to Scene imports the new parts without replacing the old instance.
         assert canvas.add_asset_to_scene(bpy.context, source_id)
         assert len(bpy.context.selected_objects) == 2
+        assert any(len(obj.data.vertices) == 8 and len(obj.data.polygons) == 6
+                   for obj in bpy.context.selected_objects), "Add to Scene triangulated/split the added quad cube"
         assert all(obj[OBJECT_REVISION_KEY] == asset.artifact for obj in bpy.context.selected_objects)
         main_objects = set(bpy.context.scene.objects.keys())
         assert_source()
@@ -254,6 +258,7 @@ def advance():
             return 0.2
         asset = canvas.BOARD.catalog.assets[source_id]
         assert len(asset.revisions) == 2 and asset.revisions[-1]["artifact"] == first_artifact
+        assert asset.revisions[-1]["native_artifact"] == first_native and Path(asset.native_artifact).is_file()
         assert hashlib.sha256(Path(first_artifact).read_bytes()).hexdigest() == first_hash
         assert len(canvas.BOARD.catalog.assets) == 3 and len(window.screen.areas) == area_count
         assert len(bpy.data.workspaces) == workspace_count + 1

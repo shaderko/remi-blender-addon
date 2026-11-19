@@ -33,9 +33,9 @@ class RemeshFeature(FeatureDefaults):
         return SCENE_SETTINGS
 
     def blender_classes(self) -> tuple[type, ...]:
-        from .operators import Remi_OT_ApplyRemesh, Remi_OT_Decimate, Remi_OT_SDFRemesh
+        from .operators import Remi_OT_ApplyRemesh, Remi_OT_Decimate, Remi_OT_SDFRemesh, REMI_OT_create_lods
 
-        return Remi_OT_SDFRemesh, Remi_OT_ApplyRemesh, Remi_OT_Decimate
+        return Remi_OT_SDFRemesh, Remi_OT_ApplyRemesh, Remi_OT_Decimate, REMI_OT_create_lods
 
     def draw(self, layout, context) -> None:
         settings = context.blender_context.scene.remi_settings
@@ -79,6 +79,11 @@ class RemeshFeature(FeatureDefaults):
         row.prop(settings, "decimation_preserve_detail", text="Preserve Detail")
         row.prop(settings, "decimation_with_texture", text="Keep Texture")
         session_command(decimate, "DECIMATE", "Run MeshLab Decimation", "MOD_DECIM")
+        lods = layout.box()
+        lods.label(text="LODs · Original Textures", icon="MOD_DECIM")
+        from .lods import draw_settings
+        draw_settings(lods, settings)
+        lods.operator("remi.create_lods", text="Create LODs from Active Mesh", icon="DUPLICATE")
 
     def execute(
         self,

@@ -18,7 +18,7 @@ integration.
   Both hashes were unchanged after the experiments.
 - 72 native Blender 5.3 RGB/alpha training cameras, 1512 px, and **12 separate
   held-out cameras**. Neither held-out views nor native Blender depth supervise
-  reconstruction. No DA3 supervision is used in these surface candidates.
+  reconstruction.
 - Pinned external Spirula v2026.10.16, Windows Vulkan. Its actual parsed camera
   matrices, intrinsics, image sizes, and world scale are checked before execution.
 

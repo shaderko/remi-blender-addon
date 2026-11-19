@@ -85,7 +85,7 @@ class Runner:
 
     def start(self, context, catalog, asset):
         parent = catalog.assets[asset.parent]
-        mesh_input = asset.settings.get("mesh_artifact", parent.artifact)
+        mesh_input = asset.settings.get("mesh_artifact", parent.mesh_source())
         if not Path(mesh_input).is_file():
             raise ValueError("The source asset file is missing")
         options = asset.settings
@@ -95,6 +95,9 @@ class Runner:
             shutdown_iris_server()
             self.job = GenerationJob.start(python=options["python"], models=options["models"],
                 image=parent.artifact, output=options["output"], gaussians=options["gaussians"], seed=options["seed"],
+                model=options.get("model", "rand6_100_ncm"),
+                steps=options.get("steps", 20), guidance=options.get("guidance", 3.0),
+                shift=options.get("shift", 3.0),
                 cache_minutes=options["cache_minutes"], cache_dir=options["cache_dir"])
             state = context.window_manager.remi_generation
             state.busy, state.source_image = True, parent.artifact
@@ -107,15 +110,25 @@ class Runner:
             context.window_manager.remi_generation.mesh_busy = True
         elif asset.operation == "FLOW":
             self.job = LocalBlenderJob.start(output=options["output"], request={
-                "operation": "FLOW", "input": parent.artifact, "flow": options["flow"],
+                "operation": "FLOW", "input": mesh_input, "flow": options["flow"],
                 "yaw": asset.yaw, "elevation": asset.elevation})
         elif asset.operation == "TEXTURE":
-            if not Path(options["gaussian_source"]).is_file():
-                raise ValueError("The linked Gaussian texture source is missing")
-            self.job = LocalBlenderJob.start(output=options["output"], request={
-                "operation": "TEXTURE", "input": mesh_input, "python": options["python"],
-                "gaussian_source": options["gaussian_source"], "yaw": asset.yaw,
-                "elevation": asset.elevation, "texture": options["texture"]})
+            if options.get("source_kind") == "MESH":
+                source_mesh = options.get("source_mesh", "")
+                if not source_mesh or not Path(source_mesh).is_file():
+                    raise ValueError("The linked mesh texture source is missing")
+                self.job = LocalBlenderJob.start(output=options["output"], request={
+                    "operation": "MESH_BAKE", "input": mesh_input,
+                    "bake_source": source_mesh,
+                    "texture_size": int(options["texture"]["texture_size"]),
+                    "yaw": asset.yaw, "elevation": asset.elevation})
+            else:
+                if not Path(options["gaussian_source"]).is_file():
+                    raise ValueError("The linked Gaussian texture source is missing")
+                self.job = LocalBlenderJob.start(output=options["output"], request={
+                    "operation": "TEXTURE", "input": mesh_input, "python": options["python"],
+                    "gaussian_source": options["gaussian_source"], "yaw": asset.yaw,
+                    "elevation": asset.elevation, "texture": options["texture"]})
         else:
             raise ValueError("Unsupported board action")
         self.asset_id = asset.id
@@ -156,6 +169,12 @@ class Runner:
                     asset.state, asset.status, asset.progress = "READY", "Ready", 1.0
                     if isinstance(self.job, LocalBlenderJob):
                         result = json.loads((self.job.directory / "result.json").read_text(encoding="utf-8"))
+                        if result.get("native_artifact"):
+                            native = Path(result["native_artifact"]).resolve()
+                            if (not native.is_relative_to(self.job.directory.resolve()) or
+                                    native.suffix.lower() != ".blend" or not native.is_file()):
+                                raise ValueError("Local worker returned an invalid native mesh snapshot")
+                            asset.native_artifact = str(native)
                         if result.get("preview_error"):
                             asset.status = f"Preview unavailable: {result['preview_error']}"
                 except Exception as exc:
@@ -189,7 +208,7 @@ class Runner:
             if asset.status.startswith("Preview unavailable"):
                 return
             self.preview_job = LocalBlenderJob.start(output=output, request={"operation": "PREVIEW",
-                "input": asset.artifact, "yaw": asset.yaw, "elevation": asset.elevation})
+                "input": asset.mesh_source(), "yaw": asset.yaw, "elevation": asset.elevation})
             self.preview_id = asset.id
 
     def cancel(self, context, catalog, identifier):
@@ -216,5 +235,9 @@ def generation_options(context):
     return {"python": bpy.path.abspath(settings.python) if settings.python else default_python(),
             "models": bpy.path.abspath(settings.models), "output": bpy.path.abspath(settings.output),
             "gaussians": int(settings.gaussians), "seed": settings.seed,
+            "model": settings.model,
+            "steps": settings.triposplat_steps,
+            "guidance": settings.triposplat_guidance,
+            "shift": settings.triposplat_shift,
             "cache_minutes": settings.model_cache_minutes,
             "cache_dir": str(Path(bpy.app.tempdir or tempfile.gettempdir()) / "remi-generation-cache")}

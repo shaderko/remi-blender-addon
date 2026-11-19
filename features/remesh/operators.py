@@ -114,3 +114,32 @@ class Remi_OT_Decimate(Operator):
         context.view_layer.objects.active = candidate
         self.report({"INFO"}, f"Decimated model imported as '{candidate.name}'")
         return {"FINISHED"}
+
+
+class REMI_OT_create_lods(Operator):
+    bl_idname = "remi.create_lods"
+    bl_label = "Create LODs · Original Textures"
+    bl_description = "Create scene LOD meshes with the exact original materials and texture maps; no baking or export"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == "OBJECT" and context.active_object is not None and context.active_object.type == "MESH"
+
+    def invoke(self, context, _event):
+        return context.window_manager.invoke_props_dialog(self, width=440)
+
+    def draw(self, context):
+        from .lods import draw_settings
+        draw_settings(self.layout, context.scene.remi_settings)
+
+    def execute(self, context):
+        from .lods import create_lods
+        settings = context.scene.remi_settings
+        try:
+            result = create_lods(context.active_object, levels=settings.lod_levels, ratio=settings.lod_ratio)
+        except Exception as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"Created {settings.lod_levels} reduced LODs in '{result['collection'].name}'; toggle their visibility in the Outliner")
+        return {"FINISHED"}

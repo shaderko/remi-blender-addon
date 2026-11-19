@@ -46,10 +46,12 @@ assert board_canvas.gallery is image_panel.gallery
 assert hasattr(bpy.ops.remi_board, "open")
 assert board_canvas.BOARD is None  # Enabling must not rearrange a customer's screen.
 assert not bpy.app.timers.is_registered(board_workspace.monitor_workspace)  # Headless.
-for operator in ("create_mesh", "run_flow", "add_asset", "export_asset", "edit_mesh"):
+for operator in ("create_mesh", "run_flow", "create_lods", "add_asset", "export_asset", "edit_mesh"):
     assert "asset_id" in getattr(bpy.ops.remi_board, operator).get_rna_type().properties
 assert (Path(addon.__file__).parent / "features/board/local_worker.py").is_file()
 board_editing = importlib.import_module(module_name + ".features.board.editing")
+board_native = importlib.import_module(module_name + ".features.board.native_assets")
+assert callable(board_native.write) and callable(board_native.read)
 assert "return_to_board" in bpy.ops.remi_board.apply_edit.get_rna_type().properties
 assert bpy.ops.remi_board.return_to_board.get_rna_type()
 assert bpy.context.window_manager.remi_ui.workspace == "OPTIMIZE"
@@ -59,13 +61,34 @@ board_effects = importlib.import_module(module_name + ".features.board.texture_e
 assert callable(board_canvas.queue_texture) and callable(board_effects.draw_working_card)
 assert board_canvas.toolbar is board_toolbar
 assert [tool.id for tool in board_toolbar.TOOLS] == [
-    "generate3d", "mesh", "flow", "texture", "editmesh", "add3d", "import", "export", "cancel",
+    "generate3d", "mesh", "flow", "texture", "lods", "editmesh", "add3d", "import", "addobject", "export", "cancel",
 ]
-assert {tool.id for tool in board_toolbar.TOOLS if tool.settings} == {"generate3d", "mesh", "flow", "texture"}
+assert {tool.id for tool in board_toolbar.TOOLS if tool.settings} == {"generate3d", "mesh", "flow", "texture", "lods"}
 assert {"action", "asset_id"} <= set(bpy.ops.remi_board.tool_action.get_rna_type().properties.keys())
 assert "tool" in bpy.ops.remi_board.tool_settings.get_rna_type().properties
 assert not hasattr(board_canvas, "primary_action")
 print("REMI_INSTALLED_BOARD_TOOLBAR_OK")
+board_organization = importlib.import_module(module_name + ".features.board.organization")
+board_organizing = importlib.import_module(module_name + ".features.board.organizing")
+for operator in ("rename", "group", "ungroup", "move_to_group"):
+    assert getattr(bpy.ops.remi_board, operator).get_rna_type()
+model = board_organization.Organization()
+child = model.create({"a", "b"}, title="Parts")
+parent = model.create({"c"}, {child.id}, title="Assembly")
+assert model.members(parent.id) == {"a", "b", "c"} and child.parent == parent.id
+assert callable(board_organizing.handle_event) and callable(board_organization.place_in_view)
+print("REMI_INSTALLED_BOARD_ORGANIZATION_OK")
+board_layers = importlib.import_module(module_name + ".features.board.layers")
+assert bpy.ops.remi_board.reveal_layer.get_rna_type()
+assert bpy.ops.remi_board.layer_fold.get_rna_type()
+assert bpy.ops.remi_board.layer_move.get_rna_type()
+assert "query" in bpy.context.window_manager.remi_board_layers.bl_rna.properties
+assert board_layers.REMI_BOARD_PT_layers.bl_space_type == "IMAGE_EDITOR"
+assert board_layers.REMI_BOARD_PT_layers.bl_region_type == "UI"
+assert not board_layers.REMI_BOARD_PT_layers.poll(bpy.context)
+assert callable(board_organization.layer_rows) and callable(board_layers.thumbnail_icon)
+assert callable(board_organizing.drop_target) and callable(board_organizing.apply_drop)
+print("REMI_INSTALLED_BOARD_LAYERS_OK")
 print("REMI_INSTALLED_DOCKED_WORKSPACE_OK")
 instant_native = importlib.import_module(module_name + ".features.retopology.instant_meshes._native")
 assert instant_native.Session is not None
@@ -76,6 +99,15 @@ assert os.path.realpath(uv_native.__file__).startswith(os.path.realpath(os.envir
 bpy.ops.object.select_all(action="SELECT")
 bpy.ops.object.delete(use_global=False)
 bpy.ops.mesh.primitive_cube_add()
+with tempfile.TemporaryDirectory(prefix="remi-installed-quads-") as directory:
+    native_path = board_native.write(bpy.context, [bpy.context.object], Path(directory) / "quads.blend")
+    appended = board_editing.import_working_mesh(bpy.context, native_path)
+    assert len(appended) == 1 and len(appended[0].data.vertices) == 8
+    assert len(appended[0].data.polygons) == 6 and all(len(p.vertices) == 4 for p in appended[0].data.polygons)
+    bpy.data.objects.remove(appended[0], do_unlink=True)
+    bpy.context.view_layer.objects.active = bpy.data.objects["Cube"]
+    bpy.context.active_object.select_set(True)
+print("REMI_INSTALLED_NATIVE_QUADS_OK")
 uv_result = uv_engine.ensure_remi_uv(
     bpy.context.object, texture_size=256, margin_px=4,
     profile_id="HARD_SURFACE", replace_existing=True,
@@ -86,6 +118,62 @@ print("REMI_INSTALLED_UV_GAP_SMOKE_OK")
 # Exercise the new binding and packaged detector without user site-packages.
 instant_runtime = importlib.import_module(module_name + ".features.retopology.instant_meshes.runtime").runtime
 instant_settings = bpy.context.scene.remi_instant_meshes
+assert not instant_settings.adaptive_quads
+assert instant_settings.adaptive_method == "SURFACE"
+assert instant_settings.stitch_render_seams and instant_settings.adaptive_max_seconds == 60
+assert instant_settings.adaptive_face_limit == 25000
+assert callable(importlib.import_module(module_name + ".features.retopology.instant_meshes.adaptive").QuadSimplifier)
+assert callable(importlib.import_module(module_name + ".features.retopology.instant_meshes.surface_adaptive").SurfacePatchRemesher)
+instant_settings.target_faces = 1000
+instant_settings.deterministic = True
+instant_settings.preserve_creases = False
+instant_settings.adaptive_quads = True
+bpy.ops.mesh.primitive_plane_add(size=2)
+surface_source = bpy.context.object
+surface_object_count = len(bpy.context.scene.objects)
+instant_runtime.start(surface_source, instant_settings)
+deadline = time.monotonic() + 60
+while instant_runtime.solve_stage or instant_runtime.busy:
+    assert time.monotonic() < deadline, instant_runtime.last_error
+    instant_runtime.poll()
+    time.sleep(.001)
+assert not instant_runtime.last_error, instant_runtime.last_error
+assert instant_runtime.adaptive_report["rebuilt"], instant_runtime.adaptive_report
+assert len(instant_runtime.preview[0]) == 4 and len(instant_runtime.preview[1]) == 1
+assert len(surface_source.data.vertices) == 4 and len(bpy.context.scene.objects) == surface_object_count
+instant_runtime.shutdown()
+surface_mesh = surface_source.data
+bpy.data.objects.remove(surface_source, do_unlink=True)
+bpy.data.meshes.remove(surface_mesh)
+print("REMI_INSTALLED_PLANAR_SURFACE_REBUILD_OK")
+# The curved route must solve and validate the field layout from the installed
+# ZIP, not merely import a module or reuse the native comparison.
+bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=4)
+organic_source = bpy.context.object
+organic_vertices = [tuple(vertex.co) for vertex in organic_source.data.vertices]
+instant_settings.adaptive_error = .01
+instant_runtime.start(organic_source, instant_settings)
+deadline = time.monotonic()+90
+while instant_runtime.solve_stage or instant_runtime.busy:
+    assert time.monotonic() < deadline, instant_runtime.last_error
+    delay = instant_runtime.poll()
+    time.sleep(delay if delay is not None else .001)
+assert not instant_runtime.last_error, instant_runtime.last_error
+assert instant_runtime.adaptive_report["rebuilt"], instant_runtime.adaptive_report
+assert instant_runtime.adaptive_report["backend"] == "FIELD_ALIGNED"
+assert instant_runtime.adaptive_report["ideal_valence_fraction"] >= .90
+assert instant_runtime.adaptive_report["poles"] <= max(6, instant_runtime.adaptive_report["output_faces"]*.08)
+assert instant_runtime.preview_quality["quad_fraction"] == 1
+assert instant_runtime.preview_quality["boundary_edges"] == instant_runtime.preview_quality["nonmanifold_edges"] == 0
+assert instant_runtime.can_accept
+assert [tuple(vertex.co) for vertex in organic_source.data.vertices] == organic_vertices
+instant_runtime.shutdown()
+organic_mesh = organic_source.data
+bpy.data.objects.remove(organic_source, do_unlink=True)
+bpy.data.meshes.remove(organic_mesh)
+instant_settings.adaptive_quads = False
+instant_settings.preserve_creases = True
+print("REMI_INSTALLED_SURFACE_REBUILD_OK")
 assert not instant_settings.auto_guides and instant_settings.auto_quality_guard
 bpy.ops.mesh.primitive_cylinder_add(vertices=32)
 guide_source = bpy.context.object
@@ -246,5 +334,25 @@ with tempfile.TemporaryDirectory(prefix="remi-installed-board-") as temporary:
     bpy.context.window.scene = owner
 print("REMI_INSTALLED_BOARD_EDITING_OK")
 print("REMI_INSTALLED_BOARD_WORKER_OK")
+bpy.ops.mesh.primitive_grid_add(x_subdivisions=16, y_subdivisions=16, size=2)
+grid = bpy.context.object
+image = bpy.data.images.new("Installed original albedo", 256, 256)
+image.generated_color = (.3, .6, .9, 1)
+material = bpy.data.materials.new("Installed original LOD material")
+material.use_nodes = True
+tex = material.node_tree.nodes.new("ShaderNodeTexImage")
+tex.image = image
+material.node_tree.links.new(tex.outputs["Color"], material.node_tree.nodes["Principled BSDF"].inputs["Base Color"])
+grid.data.materials.append(material)
+images_before, materials_before = set(bpy.data.images), set(bpy.data.materials)
+lod_module = importlib.import_module(module_name + ".features.remesh.lods")
+result = lod_module.create_lods(grid, levels=2, ratio=.5)
+assert len(result["objects"]) == 2
+assert all(obj.data.materials[0] is material for obj in result["objects"])
+assert set(bpy.data.images) == images_before and set(bpy.data.materials) == materials_before
+assert result["levels"][2]["triangles"] < result["levels"][1]["triangles"]
+assert not hasattr(bpy.context.scene.remi_settings, "lod_texture_size")
+assert not hasattr(bpy.context.scene.remi_settings, "lod_output")
+print("REMI_INSTALLED_SHARED_LODS_OK")
 bpy.ops.preferences.addon_disable(module=module_name)
 print("REMI_INSTALLED_EXTENSION_SMOKE_OK")

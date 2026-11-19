@@ -61,7 +61,10 @@ pan_origin = None
 
 
 def enabled():
-    return {tool.id for tool in toolbar.TOOLS if toolbar.enabled(canvas.BOARD, tool)[0]}
+    # Scene-object selection is independent of card selection; the add-object
+    # tool is checked separately below.
+    return {tool.id for tool in toolbar.TOOLS
+            if tool.id != "addobject" and toolbar.enabled(canvas.BOARD, tool)[0]}
 
 
 def click_tool(key, button="LEFTMOUSE"):
@@ -113,7 +116,7 @@ def advance():
         for selection, expected in ((set(), {"import"}),
                                     ({"image"}, {"import", "generate3d", "export"}),
                                     ({"splat"}, {"import", "mesh", "add3d", "export"}),
-                                    ({"mesh"}, {"import", "flow", "texture", "editmesh", "add3d", "export"}),
+                                     ({"mesh"}, {"import", "flow", "texture", "lods", "editmesh", "add3d", "export"}),
                                     ({"image", "splat"}, {"import"})):
             board.selected = selection
             assert enabled() == expected, (selection, enabled())
@@ -235,6 +238,50 @@ def advance():
         assert scene.remi_texture.texture_size == "1024" and scene.remi_texture.normal_smoothing == 4
         assert [(tool.id, rect) for tool, rect in toolbar.buttons(board)] == geometry
         assert sum(op.bl_rna.identifier == "REMI_BOARD_OT_run" for op in window.modal_operators) == 1
+        freeze = mock.patch.object(board.runner, "tick", return_value=False)
+        freeze.start()
+        board.selected = {"mesh"}
+        click_tool("lods", "RIGHTMOUSE")
+    elif step == 20:
+        assert not any(asset.operation == "LODS" for asset in board.catalog.assets.values())
+        scene.remi_settings.lod_levels = 2
+        scene.remi_settings.lod_ratio = .6
+        assert not hasattr(scene.remi_settings, "lod_texture_size")
+        assert not hasattr(scene.remi_settings, "lod_output")
+        bpy.ops.mesh.primitive_grid_add(x_subdivisions=16, y_subdivisions=16)
+        source = bpy.context.object
+        source.name = "LOD toolbar source"
+        source["remi_board_asset_id"] = "mesh"
+        image = bpy.data.images.new("LOD toolbar original texture", 256, 256)
+        material = bpy.data.materials.new("LOD toolbar original material")
+        material.use_nodes = True
+        tex = material.node_tree.nodes.new("ShaderNodeTexImage")
+        tex.image = image
+        material.node_tree.links.new(tex.outputs["Color"], material.node_tree.nodes["Principled BSDF"].inputs["Base Color"])
+        source.data.materials.append(material)
+        bpy.ops.screen.screenshot(filepath=str(OUTPUT / "lod-settings.png"))
+        dismiss()
+    elif step == 21:
+        click_tool("lods")
+    elif step == 22:
+        source = bpy.data.objects["LOD toolbar source"]
+        reduced = [obj for obj in scene.objects if obj.get("remi_lod_source") == source]
+        assert len(reduced) == 2 and all(obj.hide_get() for obj in reduced)
+        assert not any(asset.operation == "LODS" for asset in board.catalog.assets.values())
+        assert board.selected == set(canvas.selected_paths(bpy.context)) == {"mesh"}
+        freeze.stop()
+        freeze = None
+        bpy.ops.wm.save_as_mainfile(filepath=str(OUTPUT / "scene-lods.blend"))
+        bpy.ops.wm.open_mainfile(filepath=str(OUTPUT / "scene-lods.blend"))
+    elif step == 23:
+        window, scene = bpy.context.window, bpy.context.scene
+        if board is None:
+            return 0.2
+        source = bpy.data.objects["LOD toolbar source"]
+        reduced = [obj for obj in scene.objects if obj.get("remi_lod_source") == source]
+        assert len(reduced) == 2
+        assert all(obj.data.materials[0] == source.data.materials[0] for obj in reduced)
+        assert source.data.materials[0].node_tree.nodes.get("Image Texture").image == bpy.data.images["LOD toolbar original texture"]
         remi.unregister()
         print(f"REMI_BOARD_TOOLBAR_SMOKE_OK: {OUTPUT}", flush=True)
         bpy.ops.wm.quit_blender()

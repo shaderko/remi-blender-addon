@@ -21,6 +21,52 @@ external Python process. Remi's process client, Blender data adapter, preview,
 and UI are separate code. Large model weights are not bundled. Local setup
 copies the selected research checkpoint and frozen components; it does not
 grant additional redistribution rights for image encoders or other weights.
+The optional upstream TripoSplat flow weights are released under the same MIT
+license and are downloaded separately; the default Remi NCM checkpoint is a
+locally trained derivative. The TripoSplat Gaussian decoder
+(`triposplat_vae_decoder_fp16.safetensors`) is part of the MIT-licensed
+TripoSplat release.
+
+The MIT grant above covers only VAST-AI's TripoSplat code and weights. The
+shared image encoder, FLUX.2 VAE, and background-removal checkpoint distributed
+in the same model folder are separate third-party works under their own
+licenses, set out below. A TripoSplat notice does not relicense them.
+
+## DINOv3 image encoder (shared TripoSplat weights)
+
+- Project: [facebookresearch/dinov3](https://github.com/facebookresearch/dinov3)
+- Model file: `ckpts/clip_vision/dino_v3_vit_h.safetensors`
+- License: [DINOv3 License](https://ai.meta.com/resources/models-and-libraries/dinov3-license/);
+  retained at `licenses/DINOV3-LICENSE.txt`
+- Not bundled in the extension archive; downloaded separately with the model
+  bundle.
+
+The DINOv3 License permits commercial use and redistribution under its terms.
+It requires providing a copy of the agreement with the weights and prominently
+displaying **Built with DINOv3** in related product documentation or UI. Remi
+credits DINOv3 in `README.md` and the image-generation guide, and prepared
+local model bundles copy the license text into their own `licenses/` folder.
+Any published model release must include the same texts.
+
+## FLUX.2 VAE (shared TripoSplat weights)
+
+- Project: [black-forest-labs/flux2](https://github.com/black-forest-labs/flux2)
+- Model file: `ckpts/vae/flux2-vae.safetensors`
+- License: Apache-2.0; retained at `licenses/APACHE-2.0.txt`
+- Not bundled in the extension archive; downloaded separately with the model
+  bundle.
+
+The FLUX.2 VAE is published by Black Forest Labs under Apache-2.0. Keep the
+distributed file on that release; do not substitute a VAE extracted from the
+non-commercial FLUX.2 `[dev]` model weights.
+
+## BiRefNet background removal (shared TripoSplat weights)
+
+- Project: [ZhengPeng7/BiRefNet](https://github.com/ZhengPeng7/BiRefNet)
+- Model file: `ckpts/background_removal/birefnet.safetensors`
+- License: MIT; retained at `licenses/BIREFNET-MIT.txt`
+- Not bundled in the extension archive; downloaded separately with the model
+  bundle.
 
 ## Iris-3B local image generation
 

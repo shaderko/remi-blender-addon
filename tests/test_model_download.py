@@ -35,6 +35,26 @@ def fixture():
     return {"bundle.json": json.dumps(manifest).encode(), **files}
 
 
+def multi_fixture(models=("rand6_100_ncm", "triposplat")):
+    names = list(download.SHARED_COMPONENTS)
+    for model in models:
+        names.extend(download.MODEL_COMPONENTS[model])
+    files = {name: f"weight-{index}".encode() for index, name in enumerate(names)}
+    manifest = {
+        "schema": 2,
+        "shared": list(download.SHARED_COMPONENTS),
+        "models": {
+            model: {"label": model, "files": list(download.MODEL_COMPONENTS[model])}
+            for model in models
+        },
+        "files": {
+            name: {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+            for name, data in files.items()
+        },
+    }
+    return {"bundle.json": json.dumps(manifest).encode(), **files}
+
+
 class ModelDownloadTests(unittest.TestCase):
     def test_default_release_is_public_step_1500(self):
         self.assertIn("remipublic.hel1.your-objectstorage.com", download.DEFAULT_MODEL_BASE)
@@ -63,6 +83,76 @@ class ModelDownloadTests(unittest.TestCase):
             download.download_models(BASE, root, opener=self.opener)
             self.assertEqual(self.calls, ["bundle.json"])
             self.assertEqual(phases[-1], "Models downloaded and verified")
+
+    def test_multi_model_bundle_downloads_only_the_selected_flow(self):
+        self.files = multi_fixture()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            download.download_models(BASE, root, model="triposplat", opener=self.opener)
+            for name in download.SHARED_COMPONENTS:
+                self.assertTrue((root / name).is_file(), name)
+            upstream = download.MODEL_COMPONENTS["triposplat"][0]
+            self.assertTrue((root / upstream).is_file())
+            self.assertFalse((root / "best_weights.pt").exists())
+            self.assertNotIn("best_weights.pt", self.calls)
+
+    def test_switching_models_reuses_shared_files(self):
+        self.files = multi_fixture()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            download.download_models(BASE, root, model="rand6_100_ncm", opener=self.opener)
+            self.calls.clear()
+            download.download_models(BASE, root, model="triposplat", opener=self.opener)
+            self.assertEqual(self.calls[0], "bundle.json")
+            self.assertNotIn("best_weights.pt", self.calls)
+            for name in download.SHARED_COMPONENTS:
+                self.assertNotIn(name, self.calls)
+            self.assertIn(download.MODEL_COMPONENTS["triposplat"][0], self.calls)
+
+    def test_unselected_model_files_do_not_block_switching(self):
+        self.files = multi_fixture()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            existing = root / "best_weights.pt"
+            existing.write_bytes(b"user supplied NCM weights")
+            download.download_models(BASE, root, model="triposplat", opener=self.opener)
+            self.assertEqual(existing.read_bytes(), b"user supplied NCM weights")
+            self.assertNotIn("best_weights.pt", self.calls)
+
+    def test_legacy_release_cannot_install_the_upstream_model(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, "does not include triposplat"):
+                download.download_models(BASE, Path(directory), model="triposplat", opener=self.opener)
+            self.assertEqual(self.calls, ["bundle.json"])
+
+    def test_multi_model_manifest_may_omit_a_model(self):
+        manifest = json.loads(multi_fixture(models=("rand6_100_ncm",))["bundle.json"])
+        normalized = download.validate_manifest(manifest)
+        self.assertEqual(set(normalized["models"]), {"rand6_100_ncm"})
+        with self.assertRaisesRegex(ValueError, "does not include triposplat"):
+            download.manifest_components(normalized, "triposplat")
+
+    def test_multi_model_manifest_ignores_future_models(self):
+        manifest = json.loads(multi_fixture()["bundle.json"])
+        data = b"future weights"
+        manifest["models"]["future"] = {"label": "Future", "files": ["future.safetensors"]}
+        manifest["files"]["future.safetensors"] = {
+            "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(),
+        }
+        normalized = download.validate_manifest(manifest)
+        self.assertEqual(set(normalized["models"]), {"rand6_100_ncm", "triposplat", "future"})
+        self.assertIn("ckpts/diffusion_models/triposplat_fp16.safetensors",
+                      download.manifest_components(normalized, "triposplat"))
+
+    def test_multi_model_manifest_rejects_undeclared_files(self):
+        manifest = json.loads(multi_fixture()["bundle.json"])
+        manifest["files"]["extra.bin"] = {"bytes": 1, "sha256": "a" * 64}
+        with self.assertRaises(ValueError):
+            download.validate_manifest(manifest)
+        manifest = json.loads(multi_fixture()["bundle.json"])
+        manifest["models"]["triposplat"]["files"] = ["../outside.pt"]
+        with self.assertRaises(ValueError):
+            download.validate_manifest(manifest)
 
     def test_truncated_http_response_resumes_at_the_exact_offset(self):
         data = b"complete weights"
@@ -161,6 +251,7 @@ class ModelDownloadTests(unittest.TestCase):
                 job = client.ModelDownloadJob.start(python=sys.executable, models=root, base_url=BASE)
             command = spawn.call_args.args[0]
             self.assertEqual(command[1:4], ["-I", "-B", "-u"])
+            self.assertEqual(command[command.index("--model") + 1], "rand6_100_ncm")
             self.assertNotIn("shell", spawn.call_args.kwargs)
             owned = download.partial_path(root, download.COMPONENTS[0], job.token)
             owned.write_bytes(b"incomplete")

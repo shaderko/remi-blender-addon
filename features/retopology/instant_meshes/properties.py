@@ -1,7 +1,7 @@
 import math
 
 import bpy
-from bpy.props import BoolProperty, FloatProperty, IntProperty, StringProperty
+from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty, StringProperty
 from bpy.types import PropertyGroup
 
 
@@ -15,6 +15,35 @@ def _target_faces_updated(settings, _context):
 
 
 class RemiInstantMeshesSettings(PropertyGroup):
+    stitch_render_seams: BoolProperty(
+        name="Analyze Render Seams", default=True,
+        description="For retopology analysis only: reconnect exact, uniquely paired GLB boundary edges inside this object. Never welds the source mesh or joins separate objects",
+    )
+    adaptive_quads: BoolProperty(
+        name="Adaptive Quads · Experimental", default=False,
+        description="Choose the lowest field-aligned density meeting a detail budget, or simplify the native seed; off keeps ordinary Instant Meshes unchanged",
+    )
+    adaptive_method: EnumProperty(name="Adaptive Method", items=[
+        ("SURFACE", "Field-Aligned", "Re-solve the native cross-field at the lowest density that meets the source detail limit; keeps continuous edge loops and few poles"),
+        ("SIMPLIFY", "Seed Simplify", "The earlier conservative quad-collapse pass; supports existing surface guides"),
+    ], default="SURFACE")
+    adaptive_budget: EnumProperty(name="Keep Budget", items=[
+        ("1.0", "Full", "Keep the exact native result for comparison"),
+        ("0.5", "Half", "Try to retain half the extracted faces; stop early if quality requires it"),
+        ("0.25", "Quarter", "Try to retain a quarter of the extracted faces; stop early if quality requires it"),
+    ], default="0.5")
+    adaptive_error: FloatProperty(
+        name="Shape Error", default=0.01, min=0.0001, max=0.02, precision=4, subtype="FACTOR",
+        description="Maximum sampled deviation from the source as a fraction of its local bounding-box diagonal. Surface Rebuild chooses the lowest field-aligned density that meets it; not a global error certificate",
+    )
+    adaptive_max_seconds: FloatProperty(
+        name="Time Limit", default=60, min=5, max=300, subtype="TIME",
+        description="Maximum time for seam analysis, density search and validation; a failed attempt never changes the source",
+    )
+    adaptive_face_limit: IntProperty(
+        name="Face Limit", default=25000, min=1000, max=200000,
+        description="Upper bound for the field-aligned density search; exceeding it reports a failure instead of applying a truncated mesh",
+    )
     auto_guides: BoolProperty(
         name="Automatic Feature Guides", default=False,
         description="Recognize reliable circular features and rounded-surface flow before solving; regenerate to apply changed options",

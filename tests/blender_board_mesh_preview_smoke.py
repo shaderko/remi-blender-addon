@@ -29,7 +29,7 @@ sys.modules["remi"] = remi
 spec.loader.exec_module(remi)
 remi.register()
 
-from remi.features.board import canvas
+from remi.features.board import canvas, native_assets
 from remi.features.board.assets import Asset
 from remi.features.board.splat_preview import NativeMeshPreview
 from remi.integrations.triposplat.splat_data import save as save_splats
@@ -78,7 +78,8 @@ bpy.ops.mesh.primitive_uv_sphere_add(segments=16, ring_count=8, radius=0.6, loca
 bpy.context.object.data.materials.append(material)
 first.select_set(True)
 assert bpy.ops.export_scene.gltf(filepath=str(GLB), export_format="GLB", use_selection=True,
-                                 use_active_scene=True) == {"FINISHED"}
+                                  use_active_scene=True) == {"FINISHED"}
+NATIVE = native_assets.write(bpy.context, list(bpy.context.selected_objects), OUTPUT / "multipart-native.blend")
 bpy.data.batch_remove(ids=[item for name in DATA for item in set(getattr(bpy.data, name))-before[name]])
 for obj in original_selection:
     obj.select_set(True)
@@ -98,7 +99,7 @@ save_splats(SPLAT, {"positions": np.array([[0, 0, 0], [0.4, 0, 0]], np.float32),
     "scales": np.full((2, 3), 0.15, np.float32),
     "rotations": np.tile(np.array([1, 0, 0, 0], np.float32), (2, 1)),
     "opacities": np.ones(2, np.float32), "sh_dc": np.zeros((2, 3), np.float32)})
-hashes = {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in (GLB, PLY, COLORED, SPLAT)}
+hashes = {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in (GLB, NATIVE, PLY, COLORED, SPLAT)}
 step = waits = 0
 renderer = freeze = None
 renderer_ids = None
@@ -133,18 +134,21 @@ def advance():
     if step == 0:
         baseline = snapshot()
         shading = [(area.spaces.active, area.spaces.active.shading.type) for area in window.screen.areas if area.type == "VIEW_3D"]
-        for path, count in ((GLB, 2), (PLY, 1), (COLORED, 1)):
+        for path, count in ((GLB, 2), (NATIVE, 2), (PLY, 1), (COLORED, 1)):
             preview = NativeMeshPreview(path, size=256, elevation=20)
             try:
                 assert len([obj for obj in preview.scene.objects if obj.type == "MESH"]) == count
                 front = pixels(preview)
                 assert np.isfinite(front).all() and np.count_nonzero(front[:, :, 3] > 0.1) > 500
                 assert front[:, :, :3].max() > 0.1, "Uncolored PLY rendered black"
-                if path == GLB:
+                if path in {GLB, NATIVE}:
                     nodes = [node for obj in preview.scene.objects if obj.type == "MESH"
                              for mat in obj.data.materials for node in mat.node_tree.nodes]
                     assert any(node.type == "TEX_IMAGE" and node.image.size[0] == 8 for node in nodes)
                     assert any(node.type == "NORMAL_MAP" for node in nodes)
+                    if path == NATIVE:
+                        assert any(len(obj.data.vertices) == 8 and len(obj.data.polygons) == 6
+                                   for obj in preview.scene.objects if obj.type == "MESH")
                 elif path == COLORED:
                     assert preview.obj.data.color_attributes
                     visible = front[:, :, 3] > 0.9
@@ -180,7 +184,8 @@ def advance():
             return 0.2
         for index, (key, path) in enumerate((("mesh", GLB), ("ply", PLY))):
             board.catalog.assets[key] = Asset(key, "MESH", artifact=str(path), title=key,
-                                             preview=str(OUTPUT / (path.stem+"-front.png")))
+                                             preview=str(OUTPUT / (path.stem+"-front.png")),
+                                             native_artifact=str(NATIVE) if key == "mesh" else "")
             board.positions[key] = [index*350.0, 70.0]
             board.scales[key] = 0.8
             board.order.append(key)

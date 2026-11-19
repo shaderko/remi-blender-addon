@@ -340,7 +340,7 @@ def grid_tsdf_mesh(metadata, view_root, bounds, args):
 def fused_points_mesh(metadata, view_root, archive, bounds, args):
     """Back-project confidence-filtered depth into an oriented point cloud.
 
-    This is the post-hoc analogue of SuGaR/2DGS depth fusion: the depth maps
+    This is the post-hoc analogue of surface-aligned 3DGS depth fusion: the depth maps
     come from the native splat renderer, not a learned stereo model. Poisson
     completes the surface and preserves thin parts better than a coarse TSDF.
     """

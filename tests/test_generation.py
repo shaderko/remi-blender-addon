@@ -113,6 +113,7 @@ class WorkerTests(unittest.TestCase):
                 request = json.loads((job.directory / "request.json").read_text())
                 self.assertEqual(request["image"], str(image.resolve()))
                 self.assertEqual(request["seed"], 123)
+                self.assertEqual(request["model"], "rand6_100_ncm")
                 with self.assertRaisesRegex(RuntimeError, "not finished"):
                     job.result()
                 (job.directory / "status.json").write_text("{")
@@ -146,6 +147,7 @@ class WorkerTests(unittest.TestCase):
                     command = spawn.call_args.args[0]
                     self.assertIn("--serve", command)
                     self.assertIn("--cache-dir", command)
+                    self.assertEqual(command[command.index("--model") + 1], "rand6_100_ncm")
                     self.assertTrue(first._persistent)
                     queue_files = sorted((cache / "queue").glob("*.json"))
                     self.assertEqual(len(queue_files), 1)
@@ -222,6 +224,59 @@ class WorkerTests(unittest.TestCase):
                 client.GenerationJob.start(python=sys.executable, image=image, models=path,
                                            output=path, gaussians=65536, seed=0)
             spawn.assert_not_called()
+
+    def test_models_share_encoders_but_not_the_flow_checkpoint(self):
+        ncm = set(worker.components_for_model("rand6_100_ncm"))
+        triposplat = set(worker.components_for_model("triposplat"))
+        shared = set(worker.SHARED_COMPONENTS)
+        self.assertTrue(shared <= ncm and shared <= triposplat)
+        self.assertEqual(ncm - shared, {"best_weights.pt"})
+        self.assertEqual(triposplat - shared,
+                         {"ckpts/diffusion_models/triposplat_fp16.safetensors"})
+        with self.assertRaisesRegex(ValueError, "Unknown generation model"):
+            worker.components_for_model("unknown")
+
+    def test_triposplat_requires_its_flow_even_when_ncm_is_installed(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(client.subprocess, "Popen") as spawn:
+            path = Path(directory)
+            image = path / "image.png"
+            image.touch()
+            for name in client.COMPONENTS:
+                component = path / name
+                component.parent.mkdir(parents=True, exist_ok=True)
+                component.touch()
+            with self.assertRaisesRegex(ValueError, "Missing model files"):
+                client.GenerationJob.start(
+                    python=sys.executable, models=path, image=image, output=path,
+                    gaussians=65536, seed=0, model="triposplat",
+                )
+            spawn.assert_not_called()
+
+    def test_request_carries_selected_model_and_sampler(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(client.subprocess, "Popen") as spawn:
+            path = Path(directory)
+            image = path / "image.png"
+            image.touch()
+            for name in client.components_for_model("triposplat"):
+                component = path / name
+                component.parent.mkdir(parents=True, exist_ok=True)
+                component.touch()
+            process = mock.Mock()
+            process.poll.return_value = None
+            spawn.return_value = process
+            job = client.GenerationJob.start(
+                python=sys.executable, models=path, image=image, output=path,
+                gaussians=32768, seed=11, model="triposplat",
+                steps=12, guidance=2.5, shift=4.0,
+            )
+            try:
+                request = json.loads((job.directory / "request.json").read_text())
+                self.assertEqual(request["model"], "triposplat")
+                self.assertEqual(request["sampler"], {
+                    "steps": 12, "guidance_scale": 2.5, "shift": 4.0,
+                })
+            finally:
+                job.cancel()
 
     def test_cancel_reaps_real_child_and_keeps_logs(self):
         with tempfile.TemporaryDirectory() as directory:

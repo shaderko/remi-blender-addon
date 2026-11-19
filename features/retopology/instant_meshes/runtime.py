@@ -10,9 +10,13 @@ from .guides import FieldStroke, project_detected_guides, reproject_guide, send_
 
 class InteractiveRuntime:
     def __init__(self):
+        self.adaptive_task = self.adaptive_iterator = None
+        self.adaptive_report = {}
+        self.uniform_preview = None
         self.session = None
         self.source_name = ""
         self.source_triangles = None
+        self.source_preparation = {}
         self.surface_vertices = None
         self.surface_faces = None
         self.surface_normals = None
@@ -51,6 +55,23 @@ class InteractiveRuntime:
         return self.session is not None and bpy.data.objects.get(self.source_name) is not None
 
     @property
+    def busy(self):
+        return self.adaptive_task is not None or bool(self.session is not None and self.session.active)
+
+    @property
+    def adaptive_failed(self):
+        return self.adaptive_report.get("method") == "SURFACE" and not self.adaptive_report.get("rebuilt")
+
+    @property
+    def can_accept(self):
+        if not self.ready or self.preview is None or self.busy or self.adaptive_failed:
+            return False
+        settings = self.settings()
+        if settings and settings.adaptive_quads and settings.adaptive_method == "SURFACE":
+            return self.adaptive_report.get("method") == "SURFACE" and bool(self.adaptive_report.get("rebuilt"))
+        return True
+
+    @property
     def source(self):
         return bpy.data.objects.get(self.source_name)
 
@@ -77,6 +98,11 @@ class InteractiveRuntime:
                     area.tag_redraw()
 
     def shutdown(self):
+        if self.adaptive_iterator is not None:
+            self.adaptive_iterator.close()
+        self.adaptive_task = self.adaptive_iterator = None
+        self.adaptive_report = {}
+        self.uniform_preview = None
         session = self.session
         self.session = None
         if session is not None:
@@ -87,6 +113,7 @@ class InteractiveRuntime:
             del session
         self.source_name = ""
         self.source_triangles = None
+        self.source_preparation = {}
         self.surface_vertices = None
         self.surface_faces = None
         self.surface_normals = None
@@ -140,7 +167,7 @@ class InteractiveRuntime:
             evaluated.to_mesh_clear()
 
     def start(self, obj, settings, *, target_faces=None, triangles=None, strokes=None,
-              disabled_guide_keys=None):
+              disabled_guide_keys=None, preparation=None):
         """Build the field session for the given object.
 
         target_faces overrides the scene setting so a density change can
@@ -161,6 +188,17 @@ class InteractiveRuntime:
             vertices, faces = triangles
         if len(faces) == 0:
             raise RuntimeError("The evaluated object has no triangular surface")
+        self.source_preparation = dict(preparation or {})
+        if preparation is None and getattr(settings, "stitch_render_seams", True):
+            from .surface_topology import stitch_render_seams
+            self.set_status("Analyzing GLB render seams (source unchanged)…", 0.0)
+            analysis = stitch_render_seams(vertices, faces)
+            while True:
+                try:
+                    next(analysis)
+                except StopIteration as completed:
+                    vertices, faces, self.source_preparation = completed.value
+                    break
         self.source_triangles = (vertices, faces)
         crease = float(np.degrees(settings.crease_angle)) if settings.preserve_creases else -1.0
         self.set_status("Building native hierarchy…", 0.0)
@@ -228,6 +266,10 @@ class InteractiveRuntime:
         return hit[0].copy(), hit[1].copy(), int(hit[2])
 
     def _send_strokes(self, *, compare=True):
+        if self.adaptive_task is not None:
+            raise RuntimeError("Wait for the adaptive preview to finish or cancel the session")
+        self.adaptive_report = {}
+        self.uniform_preview = None
         settings = self.settings()
         automatic = self.automatic_guides if settings and settings.auto_guides else []
         if compare:
@@ -263,7 +305,7 @@ class InteractiveRuntime:
 
     def detect_automatic_guides(self, *, solve=True, reset=False):
         """Replace suggestions, never the user's manually drawn guides."""
-        if self.session is None or self.session.active:
+        if self.session is None or self.busy:
             raise RuntimeError("Wait for the current field solve to finish")
         from .detection import detect_guides
 
@@ -293,7 +335,7 @@ class InteractiveRuntime:
             self._send_strokes()
 
     def toggle_automatic_guide(self, index):
-        if not self.ready or self.session.active:
+        if not self.ready or self.busy:
             raise RuntimeError("Wait for the current field solve to finish")
         guide = self.automatic_guides[index]
         guide.enabled = not guide.enabled
@@ -304,7 +346,7 @@ class InteractiveRuntime:
         self._send_strokes()
 
     def clear_automatic_guides(self):
-        if not self.ready or self.session.active:
+        if not self.ready or self.busy:
             raise RuntimeError("Wait for the current field solve to finish")
         self.disabled_guide_keys.update(guide.key for guide in self.automatic_guides)
         self.automatic_guides = []
@@ -395,11 +437,13 @@ class InteractiveRuntime:
             self.position_singularities = None
 
     def update_preview(self):
-        if not self.ready or self.session.active:
+        if not self.ready or self.busy:
             raise RuntimeError("Wait for the field solve to finish")
         if not self.session.position_solved:
             raise RuntimeError("The position field must be solved before preview extraction")
         self.set_status("Extracting quad preview…", 1.0)
+        self.adaptive_report = {}
+        self.uniform_preview = None
         self.preview = None
         self.preview_topology = None
         self.preview_normals = None
@@ -445,6 +489,47 @@ class InteractiveRuntime:
                 self.session.discard_saved_solution()
             self.baseline_preview = None
             self.guidance_pass = ""
+        self.uniform_preview = self.preview
+        settings = self.settings()
+        if settings and settings.adaptive_quads:
+            from .adaptive import BVHSurface, QuadSimplifier
+
+            diagonal = max(float(np.linalg.norm(np.ptp(self.source_triangles[0], axis=0))), 1e-15)
+            options = dict(error=diagonal*settings.adaptive_error,
+                           crease_angle=float(np.degrees(settings.crease_angle)) if settings.preserve_creases else -1,
+                           guides=(self.automatic_guides if settings.auto_guides else [])+self.strokes)
+            if settings.adaptive_method == "SURFACE":
+                from .surface_adaptive import SurfacePatchRemesher
+                self.adaptive_task = SurfacePatchRemesher(*self.source_triangles, BVHSurface(self.surface_bvh),
+                    fallback=self.preview, stitch_seams=False,
+                    max_seconds=settings.adaptive_max_seconds,
+                    max_output=settings.adaptive_face_limit,
+                    field_options=dict(
+                        extrinsic=settings.extrinsic, align_boundaries=settings.align_boundaries,
+                        deterministic=settings.deterministic, smooth_iterations=settings.smooth_iterations),
+                    **options)
+                self.adaptive_task.report["runtime_source_preparation"] = dict(self.source_preparation)
+            else:
+                self.adaptive_task = QuadSimplifier(*self.preview, BVHSurface(self.surface_bvh),
+                    target_faces=int(len(self.preview[1])*float(settings.adaptive_budget)), **options)
+            self.adaptive_iterator = self.adaptive_task.run()
+            self.solve_stage = "ADAPTIVE"
+            self.set_status("Adaptive quads · preparing protected patches…", 0.0)
+            ensure_timer()
+            return
+        self._preview_ready()
+
+    def _preview_ready(self):
+        if self.adaptive_failed:
+            self.set_status("Field-aligned rebuild failed · NOT APPLIED · native comparison only", 1.0)
+            return
+        if (self.adaptive_report.get("method") == "SURFACE" and self.adaptive_report.get("rebuilt")):
+            report = self.adaptive_report
+            self.set_status(
+                f"Field-aligned ready · {len(self.preview[1]):,} quads · "
+                f'{report.get("poles", 0):,} poles · regular {report.get("ideal_valence_fraction", 0):.1%} · '
+                f'error {report.get("sampled_patch_error_max", 0):.4g}', 1.0)
+            return
         topology = self.preview_topology
         if topology["boundary_edges"] == 0 and topology["nonmanifold_edges"] == 0:
             integrity = "watertight"
@@ -458,11 +543,64 @@ class InteractiveRuntime:
             if self.preview_warnings
             else ""
         )
+        adaptive_note = (f" · adaptive {self.adaptive_report['input_faces']:,} → {len(self.preview[1]):,}"
+                         if self.adaptive_report else "")
         self.set_status(
             f"Preview ready · {len(self.preview[1]):,} faces · "
-            f'{topology["components"]:,} component(s) · {integrity}{warning}',
+            f'{topology["components"]:,} component(s) · {integrity}{adaptive_note}{warning}',
             1.0,
         )
+
+    def _poll_adaptive(self):
+        task = self.adaptive_task
+        deadline = time.monotonic()+0.015
+        try:
+            while time.monotonic() < deadline:
+                wait = next(self.adaptive_iterator)
+                if isinstance(wait, float) and wait > 0:
+                    self.set_status(f"Adaptive quads · {task.phase}", task.progress)
+                    return min(.1, wait)
+        except StopIteration:
+            self.preview = task.result
+            self.adaptive_report = task.report
+            if task.report.get("rebuilt"):
+                self.preview_warnings = list(task.report.get("warnings", []))
+            from .quality import mesh_quality
+            self.preview_quality = mesh_quality(*self.preview)
+            if self.preview_guide_quality:
+                from .quality import guide_quality
+                self.preview_guide_quality = guide_quality(*self.preview, self.automatic_guides)
+            quality = self.preview_quality
+            self.preview_topology = dict(self.preview_topology, vertices=len(self.preview[0]),
+                                         used_vertices=quality["vertices"], faces=quality["faces"],
+                                         **{key: quality[key] for key in ("components", "boundary_edges",
+                                                                        "nonmanifold_edges", "degenerate_faces")})
+            if task.report["collapses"] or task.report.get("rebuilt"):
+                vertices, faces = self.preview
+                points = vertices[faces]
+                area_vectors = (np.cross(points[:, 1]-points[:, 0], points[:, 2]-points[:, 0]) +
+                                np.cross(points[:, 2]-points[:, 0], points[:, 3]-points[:, 0]))
+                normals = np.zeros_like(vertices)
+                for corner in range(4):
+                    np.add.at(normals, faces[:, corner], area_vectors)
+                normals /= np.maximum(np.linalg.norm(normals, axis=1)[:, None], 1e-30)
+                self.preview_normals = normals
+            self.adaptive_task = self.adaptive_iterator = None
+            self.solve_stage = ""
+            self._preview_ready()
+            return None
+        except Exception as error:
+            self.adaptive_iterator.close()
+            self.adaptive_report = dict(task.report, reason=f"Ordinary preview retained: adaptive pass failed ({error})",
+                                        rebuilt=False, collapses=0, output_faces=len(self.uniform_preview[1]), reached_target=False)
+            self.preview = self.uniform_preview
+            self.adaptive_task = self.adaptive_iterator = None
+            self.solve_stage = ""
+            self._preview_ready()
+            return None
+        suffix = "" if task.report.get("method") == "SURFACE" else f" · {task.report['collapses']:,} removed"
+        self.set_status(f"Adaptive quads · {task.phase}{suffix}", task.progress)
+        return .002 if task.report.get("method") == "SURFACE" else .02
 
     def _recover_baseline(self, error):
         baseline = self.baseline_preview
@@ -498,7 +636,7 @@ class InteractiveRuntime:
         """Re-densify the quad preview at a new target without a restart."""
         if not self.ready:
             return
-        if self.session.active:
+        if self.busy:
             raise RuntimeError("Wait for the field solve to finish")
         value = int(value)
         if self.session.needs_input_subdivision(value):
@@ -516,6 +654,7 @@ class InteractiveRuntime:
                 triangles=triangles,
                 strokes=strokes,
                 disabled_guide_keys=self.disabled_guide_keys.copy(),
+                preparation=dict(self.source_preparation),
             )
             self.pending_preview = True
             return
@@ -550,7 +689,7 @@ class InteractiveRuntime:
             return True
         if time.monotonic() < self.target_faces_deadline:
             return False
-        if self.session is None or self.session.active:
+        if self.session is None or self.busy:
             # Let the field solve finish; the value stays queued.
             return False
         value = self.pending_target_faces
@@ -567,6 +706,8 @@ class InteractiveRuntime:
     def poll(self):
         if not self.ready:
             return None
+        if self.adaptive_task is not None:
+            return self._poll_adaptive()
         try:
             if self.session.active:
                 stage = "orientation" if self.solve_stage == "ORIENTATION" else "position"

@@ -1,9 +1,10 @@
 # Image to Gaussian splats (experimental)
 
-Remi can run the `rand6_100_ncm` checkpoint (published default: step 1500)
-from Blender. No mesh needs to be selected. A generated splat can then be
-reconstructed into a **vertex-colored polygon mesh** with **Create Mesh** and
-passed directly into Optimize.
+Remi can run either the default `rand6_100_ncm` checkpoint (published default:
+step 1500) or the upstream TripoSplat flow model from Blender. No mesh needs to
+be selected. A generated splat can then be reconstructed into a
+**vertex-colored polygon mesh** with **Create Mesh** and passed directly into
+Optimize.
 
 Create Mesh uses the external **remi-splat-mesh** backend to extract an opacity
 iso-surface from the anisotropic Gaussian field. **Dense** uses a 512³ field;
@@ -43,6 +44,20 @@ are SHA-256 verified. Different existing files are never overwritten. Do not
 point the output into the source checkout. The runtime does not reference the
 research checkout after preparation.
 
+To install the optional upstream TripoSplat flow in the same folder, download
+`diffusion_models/triposplat_fp16.safetensors` from
+[VAST-AI/TripoSplat](https://huggingface.co/VAST-AI/TripoSplat) (MIT, about
+741 MB) and pass it to the preparation script:
+
+```powershell
+python -B scripts/prepare_triposplat.py --source "C:\path\to\phft\TripoSplat" `
+  --upstream-flow "C:\path\to\triposplat_fp16.safetensors"
+```
+
+It is installed as `ckpts/diffusion_models/triposplat_fp16.safetensors`. The
+image encoders and Gaussian decoder are byte-identical between both models; only
+the flow checkpoint differs.
+
 Use `--output D:\RemiModels\triposplat` for another model location. Model weights
 and generated assets are not committed or included in extension archives.
 The small vendored inference sources **are** included; their exact hashes and
@@ -59,9 +74,10 @@ In the **Remi Board settings gear**, the **Model Download URL** defaults to the 
 `https://remipublic.hel1.your-objectstorage.com/models/triposplat-rand6_100_ncm-step1500-af36bcb6-v1/blender/`.
 Choose a writable **Model Folder** and click
 **Download Models**. Enable **Allow Online Access** in Blender Preferences first.
-Confirm the approximately 4.5 GB download; Blender remains interactive. The
-cancel button or `Esc` stops it. Verified completed files are reused on retry;
-cancelled/incomplete files restart, and conflicting existing weights are never replaced.
+Confirm the download (about 4.5 GB for a fresh Remi NCM install or 3.8 GB for
+TripoSplat); Blender remains interactive. The cancel button or `Esc` stops it.
+Verified completed files are reused on retry; cancelled/incomplete files
+restart, and conflicting existing weights are never replaced.
 Transient interruptions during an active transfer resume the current file with
 a checked HTTP range instead of discarding the downloaded prefix.
 Downloads are streamed, size/SHA-256 verified and atomically installed. Images
@@ -80,6 +96,59 @@ Bucket setup and publishing live in the website repository's
 `tools/model-storage/README.md`. Public model storage must be separate from
 private user uploads, and redistribution rights must be checked before upload.
 
+### Choose the model
+
+The generation gear now offers two models:
+
+- **Remi NCM · Fast** (default): the eight-level, single-pass
+  `rand6_100_ncm` checkpoint. This is the previously shipped behavior.
+- **TripoSplat · Upstream**: the original upstream flow model with Euler
+  sampling and classifier-free guidance. It uses the same BiRefNet, DINOv3,
+  Flux2 VAE and Gaussian decoder files, so switching only adds the 741 MB flow
+  download. The default sampler is 20 steps, guidance 3.0 and shift 3.0; adjust
+  those under the model selector. Expect a longer run than NCM. The upstream
+  file is 741,106,994 bytes with SHA-256
+  `c870b97ac1d6bc9177608a5ec625e19ef9f3c5019aa68f64b0fb7803abcd6d20`.
+
+The shared image encoder is **Built with DINOv3** (Meta), used under the
+[DINOv3 License](https://ai.meta.com/resources/models-and-libraries/dinov3-license/);
+the FLUX.2 VAE is Apache-2.0 and BiRefNet is MIT. These weights are downloaded
+separately and are not part of the extension archive. License texts are retained
+under `licenses/` and summarized in `THIRD_PARTY_NOTICES.md`.
+
+The **Model Download URL** must point to a release whose `bundle.json` uses the
+multi-model schema (`"schema": 2`) and lists both `rand6_100_ncm` and
+`triposplat`. Older single-model releases still work for NCM; selecting
+TripoSplat against one reports that the release does not include it. The
+download command installs only the selected model's flow plus any missing shared
+files, so an existing NCM installation is reused when switching.
+
+The multi-model bundle shape is:
+
+```json
+{
+  "schema": 2,
+  "shared": [
+    "ckpts/clip_vision/dino_v3_vit_h.safetensors",
+    "ckpts/vae/flux2-vae.safetensors",
+    "ckpts/vae/triposplat_vae_decoder_fp16.safetensors",
+    "ckpts/background_removal/birefnet.safetensors"
+  ],
+  "models": {
+    "rand6_100_ncm": {"label": "Remi NCM", "files": ["best_weights.pt"]},
+    "triposplat": {
+      "label": "TripoSplat",
+      "files": ["ckpts/diffusion_models/triposplat_fp16.safetensors"]
+    }
+  },
+  "files": {"...": {"bytes": 1, "sha256": "..."}}
+}
+```
+
+`files` must contain exactly the union of `shared` and every model file, with the
+real size and SHA-256 for each. Existing single-model `schema: 1` bundles remain
+accepted for NCM.
+
 ### Generate locally
 
 1. Load the updated add-on and click **Remi Board** in the 3D Viewport header.
@@ -88,14 +157,34 @@ private user uploads, and redistribution rights must be checked before upload.
 3. Select the image card. Transparent input is supported;
    opaque images have their background removed with BiRefNet.
 4. Python is detected automatically. The **gear** opens optional settings for
-   Gaussian count, seed, Python override, **Model Folder** (`models/triposplat`),
-   model-cache idle time, and the output folder. These details stay out of the
-   main view.
+   model choice, Gaussian count, seed, Python override, **Model Folder**
+   (`models/triposplat`), model-cache idle time, and the output folder. These
+   details stay out of the main view.
 5. Click **Generate 3D**. Blender stays interactive while the worker loads and
    generates a separate 3D card. Use its **Cancel** action to stop the job.
 
 Progress stays on the board even while another Blender workspace is active.
 Native Remi editing sessions keep their existing recovery controls.
+
+### Add an existing Blender object
+
+1. Select one or more mesh objects, or a native Gaussian splat object, in the
+   3D Viewport.
+2. Click **Add Selected Object** on the board toolbar (the cube with a plus), or
+   right-click the object → **Add Selected Object to Remi Board**.
+3. The board creates a **Mesh** card with a native `.blend` snapshot and a
+   portable GLB, or a **3D source** card with a `splats.npz`. The selected
+   objects, modifiers, materials and scene are left unchanged.
+4. Use **Run Remi Flow**, **Edit in Blender**, **Add to Scene** or **Export
+   Asset** on the new card. A mesh card can be linked to a 3D source or another
+   mesh for **Texture Mesh** by dragging the source's output handle onto it, or
+   directly dropped onto another mesh to bake albedo, roughness, normal and
+   ambient occlusion (AO) maps. All four maps are saved with the editable asset
+   and included in its portable GLB.
+
+Multiple selected mesh parts become one card, preserving their relative
+transforms. Splat objects become one card each. The snapshot evaluates modifiers
+but keeps the editable stacks on the source objects.
 
 ### Create a mesh
 
@@ -164,12 +253,14 @@ available until its cache timeout.
 
 For installed copies, machine-local defaults can be stored in
 `remi-generation.json` inside that Blender version's user **config** folder,
-with string fields `python`, `models`, `output`, `mesh_output`, and `download_url`. This avoids changing the
+with string fields `python`, `models`, `output`, `mesh_output`, `download_url`,
+and `model` (`rand6_100_ncm` or `triposplat`). This avoids changing the
 user's `startup.blend` or copying model weights into the extension. Defaults
-are read when Remi loads; saved scene values still take precedence, and
-`REMI_TRIPOSPLAT_MODELS` overrides the configured model default. The local 5.3
-installation uses this file to point at the already-prepared Remi model bundle.
-Saved scene settings take precedence over defaults.
+are read when Remi loads; saved scene values still take precedence,
+`REMI_TRIPOSPLAT_MODELS` overrides the model folder, and
+`REMI_TRIPOSPLAT_MODEL` selects the initial `rand6_100_ncm` or `triposplat`
+model. The local 5.3 installation uses this file to point at the already-prepared
+Remi model bundle. Saved scene settings take precedence over defaults.
 
 By default the external worker keeps the checkpoint, image encoders, and
 decoder loaded for **5 minutes** after a generation. Repeated generations in
@@ -243,7 +334,7 @@ Every run gets a unique directory:
 model.ply       native Gaussian-splat PLY, for dedicated viewers
 splats.npz      versioned, pickle-free, float32 native data for Remi
 input.png       background-removed, model-ready image
-meta.json       checkpoint, seed, count, coordinate frame, timing
+meta.json       model, sampler, checkpoint, seed, count, coordinate frame, timing
 request.json    exact local inference request
 status.json     worker progress or error
 complete.json   immutable completion marker (written last)

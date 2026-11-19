@@ -70,6 +70,9 @@ def import_working_mesh(context, path):
             import_reconstructed_mesh(context, path)
         elif path.suffix.lower() in {".glb", ".gltf"}:
             bpy.ops.import_scene.gltf(filepath=str(path))
+        elif path.suffix.lower() == ".blend":
+            from . import native_assets
+            native_assets.read(context, path)
         else:
             raise ValueError("Unsupported board mesh file")
         meshes = [obj for obj in context.scene.objects if obj not in before["objects"] and obj.type == "MESH"]
@@ -99,18 +102,18 @@ def open_edit_scene(context, identifier):
     if scene is not None:
         context.window.scene = scene
         return scene
-    if not Path(asset.artifact).is_file():
+    if not Path(asset.mesh_source()).is_file():
         raise ValueError("The source mesh file is missing")
     from ...blender.session_objects import SessionObjectStore
     before = SessionObjectStore.dependency_snapshot()
-    scene = bpy.data.scenes.new("Edit · " + (asset.title or "Mesh"))
+    scene = bpy.data.scenes.new("Edit · " + (asset.label or asset.title or "Mesh"))
     scene.use_fake_user = True
     scene[EDIT_OWNER], scene[EDIT_ASSET], scene[EDIT_BASE] = owner, identifier, asset.artifact
     previous = context.window.scene
     try:
         context.window.scene = scene
         with context.temp_override(scene=scene, view_layer=scene.view_layers[0], collection=scene.collection):
-            meshes = import_working_mesh(bpy.context, asset.artifact)
+            meshes = import_working_mesh(bpy.context, asset.mesh_source())
             source = appearance_source(catalog, asset)
             for obj in meshes:
                 if source is not None:
@@ -161,6 +164,7 @@ def apply_to_card(context):
         directory = Path(canvas.layout_key(context)) / ".remi-board" / ("edit_" + uuid.uuid4().hex)
     directory.mkdir(parents=True)
     artifact = directory / "asset.glb"
+    native_artifact = directory / "asset.blend"
     selected, active = list(context.selected_objects), context.view_layer.objects.active
     meshes = [obj for obj in context.view_layer.objects if obj.type == "MESH"]
     visibility = [(obj, obj.hide_get(), obj.hide_viewport, obj.hide_select) for obj in meshes]
@@ -175,8 +179,11 @@ def apply_to_card(context):
         result = _export_glb(artifact)
         if result != {"FINISHED"} or not artifact.is_file() or artifact.stat().st_size < 20:
             raise RuntimeError("Could not export the mesh; your edit is still open")
+        from . import native_assets
+        native_assets.write(context, meshes, native_artifact)
     except Exception:
         artifact.unlink(missing_ok=True)
+        native_artifact.unlink(missing_ok=True)
         directory.rmdir()
         raise
     finally:
@@ -189,8 +196,10 @@ def apply_to_card(context):
         context.view_layer.objects.active = active
     previous = deepcopy(asset.document())
     asset.revisions.append({key: deepcopy(previous[key]) for key in
-                            ("artifact", "directory", "preview", "preview_view", "settings")})
+                             ("artifact", "native_artifact", "package_artifact", "directory", "preview", "preview_view", "settings")})
     asset.artifact, asset.directory, asset.preview, asset.preview_view = str(artifact), str(directory), "", []
+    asset.native_artifact = str(native_artifact)
+    asset.package_artifact = ""  # An edited single LOD is no longer the complete pack.
     asset.status = "Ready"
     asset.settings["blender_edit"] = {"scene": scene.name, "objects": [obj.name for obj in meshes]}
     board = canvas.BOARD
@@ -201,6 +210,9 @@ def apply_to_card(context):
                 canvas.save_layout(bpy.context)
             else:
                 payload = canvas.load_layout(bpy.context)
+                saved = json.loads(owner.get(SCENE_ASSETS_KEY, "{}"))
+                if saved.get("gallery") == canvas.layout_key(bpy.context):
+                    payload.update({key: value for key, value in saved.items() if key != "gallery"})
                 payload["assets"] = catalog.documents()
                 canvas.write_layout(bpy.context, payload)
             canvas.store_selection(bpy.context, {asset.id})
@@ -208,6 +220,7 @@ def apply_to_card(context):
         for key, value in previous.items():
             setattr(asset, key, value)
         artifact.unlink(missing_ok=True)
+        native_artifact.unlink(missing_ok=True)
         directory.rmdir()
         raise
     if mounted:
@@ -332,7 +345,7 @@ class REMI_BOARD_OT_apply_edit(Operator):
             asset = apply_to_card(context)
             if self.return_to_board:
                 bpy.ops.remi_board.return_to_board()
-            self.report({"INFO"}, f"Updated card: {asset.title or 'Mesh'}")
+            self.report({"INFO"}, f"Updated card: {asset.label or asset.title or 'Mesh'}")
         except Exception as exc:
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}

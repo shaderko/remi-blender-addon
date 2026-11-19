@@ -29,10 +29,11 @@ from gpu_extras.batch import batch_for_shader
 
 from ...blender import gaussian_splats
 from ..images.gallery import gallery
-from .assets import Catalog, OBJECT_ASSET_KEY, OBJECT_REVISION_KEY, SCENE_ASSETS_KEY
+from .assets import Asset, Catalog, OBJECT_ASSET_KEY, OBJECT_REVISION_KEY, SCENE_ASSETS_KEY
 from .jobs import Runner, generation_options
 from .splat_preview import NativePreview, NativeMeshPreview, Preview
-from . import texture_effects, toolbar
+from . import texture_effects, toolbar, organizing
+from .organization import Organization, group_bounds, organizer, place_in_view
 
 SELECTION_KEY = "remi_board_selection"
 
@@ -41,6 +42,13 @@ CELL_H = 300.0
 GAP = 30.0
 COLUMNS = 4
 THUMB = 512
+TEXTURE_PROXY = 64
+TEXTURE_MEDIUM = 256
+TEXTURE_TIERS = (TEXTURE_PROXY, TEXTURE_MEDIUM, THUMB)
+TEXTURE_MEDIUM_MIN_DISPLAY = 90
+TEXTURE_FULL_MIN_DISPLAY = 220
+TEXTURE_LOD_BUDGET = 0.012
+TEXTURE_IMAGE_LIMIT = 128
 RESIZE_PX = 16.0
 MIN_SCALE = 0.25
 MAX_SCALE = 4.0
@@ -130,7 +138,11 @@ def flat_shader():
 
 
 def draw_rect(x, y, w, h, colour):
+    # Image and BLF draws change the active shader/blend state. Every flat
+    # primitive must establish its own state, including translucent overlays.
+    gpu.state.blend_set("ALPHA")
     shader = flat_shader()
+    shader.bind()
     shader.uniform_float("color", colour)
     batch = batch_for_shader(
         shader, "TRI_FAN", {"pos": [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]}
@@ -141,7 +153,9 @@ def draw_rect(x, y, w, h, colour):
 def draw_rects(rects, colour):
     if not rects:
         return
+    gpu.state.blend_set("ALPHA")
     shader = flat_shader()
+    shader.bind()
     shader.uniform_float("color", colour)
     vertices = []
     for x, y, w, h in rects:
@@ -405,6 +419,17 @@ def window_region(area):
     return next((region for region in area.regions if region.type == "WINDOW"), None)
 
 
+def board_view_size(area, region=None):
+    """Exclude an overlapping native N-panel from drawing, input and framing."""
+    region = region or window_region(area)
+    right = region.x+region.width
+    if area.spaces.active.show_region_ui:
+        for item in area.regions:
+            if item.type == "UI" and item.width > 1 and region.x < item.x < right:
+                right = item.x
+    return max(1, right-region.x), region.height
+
+
 def cycle_enum(owner, name):
     try:
         items = list(owner.bl_rna.properties[name].enum_items)
@@ -435,6 +460,11 @@ class Board:
         self.pan = [120.0, 620.0]
         self.entries = []
         self.catalog = Catalog()
+        self.organization = Organization()
+        self.group_selected = set()
+        self.group_drag = None
+        self.group_drop = None
+        self.layers_collapsed = set()
         self.runner = Runner()
         self.order = []
         self.positions = {}
@@ -442,7 +472,7 @@ class Board:
         self.selected = set()
         self.hover = None
         self.textures = {}
-        self.texture_images = {}
+        self.texture_image_order = OrderedDict()
         self.region = (1440, 810)
         self.pan_drag = None
         self.card_drag = None
@@ -498,9 +528,22 @@ class Board:
             saved_scene = json.loads(context.scene.get(SCENE_ASSETS_KEY, "{}"))
             if saved_scene.get("gallery") == layout_key(context):
                 documents = saved_scene.get("assets", documents)
+                layout = dict(layout)
+                for key in ("positions", "scales", "order", "zoom", "pan", "organization", "layers_collapsed"):
+                    if key in saved_scene:
+                        layout[key] = saved_scene[key]
         except (ValueError, TypeError, AttributeError):
             pass
         self.catalog = Catalog(documents if isinstance(documents, list) else [])
+        organization = layout.get("organization", {})
+        if not isinstance(organization, dict):
+            organization = {}
+        self.organization = Organization(organization.get("groups", []), organization.get("membership", {}))
+        self.organization.membership = {card: parent for card, parent in self.organization.membership.items()
+                                        if card in self.catalog.assets and not self.catalog.assets[card].hidden}
+        collapsed = layout.get("layers_collapsed", [])
+        self.layers_collapsed = {key for key in collapsed if isinstance(key, str) and key in self.organization.groups} \
+            if isinstance(collapsed, list) else set()
         self.entries = entries
         self.known = len(entries)
         images = [self.catalog.image(entry.path, entry.prompt) for entry in entries]
@@ -517,7 +560,7 @@ class Board:
                     continue
                 if isinstance(position, (list, tuple)) and len(position) == 2:
                     self.positions[str(path)] = [float(position[0]), float(position[1])]
-            self.restored = bool(self.positions)
+            self.restored = bool(self.positions or self.organization.groups)
             self.zoom = float(layout.get("zoom", self.zoom))
             pan = layout.get("pan")
             if isinstance(pan, (list, tuple)) and len(pan) == 2:
@@ -627,6 +670,9 @@ class Board:
         self.place_asset(asset.id, parent)
         self.order.append(asset.id)
         self.selected = {asset.id}
+        self.group_selected.clear()
+        if parent in self.organization.membership:
+            self.organization.membership[asset.id] = self.organization.membership[parent]
         self.scene[SELECTION_KEY] = asset.id
         # Reveal the new result, but never rearrange existing user-placed cards.
         x, y, w, h = self.card_rect(asset.id)
@@ -674,6 +720,8 @@ class Board:
         return key
 
     def forget(self, path):
+        organizing.sync_anchors(self)
+        self.organization.membership.pop(path, None)
         if path in self.order:
             self.order.remove(path)
         self.positions.pop(path, None)
@@ -744,7 +792,7 @@ class Board:
     def link_source_at(self, mx, my):
         for path in reversed(self.order):
             asset = self.catalog.assets.get(path)
-            if asset is None or asset.kind != "SPLAT" or asset.state != "READY":
+            if asset is None or asset.kind not in {"SPLAT", "MESH"} or asset.state != "READY":
                 continue
             hx, hy = self.output_handle(path)
             if abs(mx-hx) <= 11 and abs(my-hy) <= 11:
@@ -800,20 +848,18 @@ class Board:
             self.selected = hit
 
     def navigating(self):
-        return (self.pan_drag is not None or self.card_drag is not None
+        return (self.group_drag is not None or self.pan_drag is not None or self.card_drag is not None
                 or self.box_drag is not None or self.resize_drag is not None
                 or time.monotonic()-self.last_navigation < 0.2)
 
     def fit(self):
-        if not self.order:
+        rectangles = [(self.positions[p][0], self.positions[p][1], CELL_W*self.scale_of(p), CELL_H*self.scale_of(p))
+                      for p in self.order if p in self.positions]
+        rectangles += list(group_bounds(self).values())
+        if not rectangles:
             return
-        xs = [self.positions[p][0] for p in self.order if p in self.positions]
-        ys = [self.positions[p][1] for p in self.order if p in self.positions]
-        if not xs:
-            return
-        right = max(self.positions[p][0] + CELL_W * self.scale_of(p) for p in self.order if p in self.positions)
-        top = max(self.positions[p][1] + CELL_H * self.scale_of(p) for p in self.order if p in self.positions)
-        left, bottom = min(xs), min(ys)
+        left, bottom = min(rect[0] for rect in rectangles), min(rect[1] for rect in rectangles)
+        right, top = max(rect[0]+rect[2] for rect in rectangles), max(rect[1]+rect[3] for rect in rectangles)
         width, height = self.region
         board_w, board_h = max(1.0, right - left), max(1.0, top - bottom)
         self.zoom = max(0.12, min(width / (board_w + 100), height / (board_h + 200), 1.5))
@@ -828,40 +874,144 @@ class Board:
         loaded = self.loaded_previews.get(path) if asset.kind in {"SPLAT", "MESH"} else None
         if loaded is not None and loaded["preview"] is not None:
             return loaded["preview"].texture, 512, 512, True
-        source = asset.artifact if asset.kind == "IMAGE" else asset.preview
-        if not source or asset.state != "READY":
+        state = self.textures.get(path)
+        if state is None or state.get("failed"):
             return None
-        key = (path, source)
-        return self.textures.get(key)
+        source = asset.artifact if asset.kind == "IMAGE" else asset.preview
+        if not source or asset.state != "READY" or state.get("source") != source:
+            return None
+        return state["tiers"].get(state["best"])
 
-    def load_texture(self, path):
-        """One idle-time upload; never decode files inside the draw handler."""
+    @staticmethod
+    def _drop_texture_image(state):
+        image = state.get("image")
+        if image is not None:
+            try:
+                bpy.data.images.remove(image)
+            except (ReferenceError, RuntimeError):
+                pass
+            state["image"] = None
+
+    def _touch_texture_image(self, identifier):
+        """Keep recently visible decoded sources so zooming does not re-read them."""
+        self.texture_image_order.pop(identifier, None)
+        self.texture_image_order[identifier] = None
+        while len(self.texture_image_order) > TEXTURE_IMAGE_LIMIT:
+            oldest = next(iter(self.texture_image_order))
+            self.texture_image_order.pop(oldest, None)
+            state = self.textures.get(oldest)
+            if state is not None:
+                self._drop_texture_image(state)
+
+    def trim_texture(self, identifier, target, *, keep_image=False):
+        """Keep only tiers needed now; optionally retain the decoded source."""
+        state = self.textures.get(identifier)
+        if state is None or state.get("failed"):
+            return False
+        changed = False
+        for size in [size for size in state["tiers"] if size > target]:
+            state["tiers"].pop(size, None)
+            changed = True
+        state["best"] = max(state["tiers"], default=0)
+        if target <= TEXTURE_PROXY and state.get("image") is not None:
+            if keep_image:
+                self._touch_texture_image(identifier)
+            else:
+                self._drop_texture_image(state)
+                self.texture_image_order.pop(identifier, None)
+                changed = True
+        return changed
+
+    def release_texture(self, identifier, *, keep_proxy=False):
+        state = self.textures.get(identifier)
+        if state is None:
+            return
+        if keep_proxy and not state.get("failed"):
+            self.trim_texture(identifier, TEXTURE_PROXY)
+            return
+        self.textures.pop(identifier, None)
+        self.texture_image_order.pop(identifier, None)
+        self._drop_texture_image(state)
+
+    @staticmethod
+    def _next_texture_size(state, target):
+        max_size = int(state.get("max_size", THUMB))
+        cap = min(int(target), max_size)
+        best = int(state.get("best", 0))
+        if cap <= best:
+            return None
+        sizes = [size for size in TEXTURE_TIERS if size < max_size] + [max_size]
+        choices = [size for size in sizes if best < size <= cap]
+        return min(choices) if choices else None
+
+    def _load_texture_source(self, source):
+        image = bpy.data.images.load(source, check_existing=False)
+        width, height = image.size
+        if max(width, height) <= 0:
+            bpy.data.images.remove(image)
+            raise ValueError("Preview has no readable pixels")
+        if max(width, height) > THUMB:
+            scale = THUMB / max(width, height)
+            image.scale(max(1, int(width * scale)), max(1, int(height * scale)))
+            width, height = image.size
+        return image, max(1, int(max(width, height)))
+
+    def load_texture(self, path, target=THUMB):
+        """Upload one LOD tier per idle call; never decode files during draw."""
         asset = self.catalog.assets.get(path)
         if asset is None or asset.state != "READY":
             return False
         source = asset.artifact if asset.kind == "IMAGE" else asset.preview
-        key = (path, source)
-        if not source or key in self.textures:
+        if not source or not Path(source).is_file():
             return False
-        image = None
-        try:
-            image = bpy.data.images.load(source, check_existing=False)
-            width, height = image.size
-            if max(width, height) > THUMB:
-                scale = THUMB / max(width, height)
-                image.scale(max(1, int(width * scale)), max(1, int(height * scale)))
-                width, height = image.size
-            texture = gpu.texture.from_image(image)
-        except Exception:
-            if image is not None:
-                bpy.data.images.remove(image)
-            self.textures[key] = None
-            self.preview_errors[path] = f"Could not load preview: {source}"
-            return True
-        self.texture_images[key] = image
-        entry = (texture, max(1, width), max(1, height), False)
-        self.textures[key] = entry
-        return True
+        state = self.textures.get(path)
+        if state is not None and state.get("source") != source:
+            self.release_texture(path)
+            state = None
+        if state is None:
+            try:
+                image, max_size = self._load_texture_source(source)
+            except Exception:
+                self.textures[path] = {"source": source, "failed": True}
+                self.preview_errors[path] = f"Could not load preview: {source}"
+                return True
+            state = {"source": source, "image": image, "tiers": {}, "best": 0,
+                     "max_size": max_size}
+            self.textures[path] = state
+            self._touch_texture_image(path)
+        if state.get("failed"):
+            return False
+        if self._next_texture_size(state, target) is None:
+            return False
+        if state.get("image") is None:
+            try:
+                state["image"], state["max_size"] = self._load_texture_source(source)
+                self._touch_texture_image(path)
+            except Exception:
+                state["failed"] = True
+                self.preview_errors[path] = f"Could not load preview: {source}"
+                return True
+        uploaded = False
+        while (size := self._next_texture_size(state, target)) is not None:
+            copy = None
+            try:
+                copy = state["image"].copy()
+                width, height = copy.size
+                scale = size / max(width, height)
+                copy.scale(max(1, int(width * scale)), max(1, int(height * scale)))
+                width, height = copy.size
+                texture = gpu.texture.from_image(copy)
+                actual = max(width, height)
+                state["tiers"][actual] = (texture, width, height, False)
+                state["best"] = max(state["best"], actual)
+                uploaded = True
+            except Exception:
+                self.preview_errors[path] = f"Could not load preview: {source}"
+                return True
+            finally:
+                if copy is not None:
+                    bpy.data.images.remove(copy)
+        return uploaded
 
     def invalidate_preview(self, identifier):
         self.dirty_previews.add(identifier)
@@ -874,13 +1024,6 @@ class Board:
                 and (self.orbit_drag is None or self.orbit_drag["path"] != identifier)):
             asset.preview = ""
             asset.status = "Ready"
-
-    def release_texture(self, identifier):
-        for key in [key for key in self.textures if key[0] == identifier]:
-            self.textures.pop(key, None)
-            image = self.texture_images.pop(key, None)
-            if image is not None:
-                bpy.data.images.remove(image)
 
     def thumbnail_ready(self, asset):
         key = (asset.preview, asset.yaw, asset.elevation)
@@ -936,7 +1079,7 @@ class Board:
                 if self.runner.preview_id == identifier and self.runner.preview_job is not None:
                     self.runner.preview_job.cancel()
                     self.runner.preview_job, self.runner.preview_id = None, ""
-                preview = NativeMeshPreview(asset.artifact, yaw=asset.yaw, elevation=asset.elevation)
+                preview = NativeMeshPreview(asset.mesh_source(), yaw=asset.yaw, elevation=asset.elevation)
             else:
                 from ...integrations.triposplat.splat_data import load
                 preview = NativePreview(load(asset.artifact), yaw=asset.yaw, elevation=asset.elevation)
@@ -969,10 +1112,23 @@ class Board:
         finally:
             self.live_asset_id = ""
 
+    def texture_target(self, path):
+        """Choose a resolution tier from visibility and on-screen card size."""
+        x, y, w, h = self.card_rect(path)
+        if x+w < 0 or x > self.region[0] or y+h < 0 or y > self.region[1]:
+            return TEXTURE_PROXY
+        display = w * self.zoom
+        if display >= TEXTURE_FULL_MIN_DISPLAY:
+            return THUMB
+        if display >= TEXTURE_MEDIUM_MIN_DISPLAY:
+            return TEXTURE_MEDIUM
+        return TEXTURE_PROXY
+
     def prepare_preview(self):
         # Only an orbit can load a live preview. Recently used previews stay
         # warm for 30 seconds, bounded to 3; drawing a thumbnail never touches
-        # their idle timers. Off-board thumbnail textures are released too.
+        # their idle timers. Thumbnail textures keep a persistent proxy tier so
+        # off-screen and zoomed-out cards never return to an empty placeholder.
         if self.orbit_drag is not None:
             identifier = self.orbit_drag["path"]
             try:
@@ -983,12 +1139,22 @@ class Board:
             return False
         if self.navigating():
             return False
-        for key in list(self.texture_images):
-            identifier = key[0]
-            x, y, w, h = self.card_rect(identifier)
-            if identifier not in self.selected and (x+w < 0 or x > self.region[0] or y+h < 0 or y > self.region[1]):
-                self.release_texture(identifier)
+        changed = False
+        for key in list(self.textures):
+            asset = self.catalog.assets.get(key)
+            state = self.textures[key]
+            source = ((asset.artifact if asset.kind == "IMAGE" else asset.preview)
+                      if asset is not None else "")
+            if asset is None or state.get("source") != source:
+                self.release_texture(key)
+                changed = True
+                continue
+            x, y, w, h = self.card_rect(key)
+            visible = not (x+w < 0 or x > self.region[0] or y+h < 0 or y > self.region[1])
+            if self.trim_texture(key, self.texture_target(key), keep_image=visible):
+                changed = True
         priority = list(self.selected) + [key for key in self.order if key not in self.selected]
+        started = time.monotonic()
         for key in priority:
             asset = self.catalog.assets.get(key)
             if asset is None or asset.state != "READY" or key in self.preview_errors:
@@ -1017,23 +1183,22 @@ class Board:
                     if running is None and self.runner.preview_job is not None:
                         return True
                     continue
-                if self.load_texture(key):
-                    return True
+                if self.load_texture(key, self.texture_target(key)):
+                    changed = True
+                    if time.monotonic() - started >= TEXTURE_LOD_BUDGET:
+                        break
             except Exception as exc:
                 self.preview_errors[key] = str(exc)
                 asset.status = f"Preview unavailable: {exc}"
-        return False
+        return changed
 
     def cleanup(self):
         for identifier in list(self.loaded_previews):
             self.unload_preview(identifier)
-        for image in self.texture_images.values():
-            try:
-                bpy.data.images.remove(image)
-            except Exception:
-                pass
-        self.texture_images.clear()
+        for state in self.textures.values():
+            self._drop_texture_image(state)
         self.textures.clear()
+        self.texture_image_order.clear()
 
 
 # --------------------------------------------------------------------------
@@ -1124,7 +1289,7 @@ def draw_selection_strip(board, width):
     asset = board.catalog.assets.get(path)
     prompt = (asset.status if asset and asset.state != "READY" else prompt_for(board, path))
     text_limit = bx+bw-10-x
-    title = (asset.title or {"IMAGE": "Image", "SPLAT": "3D source", "MESH": "Mesh"}[asset.kind]) if asset else "Selected asset"
+    title = (asset.label or asset.title or {"IMAGE": "Image", "SPLAT": "3D source", "MESH": "Mesh"}[asset.kind]) if asset else "Selected asset"
     label = title + " · " + prompt if prompt and prompt != title else title
     label = clip_text(label, 11, max(40.0, text_limit))
     draw_text(label, x, y + 15, 11, TEXT if prompt else DIM)
@@ -1307,16 +1472,45 @@ def paste_image(context):
 
 
 def start_splat(context):
-    """Queue a new, separately identified 3D asset. Never replace its image."""
+    """Queue one separately identified 3D asset per selected image."""
     board = BOARD
-    if board is None or len(board.selected) != 1:
+    if board is None:
         return False
-    parent = board.catalog.assets.get(next(iter(board.selected)))
-    if parent is None or parent.kind != "IMAGE" or parent.state != "READY":
+    parents = [asset for asset in board.catalog.assets.values()
+               if asset.id in board.selected and asset.kind == "IMAGE"
+               and asset.state == "READY" and not asset.hidden]
+    if not parents:
         return False
-    board.derive(parent.id, "SPLAT", "GENERATE_3D", generation_options(context), "3D source")
+    options = generation_options(context)
+    created = [board.derive(parent.id, "SPLAT", "GENERATE_3D", options, "3D source")
+               for parent in parents]
+    board.selected = {asset.id for asset in created}
+    store_selection(context, board.selected)
     save_layout(context)
     return True
+
+
+def create_meshes(context, identifiers):
+    """Queue one mesh reconstruction per selected 3D source."""
+    board = BOARD
+    if board is None:
+        raise ValueError("Open the Remi Board first")
+    wanted = set(identifiers)
+    targets = [asset for asset in board.catalog.assets.values()
+               if asset.id in wanted and asset.kind == "SPLAT"
+               and asset.state == "READY" and not asset.hidden]
+    if not targets:
+        raise ValueError("Choose completed 3D source cards")
+    settings = context.scene.remi_generation
+    options = {"python": generation_options(context)["python"],
+               "output": bpy.path.abspath(settings.mesh_output),
+               "quality": settings.mesh_quality}
+    created = [board.derive(parent.id, "MESH", "CREATE_MESH", options, "Mesh")
+               for parent in targets]
+    board.selected = {asset.id for asset in created}
+    store_selection(context, board.selected)
+    save_layout(context)
+    return created
 
 
 def add_asset_to_scene(context, identifier):
@@ -1336,16 +1530,9 @@ def add_asset_to_scene(context, identifier):
             source = next((item.artifact for item in board.catalog.ancestors(identifier) if item.kind == "IMAGE"), "")
             obj["remi_source_image"] = source
             imported = [obj]
-        elif Path(asset.artifact).suffix.lower() == ".ply":
-            from ...blender.reconstructed_mesh import import_reconstructed_mesh
-            obj = import_reconstructed_mesh(context, asset.artifact)
-            imported = [obj]
         else:
-            before = set(bpy.data.objects)
-            bpy.ops.import_scene.gltf(filepath=asset.artifact)
-            imported = [obj for obj in bpy.data.objects if obj not in before and obj.type == "MESH"]
-            if not imported:
-                raise ValueError("The board asset did not contain a mesh")
+            from .editing import import_working_mesh
+            imported = import_working_mesh(context, asset.mesh_source())
         for obj in imported:
             obj[OBJECT_ASSET_KEY] = identifier
             obj[OBJECT_REVISION_KEY] = asset.artifact
@@ -1366,6 +1553,224 @@ def add_asset_to_scene(context, identifier):
     return True
 
 
+def add_assets_to_scene(context, identifiers):
+    """Import several ready SPLAT/MESH cards and select all imported parts."""
+    board = BOARD
+    if board is None:
+        return False
+    wanted = set(identifiers)
+    ordered = [asset for asset in board.catalog.assets.values()
+               if asset.id in wanted and asset.kind != "IMAGE"
+               and asset.state == "READY" and not asset.hidden]
+    if not ordered:
+        return False
+    for asset in ordered:
+        if not add_asset_to_scene(context, asset.id):
+            return False
+    ids = {asset.id for asset in ordered}
+    imported = [obj for obj in context.scene.objects if obj.get(OBJECT_ASSET_KEY) in ids]
+    if not imported:
+        return False
+    for other in context.view_layer.objects:
+        other.select_set(False)
+    for obj in imported:
+        obj.hide_set(False)
+        obj.hide_viewport = False
+        obj.select_set(True)
+    context.view_layer.objects.active = imported[0]
+    window = board_window(board)
+    if window is not None:
+        for area in window.screen.areas:
+            if area.type == "VIEW_3D":
+                with context.temp_override(window=window, area=area, region=window_region(area)):
+                    bpy.ops.view3d.view_selected(use_all_regions=False)
+                break
+    return True
+
+
+def _duplicate_title(board, asset):
+    names = {"IMAGE": "Image", "SPLAT": "3D source", "MESH": "Mesh"}
+    base = (asset.label or asset.title or names.get(asset.kind, "Asset")).strip()
+    existing = {item.label or item.title for item in board.catalog.assets.values()}
+    title, index = f"{base} Copy", 2
+    while title in existing:
+        title = f"{base} Copy {index}"
+        index += 1
+    return title
+
+
+def duplicate_assets(context, identifiers):
+    """Create independent cards sharing the same verified files and settings."""
+    board = BOARD
+    if board is None:
+        raise ValueError("Open the Remi Board first")
+    wanted = set(identifiers)
+    targets = [asset for asset in board.catalog.assets.values()
+               if asset.id in wanted and asset.state == "READY" and not asset.hidden]
+    if not targets:
+        raise ValueError("Choose one or more ready cards")
+    created = []
+    for asset in targets:
+        duplicate = Asset(
+            "asset:" + uuid.uuid4().hex, asset.kind,
+            artifact=asset.artifact, parent=asset.parent,
+            title=asset.title if asset.label or asset.kind == "IMAGE" else _duplicate_title(board, asset), operation=asset.operation,
+            state="READY", status=asset.status, progress=1.0,
+            preview=asset.preview, preview_view=deepcopy(asset.preview_view),
+            directory=asset.directory, settings=deepcopy(asset.settings),
+            yaw=asset.yaw, elevation=asset.elevation,
+            links=deepcopy(asset.links), revisions=deepcopy(asset.revisions),
+            native_artifact=asset.native_artifact,
+            package_artifact=asset.package_artifact,
+            label=_duplicate_title(board, asset) if asset.label or asset.kind == "IMAGE" else "",
+        )
+        board.catalog.assets[duplicate.id] = duplicate
+        model = organizer(board)
+        if asset.id in model.membership:
+            model.membership[duplicate.id] = model.membership[asset.id]
+        board.place_asset(duplicate.id, asset.id)
+        board.order.append(duplicate.id)
+        created.append(duplicate)
+    board.selected = {asset.id for asset in created}
+    board.group_selected.clear()
+    store_selection(context, board.selected)
+    for asset in created:
+        x, y, w, h = board.card_rect(asset.id)
+        width, height = board.region
+        board.pan[0] += max(0, 24-x) - max(0, x+w-width+24)
+        board.pan[1] += max(0, 150-y) - max(0, y+h-height+24)
+    save_layout(context)
+    area = board_area(board)
+    if area is not None:
+        area.tag_redraw()
+    return created
+
+
+def _scene_selection(context):
+    layer = context.view_layer
+    return [obj for obj in layer.objects if obj.select_get()]
+
+
+def _new_import_directory(board):
+    directory = board.output_directory() / ("import_" + uuid.uuid4().hex)
+    directory.mkdir(parents=True, exist_ok=False)
+    return directory
+
+
+def _add_mesh_object_asset(context, board, meshes):
+    """Export evaluated copies; the source objects and their modifiers stay untouched."""
+    directory = _new_import_directory(board)
+    artifact = directory / "asset.glb"
+    native_artifact = directory / "asset.blend"
+    selected, active = _scene_selection(context), context.view_layer.objects.active
+    visibility = [(obj, obj.hide_get(), obj.hide_viewport, obj.hide_select) for obj in meshes]
+    try:
+        for obj in selected:
+            obj.select_set(False)
+        for obj, _hidden, _viewport, _locked in visibility:
+            obj.hide_viewport = obj.hide_select = False
+            obj.hide_set(False)
+            obj.select_set(True)
+        context.view_layer.objects.active = meshes[0]
+        result = bpy.ops.export_scene.gltf(
+            filepath=str(artifact), export_format="GLB", use_selection=True,
+            use_active_scene=True, export_apply=True,
+        )
+        if result != {"FINISHED"} or not artifact.is_file() or artifact.stat().st_size < 20:
+            raise RuntimeError("Could not export the selected mesh")
+        from . import native_assets
+        native_assets.write(context, meshes, native_artifact)
+    except Exception:
+        shutil.rmtree(directory, ignore_errors=True)
+        raise
+    finally:
+        for obj, hidden, viewport, locked in visibility:
+            obj.select_set(False)
+            obj.hide_set(hidden)
+            obj.hide_viewport, obj.hide_select = viewport, locked
+        for obj in selected:
+            obj.select_set(True)
+        context.view_layer.objects.active = active
+    title = meshes[0].name if len(meshes) == 1 else f"{meshes[0].name} + {len(meshes)-1}"
+    asset = Asset("asset:" + uuid.uuid4().hex, "MESH", artifact=str(artifact),
+                  native_artifact=str(native_artifact), directory=str(directory),
+                  title=title, operation="IMPORT_OBJECT", state="READY", status="Ready")
+    asset.settings["imported"] = {"scene": context.scene.name,
+                                  "objects": [obj.name for obj in meshes]}
+    board.catalog.assets[asset.id] = asset
+    board.place_asset(asset.id)
+    board.order.append(asset.id)
+    return asset
+
+
+def _add_splat_object_asset(context, board, obj):
+    directory = _new_import_directory(board)
+    artifact = directory / "splats.npz"
+    try:
+        from ...integrations.triposplat.splat_data import save
+        save(artifact, gaussian_splats.splat_arrays(obj))
+    except Exception:
+        shutil.rmtree(directory, ignore_errors=True)
+        raise
+    asset = Asset("asset:" + uuid.uuid4().hex, "SPLAT", artifact=str(artifact),
+                  directory=str(directory), title=obj.name, operation="IMPORT_OBJECT",
+                  state="READY", status="Ready")
+    asset.settings["imported"] = {"scene": context.scene.name, "objects": [obj.name]}
+    source = obj.get("remi_source_image", "")
+    parent = next((candidate for candidate in board.catalog.assets.values()
+                   if candidate.kind == "IMAGE" and candidate.artifact == source), None)
+    if parent is not None:
+        asset.parent = parent.id
+        asset.yaw, asset.elevation = parent.yaw, parent.elevation
+    board.catalog.assets[asset.id] = asset
+    board.place_asset(asset.id, asset.parent)
+    board.order.append(asset.id)
+    return asset
+
+
+def add_selected_objects(context):
+    """Add scene objects as independent file-backed cards, without editing the scene."""
+    board = BOARD
+    if board is None:
+        raise ValueError("Open the Remi Board first")
+    if context.mode != "OBJECT":
+        raise ValueError("Switch to Object Mode first")
+    if context.scene != board.scene:
+        raise ValueError("Open the Remi Board in this scene")
+    selected = [obj for obj in _scene_selection(context)
+                if obj.type == "MESH" or gaussian_splats.is_splat_object(obj)]
+    if not selected:
+        raise ValueError("Select at least one mesh or Gaussian object in the viewport")
+    meshes = [obj for obj in selected
+              if obj.type == "MESH" and not gaussian_splats.is_splat_object(obj)]
+    active = context.view_layer.objects.active
+    if active in meshes:
+        meshes.remove(active)
+        meshes.insert(0, active)
+    splats = [obj for obj in selected if gaussian_splats.is_splat_object(obj)]
+    created = []
+    if meshes:
+        created.append(_add_mesh_object_asset(context, board, meshes))
+    for obj in splats:
+        created.append(_add_splat_object_asset(context, board, obj))
+    for asset in created:
+        place_in_view(board, asset.id)
+    board.selected = {asset.id for asset in created}
+    organizer(board)
+    board.group_selected.clear()
+    store_selection(context, board.selected)
+    for asset in created:
+        x, y, w, h = board.card_rect(asset.id)
+        width, height = board.region
+        board.pan[0] += max(0, 24-x) - max(0, x+w-width+24)
+        board.pan[1] += max(0, 150-y) - max(0, y+h-height+24)
+    save_layout(context)
+    area = board_area(board)
+    if area is not None:
+        area.tag_redraw()
+    return created
+
+
 def texture_drop_target(board, mx, my, *, move_only=False):
     """Only a deliberate, single splat-card drag over a mesh can trigger this."""
     drag = board.card_drag
@@ -1378,7 +1783,8 @@ def texture_drop_target(board, mx, my, *, move_only=False):
     if toolbar.hit(board, mx, my) is not None:
         return None
     source = board.catalog.assets.get(drag["path"])
-    if source is None or source.kind != "SPLAT" or source.state != "READY" or source.hidden:
+    if source is None or source.kind not in {"SPLAT", "MESH"} \
+            or source.state != "READY" or source.hidden:
         return None
     target = board.catalog.assets.get(board.hit(mx, my, exclude={source.id}))
     if target is None or target.kind != "MESH" or target.state != "READY" or target.hidden:
@@ -1391,11 +1797,13 @@ def texture_drop_target(board, mx, my, *, move_only=False):
 
 
 def texture_source(board, asset):
-    """Resolve a linked source or the mesh's original splat lineage, without IO."""
+    """Resolve a linked 3D source, preferring splat lineage over mesh lineage."""
     explicit = asset.links.get("texture_source")
-    candidates = [board.catalog.assets.get(explicit)] if explicit else board.catalog.ancestors(asset.id)
-    return next((item for item in candidates if item is not None and not item.hidden
-                 and item.kind == "SPLAT" and item.state == "READY"), None)
+    candidates = [board.catalog.assets.get(explicit)] if explicit else list(board.catalog.ancestors(asset.id))
+    usable = [item for item in candidates if item is not None and not item.hidden
+              and item.kind in {"SPLAT", "MESH"} and item.state == "READY"]
+    return (next((item for item in usable if item.kind == "SPLAT"), None)
+            or next((item for item in usable if item.kind == "MESH"), None))
 
 
 def queue_texture(context, mesh_id, source_id=None):
@@ -1407,19 +1815,26 @@ def queue_texture(context, mesh_id, source_id=None):
     if parent is None or parent.kind != "MESH" or parent.state != "READY" or parent.hidden:
         raise ValueError("Choose a completed mesh card")
     source = board.catalog.assets.get(source_id) if source_id else texture_source(board, parent)
-    if source is None or source.kind != "SPLAT" or source.state != "READY" or source.hidden:
-        raise ValueError("Choose a completed 3D source card")
-    if not Path(parent.artifact).is_file() or not Path(source.artifact).is_file():
-        raise ValueError("The mesh or Gaussian source file is missing")
+    if source is None or source.kind not in {"SPLAT", "MESH"} \
+            or source.state != "READY" or source.hidden:
+        raise ValueError("Choose a completed 3D source or mesh card")
+    source_path = source.artifact if source.kind == "SPLAT" else source.mesh_source()
+    if not Path(parent.mesh_source()).is_file() or not Path(source_path).is_file():
+        raise ValueError("The mesh or source file is missing")
     settings = board.scene.remi_texture
     with context.temp_override(scene=board.scene):
         options = {"python": generation_options(bpy.context)["python"],
-                   "output": str(board.output_directory()), "mesh_artifact": parent.artifact,
-                   "gaussian_source": source.artifact, "source_asset": source.id,
+                   "output": str(board.output_directory()), "mesh_artifact": parent.mesh_source(),
+                   "source_asset": source.id,
                    "texture": {"texture_size": int(settings.texture_size),
                                "match_distance": float(settings.match_distance),
                                "layer_width": float(settings.layer_width),
                                "normal_smoothing": int(settings.normal_smoothing)}}
+        if source.kind == "SPLAT":
+            options["gaussian_source"] = source.artifact
+        else:
+            options["source_kind"] = "MESH"
+            options["source_mesh"] = source.mesh_source()
     # A second drop while this exact recipe is pending selects its existing job.
     # A completed bake can still be repeated intentionally as a new result.
     existing = next((asset for asset in board.catalog.assets.values()
@@ -1442,6 +1857,51 @@ def queue_texture(context, mesh_id, source_id=None):
         store_selection(bpy.context, board.selected)
         save_layout(bpy.context)
     return result
+
+
+def queue_textures(context, identifiers):
+    """Queue a texture bake for every selected mesh that has an appearance source."""
+    board = BOARD
+    if board is None:
+        raise ValueError("Open the Remi Board first")
+    wanted = set(identifiers)
+    targets = [asset for asset in board.catalog.assets.values()
+               if asset.id in wanted and asset.kind == "MESH"
+               and asset.state == "READY" and not asset.hidden
+               and texture_source(board, asset) is not None]
+    results = [queue_texture(context, asset.id) for asset in targets]
+    if not results:
+        raise ValueError("No selected meshes have a linked 3D source")
+    board.selected = {asset.id for asset in results}
+    store_selection(context, board.selected)
+    save_layout(context)
+    return results
+
+
+def export_assets(assets, directory):
+    """Copy each asset artifact into a directory; never overwrite an existing file."""
+    directory = Path(bpy.path.abspath(str(directory))).resolve()
+    directory.mkdir(parents=True, exist_ok=True)
+    exported = []
+    seen = set()
+    for asset in assets:
+        source = Path(asset.export_source()).resolve()
+        if source in seen:
+            continue
+        seen.add(source)
+        if not source.is_file():
+            continue
+        target = directory / source.name
+        exact = target.exists() and target.resolve() == source
+        index = 2
+        stem, suffix = target.stem, target.suffix
+        while target.exists() and not exact:
+            target = directory / f"{stem}-{index}{suffix}"
+            index += 1
+        if not exact:
+            shutil.copy2(source, target)
+        exported.append(target)
+    return exported
 
 
 def run_strip_action(context, action, path):
@@ -1535,6 +1995,7 @@ def draw_curve(start, end, colour, width=0.8):
     if (max(start[0], end[0]) < 0 or min(start[0], end[0]) > BOARD.region[0]
             or max(start[1], end[1]) < 0 or min(start[1], end[1]) > BOARD.region[1]):
         return
+    gpu.state.blend_set("ALPHA")
     program = flat_shader()
     program.bind()
     program.uniform_float("color", colour)
@@ -1572,19 +2033,31 @@ def board_draw():
     area = getattr(context, "area", None)
     if area is None or board_area(board, window) != area:
         return
-    region = getattr(context, "region", None)
-    if region is not None:
-        board.region = (region.width, region.height)
-    else:
-        area = getattr(context, "area", None)
-        if area is None:
-            return
-        board.region = (area.width, area.height)
+    region = window_region(area)
+    if region is None:
+        return
+    board.region = board_view_size(area, region)
     width, height = board.region
+    blend, depth, depth_mask = gpu.state.blend_get(), gpu.state.depth_test_get(), gpu.state.depth_mask_get()
+    try:
+        gpu.state.depth_test_set("NONE")
+        gpu.state.depth_mask_set(False)
+        _draw_board(board, width, height, region.width, region.height)
+    finally:
+        # Draw handlers share Blender's GPU context with native editors and UI.
+        gpu.state.blend_set(blend)
+        gpu.state.depth_test_set(depth)
+        gpu.state.depth_mask_set(depth_mask)
 
+
+def _draw_board(board, width, height, background_width, background_height):
     gpu.state.blend_set("ALPHA")
-    draw_rect(0, 0, width, height, BG)
+    # The N-panel overlays the WINDOW region and is partly transparent. Erase
+    # the native Image Editor across the entire region, not only the usable
+    # board width, otherwise its active texture atlas shows through the gutter.
+    draw_rect(0, 0, background_width, background_height, BG)
     draw_grid(board, width, height)
+    organizing.draw(board)
     draw_connections(board)
 
     zoom = board.zoom
@@ -1601,6 +2074,8 @@ def board_draw():
         if path.startswith("pending") or working:
             if asset is not None and asset.operation == "TEXTURE":
                 texture_effects.draw_working_card(board, asset, (x, y, w, h), now)
+                if asset.label:
+                    draw_text(clip_text(asset.label, 10, w), x, y-15, 10, DIM)
                 continue
             grey = 0.13 + 0.055 * pulse
             draw_rect(x, y, w, h, (grey, grey, grey + 0.008, 1.0))
@@ -1618,6 +2093,8 @@ def board_draw():
             if path == board.hover or path in board.selected:
                 handle = max(7.0, 9.0 * zoom)
                 draw_rect(x + w - handle / 2, y - handle / 2, handle, handle, ACCENT)
+            if asset is not None and asset.label:
+                draw_text(clip_text(asset.label, 10, w), x, y-15, 10, DIM)
             continue
         cached = board.texture(path)
         if cached is None:
@@ -1647,7 +2124,7 @@ def board_draw():
             draw_rect(draw_x + draw_w - thickness, draw_y, thickness, draw_h, ACCENT)
             draw_rect(draw_x, draw_y + draw_h - thickness, draw_w, thickness, ACCENT)
         if asset is not None:
-            caption = {"IMAGE": "Image", "SPLAT": "3D source", "MESH": asset.title or "Mesh"}[asset.kind]
+            caption = asset.label or {"IMAGE": "Image", "SPLAT": "3D source", "MESH": asset.title or "Mesh"}[asset.kind]
             if asset.kind == "MESH":
                 caption += " · Alt-drag orbits"
             if asset.kind == "MESH" and asset.operation == "TEXTURE":
@@ -1656,7 +2133,7 @@ def board_draw():
             elif asset.kind == "MESH" and asset.links.get("texture_source") in board.catalog.assets:
                 caption += " · appearance linked"
             elif asset.kind == "MESH" and asset.state == "READY":
-                caption += " · drop a 3D source to texture"
+                caption += " · drop 3D source or Mesh to texture"
             if asset.kind == "SPLAT":
                 caption += " · drop onto a Mesh · Alt-drag orbits"
             draw_text(clip_text(caption, 10, w), draw_x, draw_y-15, 10, DIM)
@@ -1671,6 +2148,12 @@ def board_draw():
             colour = (0.25, 0.65, 1.0, 1.0) if linked else (0.55, 0.55, 0.6, 1.0)
             draw_rects(((hx-6,hy-6,12,1.5), (hx-6,hy+4.5,12,1.5),
                         (hx-6,hy-6,1.5,12), (hx+4.5,hy-6,1.5,12)), colour)
+            hx, hy = board.output_handle(path)
+            used = any(item.links.get("texture_source") == path
+                       for item in board.catalog.assets.values())
+            draw_rect(hx-6, hy-6, 12, 12,
+                      (0.25, 0.65, 1.0, 1.0) if used else (0.55, 0.55, 0.6, 1.0))
+            draw_text("SRC", hx-12, hy-20, 9, DIM)
         if path == board.hover or path in board.selected:
             handle = max(7.0, 9.0 * zoom)
             hx, hy = draw_x + draw_w, draw_y
@@ -1685,6 +2168,7 @@ def board_draw():
                       board.link_drag["cursor"][1]+8, 10, (0.45, 0.75, 1.0, 1.0))
     texture_effects.draw_transfers(board, now)
     texture_effects.draw_drop(board, now)
+    organizing.draw_drop(board)
     draw_composer(board, width)
     draw_selection_strip(board, width)
     if board.box_drag is not None:
@@ -1694,7 +2178,6 @@ def board_draw():
         draw_rect(x, y, w, h, (*ACCENT[:3], 0.10))
         draw_rects(((x,y,w,1), (x,y+h,w,1), (x,y,1,h), (x+w,y,1,h)), (*ACCENT[:3], 0.8))
     toolbar.draw(board, now)
-    gpu.state.blend_set("NONE")
 
 
 # --------------------------------------------------------------------------
@@ -1710,7 +2193,12 @@ def selected_paths(context):
 
 
 def store_selection(context, paths):
+    paths = set(paths)
     context.scene[SELECTION_KEY] = "\n".join(sorted(paths))
+    if BOARD is not None:
+        model = organizer(BOARD)
+        BOARD.group_selected = {key for key in BOARD.group_selected if key in model.groups
+                                and model.members(key).issubset(set(paths))}
 
 
 def layout_file():
@@ -1751,6 +2239,8 @@ def save_layout(context):
     board = BOARD
     if board is None:
         return
+    organizing.sync_anchors(board)
+    model = organizer(board)
     payload = {
         "positions": {
             str(item): [round(float(pos[0]), 2), round(float(pos[1]), 2)]
@@ -1766,13 +2256,15 @@ def save_layout(context):
         "pan": [round(float(board.pan[0]), 2), round(float(board.pan[1]), 2)],
         "assets": board.catalog.documents(),
         "order": [item for item in board.order if not item.startswith("pending")],
+        "organization": {"groups": model.documents(), "membership": dict(model.membership)},
+        "layers_collapsed": sorted(getattr(board, "layers_collapsed", set()) & model.groups.keys()),
     }
     write_layout(context, payload)
 
 
 def write_layout(context, payload):
     """Persist a board document, including while its editor is unmounted."""
-    context.scene[SCENE_ASSETS_KEY] = json.dumps({"gallery": layout_key(context), "assets": payload["assets"]})
+    context.scene[SCENE_ASSETS_KEY] = json.dumps({"gallery": layout_key(context), **payload}, allow_nan=False)
     path = layout_file()
     if path is None:
         return
@@ -1855,7 +2347,7 @@ class REMI_BOARD_OT_run(Operator):
         board = Board(context)
         region = window_region(context.area)
         if region is not None:
-            board.region = (region.width, region.height)
+            board.region = board_view_size(context.area, region)
         board.load(context, gallery_entries(context))
         if not board.restored:
             board.fit()
@@ -2036,12 +2528,22 @@ class REMI_BOARD_OT_run(Operator):
         # Region x/y are already window-relative; adding area.x/y double-counts
         # the offset in split editors (and steals input from the next editor).
         mx, my = event.mouse_x - region.x, event.mouse_y - region.y
-        board.region = (region.width, region.height)
-        inside = 4 <= mx < region.width - 4 and 4 <= my < region.height - 4
+        board.region = board_view_size(area, region)
+        inside = 4 <= mx < board.region[0] - 4 and 4 <= my < board.region[1] - 4
         dragging = any((board.pan_drag is not None, board.card_drag is not None,
                         board.box_drag is not None, board.resize_drag is not None,
                         board.orbit_drag is not None, board.text_drag,
-                        board.link_drag is not None))
+                        board.link_drag is not None, board.group_drag is not None))
+        if (not dragging and area.spaces.active.show_region_ui
+                and any(item.type == "UI" and item.width > 1
+                        and item.x <= event.mouse_x < item.x+item.width
+                        and item.y <= event.mouse_y < item.y+item.height for item in area.regions)):
+            # Native fields own their full press/edit/release lifecycle. In
+            # particular, do not save scene properties on a text-field release.
+            if event.type == "LEFTMOUSE" and event.value == "PRESS":
+                self._release_input(board)
+            board.hover = None
+            return {"PASS_THROUGH"}
         if not inside and not dragging:
             if event.type == "LEFTMOUSE" and event.value in {"PRESS", "RELEASE"}:
                 self._release_input(board)
@@ -2081,7 +2583,16 @@ class REMI_BOARD_OT_run(Operator):
             }:
                 return {"RUNNING_MODAL"}
 
+        if organizing.handle_event(context, board, event, mx, my):
+            self._redraw(context)
+            return {"RUNNING_MODAL"}
+
         if event.type == "ESC" and event.value == "PRESS":
+            if board.card_drag is not None and "positions" in board.card_drag:
+                organizing.cancel_drag(board, board.card_drag)
+                self._release_input(board)
+                self._redraw(context)
+                return {"RUNNING_MODAL"}
             if board.card_drag is not None and board.texture_drop is not None:
                 drag = board.card_drag
                 board.positions[drag["path"]] = list(drag["origin"])
@@ -2107,6 +2618,7 @@ class REMI_BOARD_OT_run(Operator):
                 and event.value == "PRESS"):
             board.card_drag["move_only"] = True
             board.texture_drop = None
+            board.group_drop = None
             self._redraw(context)
             return {"RUNNING_MODAL"}
 
@@ -2169,6 +2681,7 @@ class REMI_BOARD_OT_run(Operator):
                 if position is not None:
                     board.move_selected(drag["path"], nx - position[0], ny - position[1])
                 board.texture_drop = texture_drop_target(board, mx, my, move_only=event.ctrl or not inside)
+                board.group_drop = None if board.texture_drop is not None else organizing.drop_target(board, drag, mx, my)
             elif board.pan_drag is not None:
                 board.last_navigation = time.monotonic()
                 board.pan[0] += mx - board.pan_drag[0]
@@ -2225,6 +2738,11 @@ class REMI_BOARD_OT_run(Operator):
                 except Exception:
                     pass
                 self._redraw(context)
+            return {"RUNNING_MODAL"}
+
+        if ((event.ctrl or getattr(event, "oskey", False)) and event.type == "D"
+                and event.value == "PRESS" and board.selected and not board.focused):
+            bpy.ops.remi_board.duplicate()
             return {"RUNNING_MODAL"}
 
         if event.type in {"X", "DEL"} and event.value == "PRESS" and board.selected:
@@ -2334,6 +2852,7 @@ class REMI_BOARD_OT_run(Operator):
                 store_selection(context, board.selected)
                 x, y, _w, _h = board.card_rect(path)
                 board.card_drag = {
+                    **organizing.drag_snapshot(board, board.selected if path in board.selected else {path}),
                     "path": path,
                     "dx": mx - x,
                     "dy": my - y,
@@ -2350,7 +2869,8 @@ class REMI_BOARD_OT_run(Operator):
                 source = board.catalog.assets.get(board.link_drag["source"])
                 target = board.catalog.assets.get(board.hit(mx, my))
                 board.link_drag = None
-                if source is not None and target is not None and target.kind == "MESH":
+                if (source is not None and target is not None and source.id != target.id
+                        and target.kind == "MESH"):
                     if target.state != "READY":
                         self.report({"WARNING"}, "That mesh is still processing")
                     else:
@@ -2364,6 +2884,7 @@ class REMI_BOARD_OT_run(Operator):
             drag = board.card_drag
             drop = texture_drop_target(board, mx, my, move_only=event.ctrl or not inside)
             board.texture_drop = None
+            board.group_drop = None
             if drop is not None:
                 board.positions[drag["path"]] = list(drag["origin"])
                 board.card_drag = None
@@ -2374,6 +2895,9 @@ class REMI_BOARD_OT_run(Operator):
                     self.report({"WARNING"}, str(exc))
                 self._redraw(context)
                 return {"RUNNING_MODAL"}
+            if drag is not None:
+                drag["move_only"] = drag.get("move_only", False) or event.ctrl
+                organizing.apply_drop(board, drag, organizing.drop_target(board, drag, mx, my))
             if drag is not None and not drag["moved"] and not event.shift:
                 last_path, last_time = board.last_click
                 now = time.monotonic()
@@ -2395,6 +2919,7 @@ class REMI_BOARD_OT_run(Operator):
             return {"RUNNING_MODAL"}
 
         if event.type == "A" and event.value == "PRESS":
+            board.group_selected.clear()
             board.selected = set(board.order)
             store_selection(context, board.selected)
             self._redraw(context)
@@ -2418,6 +2943,8 @@ class REMI_BOARD_OT_run(Operator):
     def _release_input(board):
         board.focused = False
         board.pan_drag = board.card_drag = board.resize_drag = None
+        board.group_drag = None
+        board.group_drop = None
         board.box_drag = None
         board.orbit_drag = None
         board.link_drag = None
@@ -2493,6 +3020,10 @@ def advance_board(context):
             board.reload(context)
             changed = True
         if board.runner.tick(context, board.catalog):
+            for asset in board.catalog.assets.values():
+                if not asset.hidden and asset.id not in board.positions:
+                    board.place_asset(asset.id, asset.parent)
+                    board.order.append(asset.id)
             save_layout(context)
             changed = True
         if not state.busy and board.ticks % 3 == 0:
@@ -2548,6 +3079,28 @@ class REMI_BOARD_OT_open(Operator):
         return {"FINISHED"}
 
 
+class REMI_BOARD_OT_duplicate(Operator):
+    bl_idname = "remi_board.duplicate"
+    bl_label = "Duplicate Card"
+    bl_description = "Create independent copies of ready cards; existing files are shared safely"
+    asset_id: StringProperty()
+
+    def execute(self, context):
+        board = BOARD
+        if board is None:
+            return {"CANCELLED"}
+        identifiers = ([self.asset_id] if self.asset_id else
+                       [asset.id for asset in board.catalog.assets.values()
+                        if asset.id in board.selected])
+        try:
+            created = duplicate_assets(context, identifiers)
+        except Exception as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"Duplicated {len(created)} card(s)")
+        return {"FINISHED"}
+
+
 class REMI_BOARD_OT_delete(Operator):
     """Delete selected cards and their files; keep unselected versions."""
 
@@ -2566,6 +3119,8 @@ class REMI_BOARD_OT_delete(Operator):
         return [identifier for identifier in BOARD.order if identifier in selected and identifier in BOARD.catalog.assets]
 
     def invoke(self, context, event):
+        if BOARD is not None and not self.path and getattr(BOARD, "group_selected", set()):
+            return bpy.ops.remi_board.ungroup()
         targets = self.targets()
         if not targets:
             return {"CANCELLED"}
@@ -2580,6 +3135,8 @@ class REMI_BOARD_OT_delete(Operator):
 
     def execute(self, context):
         board = BOARD
+        if board is not None and not self.path and getattr(board, "group_selected", set()):
+            return bpy.ops.remi_board.ungroup()
         targets = self.targets()
         if board is None or not targets:
             return {"CANCELLED"}
@@ -2616,6 +3173,29 @@ class REMI_BOARD_OT_delete(Operator):
             self.report({"WARNING"}, f"Deleted {removed} cards; some files could not be deleted: {errors[0]}")
         elif kept:
             self.report({"INFO"}, f"Deleted {removed} cards; files shared with unselected cards were kept")
+        return {"FINISHED"}
+
+
+class REMI_BOARD_OT_add_object(Operator):
+    bl_idname = "remi_board.add_object"
+    bl_label = "Add Selected Object to Board"
+    bl_description = "Add the selected mesh or Gaussian object as a board card without changing the scene"
+    bl_options = {"REGISTER"}
+
+    @classmethod
+    def poll(cls, context):
+        return BOARD is not None and context.mode == "OBJECT"
+
+    def execute(self, context):
+        try:
+            created = add_selected_objects(context)
+        except Exception as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        titles = ", ".join(asset.label or asset.title for asset in created[:3])
+        if len(created) > 3:
+            titles += f", +{len(created)-3}"
+        self.report({"INFO"}, f"Added {len(created)} card(s): {titles}")
         return {"FINISHED"}
 
 
@@ -2692,7 +3272,15 @@ class REMI_BOARD_OT_add_asset(Operator):
 
     def execute(self, context):
         try:
-            if not add_asset_to_scene(context, self.asset_id):
+            if self.asset_id:
+                done = add_asset_to_scene(context, self.asset_id)
+            else:
+                board = BOARD
+                done = board is not None and add_assets_to_scene(context, [
+                    asset.id for asset in board.catalog.assets.values()
+                    if asset.id in board.selected and asset.kind != "IMAGE"
+                    and asset.state == "READY" and not asset.hidden])
+            if not done:
                 return {"CANCELLED"}
         except Exception as exc:
             self.report({"ERROR"}, str(exc))
@@ -2705,47 +3293,73 @@ class REMI_BOARD_OT_create_mesh(Operator):
     bl_label = "Create Mesh on Board"
     asset_id: StringProperty()
 
+    def targets(self):
+        board = BOARD
+        if board is None:
+            return []
+        if self.asset_id:
+            asset = board.catalog.assets.get(self.asset_id)
+            return [asset] if asset is not None and asset.kind == "SPLAT" \
+                and asset.state == "READY" and not asset.hidden else []
+        return [asset for asset in board.catalog.assets.values()
+                if asset.id in board.selected and asset.kind == "SPLAT"
+                and asset.state == "READY" and not asset.hidden]
+
     def invoke(self, context, _event):
+        if not self.targets():
+            self.report({"ERROR"}, "Choose completed 3D source cards")
+            return {"CANCELLED"}
         return context.window_manager.invoke_props_dialog(self, width=420)
 
     def draw(self, context):
-        self.layout.label(text="Create a new mesh asset; keep the 3D source")
+        count = len(self.targets())
+        self.layout.label(text=(f"Create {count} mesh cards; keep each 3D source"
+                               if count > 1 else "Create a new mesh asset; keep the 3D source"))
         self.layout.prop(context.scene.remi_generation, "mesh_quality", text="Quality")
         self.layout.label(text="Runs locally, outside the current scene", icon="INFO")
 
     def execute(self, context):
-        if BOARD is None:
+        try:
+            create_meshes(context, [asset.id for asset in self.targets()])
+        except Exception as exc:
+            self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
-        parent = BOARD.catalog.assets.get(self.asset_id)
-        if parent is None or parent.kind != "SPLAT" or parent.state != "READY":
-            return {"CANCELLED"}
-        settings = context.scene.remi_generation
-        BOARD.derive(parent.id, "MESH", "CREATE_MESH", {
-            "python": generation_options(context)["python"],
-            "output": bpy.path.abspath(settings.mesh_output), "quality": settings.mesh_quality}, "Mesh")
-        save_layout(context)
         return {"FINISHED"}
 
 
 class REMI_BOARD_OT_create_textured_mesh(Operator):
     bl_idname = "remi_board.create_textured_mesh"
     bl_label = "Create Textured Mesh on Board"
-    bl_description = "Bake the linked Gaussian appearance into this mesh as a new textured GLB"
+    bl_description = "Bake the linked Gaussian or mesh appearance into this mesh as a new textured GLB"
     asset_id: StringProperty()
 
+    def targets(self):
+        board = BOARD
+        if board is None:
+            return []
+        candidates = ([board.catalog.assets.get(self.asset_id)] if self.asset_id else
+                      [asset for asset in board.catalog.assets.values()
+                       if asset.id in board.selected])
+        return [asset for asset in candidates if asset is not None and asset.kind == "MESH"
+                and asset.state == "READY" and not asset.hidden
+                and texture_source(board, asset) is not None]
+
     def invoke(self, context, _event):
-        asset = BOARD.catalog.assets.get(self.asset_id) if BOARD is not None else None
-        source = texture_source(BOARD, asset) if asset else None
-        if source is None or not Path(source.artifact).is_file():
-            self.report({"ERROR"}, "Link a 3D source first")
+        if not self.targets():
+            self.report({"ERROR"}, "Link a 3D source to the selected mesh(es) first")
             return {"CANCELLED"}
         return context.window_manager.invoke_props_dialog(self, width=460, confirm_text="Create Textured Mesh")
 
     def draw(self, context):
-        asset = BOARD.catalog.assets.get(self.asset_id)
-        source = texture_source(BOARD, asset)
-        self.layout.label(text=f"Mesh: {asset.title or 'Mesh'}", icon="MESH_DATA")
-        self.layout.label(text=f"Appearance: {source.title or '3D source'}", icon="IMAGE_DATA")
+        targets = self.targets()
+        if len(targets) > 1:
+            self.layout.label(text=f"Bake appearance into {len(targets)} mesh cards", icon="MESH_DATA")
+        else:
+            asset = targets[0] if targets else None
+            source = texture_source(BOARD, asset) if asset else None
+            self.layout.label(text=f"Mesh: {asset.title or 'Mesh'}" if asset else "Mesh", icon="MESH_DATA")
+            self.layout.label(text=f"Appearance: {source.title or '3D source'}" if source else "Appearance",
+                              icon="IMAGE_DATA")
         settings = context.scene.remi_texture
         self.layout.prop(settings, "texture_size", text="Texture")
         self.layout.prop(settings, "match_distance")
@@ -2754,7 +3368,7 @@ class REMI_BOARD_OT_create_textured_mesh(Operator):
 
     def execute(self, context):
         try:
-            queue_texture(context, self.asset_id)
+            queue_textures(context, [asset.id for asset in self.targets()])
         except (ValueError, OSError) as exc:
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
@@ -2780,25 +3394,47 @@ class REMI_BOARD_OT_run_flow(Operator):
     bl_label = "Run Remi Flow on Board"
     asset_id: StringProperty()
 
+    def targets(self):
+        board = BOARD
+        if board is None:
+            return []
+        if self.asset_id:
+            asset = board.catalog.assets.get(self.asset_id)
+            return [asset] if asset is not None and asset.kind == "MESH" \
+                and asset.state == "READY" and not asset.hidden else []
+        return [asset for asset in board.catalog.assets.values()
+                if asset.id in board.selected and asset.kind == "MESH"
+                and asset.state == "READY" and not asset.hidden]
+
     def invoke(self, context, _event):
+        if not self.targets():
+            self.report({"ERROR"}, "Choose completed mesh cards")
+            return {"CANCELLED"}
         return context.window_manager.invoke_props_dialog(self, width=520, confirm_text="Run on Board")
 
     def draw(self, context):
         from ...app.ui.flow_controls import draw_flow_controls
-        self.layout.label(text="Create a new version in an isolated local Blender worker", icon="INFO")
+        count = len(self.targets())
+        self.layout.label(text=(f"Create {count} new versions in an isolated local Blender worker"
+                               if count > 1 else
+                               "Create a new version in an isolated local Blender worker"), icon="INFO")
         draw_flow_controls(self.layout, context, include_run=False)
 
     def execute(self, context):
-        if BOARD is None:
-            return {"CANCELLED"}
-        parent = BOARD.catalog.assets.get(self.asset_id)
-        if parent is None or parent.kind != "MESH" or parent.state != "READY":
+        board = BOARD
+        targets = self.targets()
+        if board is None or not targets:
             return {"CANCELLED"}
         try:
             from ...app.flow import selected_document
             document = selected_document(context)
-            BOARD.derive(parent.id, "MESH", "FLOW", {"flow": document,
-                "output": str(BOARD.output_directory())}, document["name"])
+            options = {"flow": document, "output": str(board.output_directory())}
+            created = []
+            for parent in targets:
+                per_mesh = dict(options, mesh_artifact=parent.mesh_source())
+                created.append(board.derive(parent.id, "MESH", "FLOW", per_mesh, document["name"]))
+            board.selected = {asset.id for asset in created}
+            store_selection(context, board.selected)
             save_layout(context)
         except Exception as exc:
             self.report({"ERROR"}, str(exc))
@@ -2817,19 +3453,63 @@ class REMI_BOARD_OT_export(Operator, ExportHelper):
         asset = BOARD.catalog.assets.get(self.asset_id) if BOARD is not None else None
         if asset is None or asset.state != "READY":
             return {"CANCELLED"}
-        self.filepath = Path(asset.artifact).name
+        self.filepath = Path(asset.export_source()).name
         return ExportHelper.invoke(self, context, event)
 
     def execute(self, context):
         asset = BOARD.catalog.assets.get(self.asset_id) if BOARD is not None else None
-        if asset is None or not Path(asset.artifact).is_file():
+        if asset is None or not Path(asset.export_source()).is_file():
             return {"CANCELLED"}
         try:
-            if Path(self.filepath).resolve() != Path(asset.artifact).resolve():
-                shutil.copy2(asset.artifact, self.filepath)
+            if Path(self.filepath).resolve() != Path(asset.export_source()).resolve():
+                shutil.copy2(asset.export_source(), self.filepath)
         except OSError as exc:
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
+        return {"FINISHED"}
+
+
+class REMI_BOARD_OT_export_group(Operator):
+    bl_idname = "remi_board.export_group"
+    bl_label = "Export Selected Board Assets"
+    bl_description = "Copy the selected cards' artifacts into a folder without overwriting files"
+    directory: StringProperty(subtype="DIR_PATH")
+
+    def assets(self):
+        board = BOARD
+        if board is None:
+            return []
+        return [asset for asset in board.catalog.assets.values()
+                if asset.id in board.selected and asset.state == "READY"
+                and not asset.hidden and Path(asset.artifact).is_file()]
+
+    def invoke(self, context, _event):
+        assets = self.assets()
+        if not assets:
+            self.report({"ERROR"}, "Choose ready cards with files to export")
+            return {"CANCELLED"}
+        self.directory = str(Path(assets[0].artifact).parent)
+        return context.window_manager.invoke_props_dialog(self, width=480, confirm_text="Export")
+
+    def draw(self, context):
+        count = len(self.assets())
+        self.layout.label(text=f"Export {count} selected card(s)", icon="EXPORT")
+        self.layout.prop(self, "directory")
+        self.layout.label(text="Existing files are kept; name collisions get a numeric suffix.")
+
+    def execute(self, context):
+        if not str(self.directory).strip():
+            self.report({"ERROR"}, "Choose an export folder")
+            return {"CANCELLED"}
+        try:
+            exported = export_assets(self.assets(), self.directory)
+        except (OSError, ValueError) as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        if not exported:
+            self.report({"ERROR"}, "No selected artifacts could be exported")
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"Exported {len(exported)} card(s) to {self.directory}")
         return {"FINISHED"}
 
 
@@ -2844,6 +3524,8 @@ class REMI_BOARD_MT_image(Menu):
         if asset is None:
             layout.label(text="No asset", icon="INFO")
             return
+        organizing.draw_actions(layout, target=identifier)
+        layout.separator()
         if asset.state == "READY":
             if asset.kind == "IMAGE":
                 op = layout.operator("remi_board.tool_action", text="Generate 3D", icon="OUTLINER_OB_POINTCLOUD")
@@ -2862,11 +3544,13 @@ class REMI_BOARD_MT_image(Menu):
                 layout.operator("remi_board.create_mesh", icon="MESH_DATA").asset_id = identifier
             elif asset.kind == "MESH":
                 layout.operator("remi_board.run_flow", icon="PLAY").asset_id = identifier
+                layout.operator("remi_board.create_lods", icon="MOD_DECIM").asset_id = identifier
                 if texture_source(BOARD, asset) is not None:
                     layout.operator("remi_board.create_textured_mesh", text="Create Textured Mesh", icon="TEXTURE").asset_id = identifier
                 if asset.links.get("texture_source"):
                     layout.operator("remi_board.unlink_texture", text="Unlink 3D Texture Source", icon="X").asset_id = identifier
             layout.operator("remi_board.export_asset", text="Export", icon="EXPORT").asset_id = identifier
+            layout.operator("remi_board.duplicate", text="Duplicate", icon="DUPLICATE").asset_id = identifier
         if asset.state in {"QUEUED", "RUNNING"}:
             op = layout.operator("remi_board.tool_action", text="Cancel Job", icon="CANCEL")
             op.action, op.asset_id = "cancel", identifier
@@ -2901,6 +3585,7 @@ def draw_board_header(self, context):
     row = self.layout.row(align=True)
     row.label(text="Remi", icon="IMAGE_DATA")
     row.operator("remi.add_image", text="", icon="IMPORT")
+    row.operator("remi_board.add_object", text="", icon="OUTLINER_OB_MESH")
     row.popover(panel="Remi_PT_ImageSettings", text="", icon="PREFERENCES")
     row.operator("screen.screen_full_area", text="", icon="FULLSCREEN_ENTER")
     self.layout.separator()
@@ -2986,14 +3671,17 @@ CLASSES = (
     REMI_BOARD_OT_run,
     REMI_BOARD_OT_open,
     REMI_BOARD_OT_create,
+    REMI_BOARD_OT_duplicate,
     REMI_BOARD_OT_delete,
     REMI_BOARD_OT_drop_images,
+    REMI_BOARD_OT_add_object,
     REMI_BOARD_OT_add_asset,
     REMI_BOARD_OT_create_mesh,
     REMI_BOARD_OT_create_textured_mesh,
     REMI_BOARD_OT_unlink_texture,
     REMI_BOARD_OT_run_flow,
     REMI_BOARD_OT_export,
+    REMI_BOARD_OT_export_group,
     REMI_BOARD_MT_image,
     IMAGE_FH_remi_board,
 )

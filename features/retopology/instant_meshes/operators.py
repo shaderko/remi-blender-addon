@@ -82,7 +82,7 @@ class REMI_OT_instant_meshes_draw(Operator):
             pass
 
     def invoke(self, context, event):
-        if runtime.session.active:
+        if runtime.busy:
             self.report({"WARNING"}, "Wait for the current field solve to finish")
             return {"CANCELLED"}
         self._region = next((region for region in context.area.regions if region.type == "WINDOW"), None)
@@ -152,7 +152,7 @@ class REMI_OT_instant_meshes_detect_guides(Operator):
 
     @classmethod
     def poll(cls, context):
-        return runtime.ready and not runtime.session.active
+        return runtime.ready and not runtime.busy
 
     def execute(self, context):
         try:
@@ -171,7 +171,7 @@ class REMI_OT_instant_meshes_toggle_guide(Operator):
 
     @classmethod
     def poll(cls, context):
-        return runtime.ready and not runtime.session.active
+        return runtime.ready and not runtime.busy
 
     def execute(self, context):
         try:
@@ -189,7 +189,7 @@ class REMI_OT_instant_meshes_clear_auto_guides(Operator):
 
     @classmethod
     def poll(cls, context):
-        return runtime.ready and not runtime.session.active and bool(runtime.automatic_guides)
+        return runtime.ready and not runtime.busy and bool(runtime.automatic_guides)
 
     def execute(self, context):
         runtime.clear_automatic_guides()
@@ -202,7 +202,7 @@ class REMI_OT_instant_meshes_undo_stroke(Operator):
 
     @classmethod
     def poll(cls, context):
-        return runtime.ready and not runtime.session.active and bool(runtime.strokes)
+        return runtime.ready and not runtime.busy and bool(runtime.strokes)
 
     def execute(self, context):
         runtime.undo_stroke()
@@ -215,7 +215,7 @@ class REMI_OT_instant_meshes_clear_strokes(Operator):
 
     @classmethod
     def poll(cls, context):
-        return runtime.ready and not runtime.session.active and bool(runtime.strokes)
+        return runtime.ready and not runtime.busy and bool(runtime.strokes)
 
     def execute(self, context):
         runtime.clear_strokes()
@@ -228,7 +228,7 @@ class REMI_OT_instant_meshes_solve_orientation(Operator):
 
     @classmethod
     def poll(cls, context):
-        return runtime.ready and not runtime.session.active
+        return runtime.ready and not runtime.busy
 
     def execute(self, context):
         runtime.solve_orientation()
@@ -241,7 +241,7 @@ class REMI_OT_instant_meshes_solve_position(Operator):
 
     @classmethod
     def poll(cls, context):
-        return runtime.ready and not runtime.session.active
+        return runtime.ready and not runtime.busy
 
     def execute(self, context):
         runtime.solve_position()
@@ -254,7 +254,7 @@ class REMI_OT_instant_meshes_preview(Operator):
 
     @classmethod
     def poll(cls, context):
-        return runtime.ready and runtime.position_ready and not runtime.session.active
+        return runtime.ready and runtime.position_ready and not runtime.busy
 
     def execute(self, context):
         try:
@@ -266,8 +266,14 @@ class REMI_OT_instant_meshes_preview(Operator):
 
 
 def _create_preview_object(context):
+    if runtime.busy:
+        raise RuntimeError("Wait for the preview solve or adaptive pass to finish")
     if runtime.preview is None:
         runtime.update_preview()
+        if runtime.busy:
+            raise RuntimeError("Wait for the adaptive preview to finish")
+    if not runtime.can_accept:
+        raise RuntimeError("Surface Rebuild was not applied. Rebuild successfully or explicitly choose Use Native Preview Instead")
     vertices, native_faces = runtime.preview
     faces = []
     for face in native_faces:
@@ -285,9 +291,24 @@ def _create_preview_object(context):
     mesh.from_pydata(vertices.tolist(), [], faces)
     mesh.update()
     result = bpy.data.objects.new(name, mesh)
-    collection = source.users_collection[0] if source.users_collection else context.collection
+    # Imported GLBs can link the source to an excluded collection as well as the
+    # visible scene root. Never put the accepted result only in that hidden
+    # collection: selection then fails after creating an orphaned result.
+    visible = set()
+
+    def visit(layer):
+        if layer.exclude or layer.hide_viewport or layer.collection.hide_viewport:
+            return
+        visible.add(layer.collection)
+        for child in layer.children:
+            visit(child)
+
+    visit(context.view_layer.layer_collection)
+    collection = next((item for item in source.users_collection if item in visible),
+                      context.collection if context.collection in visible else context.scene.collection)
     collection.objects.link(result)
     result.matrix_world = source.matrix_world.copy()
+    context.view_layer.update()
     return source, result
 
 
@@ -298,7 +319,7 @@ class REMI_OT_instant_meshes_accept(Operator):
 
     @classmethod
     def poll(cls, context):
-        return runtime.ready and runtime.preview is not None and not runtime.session.active
+        return runtime.can_accept
 
     def execute(self, context):
         if not runtime.ready:
@@ -330,9 +351,7 @@ class REMI_OT_instant_meshes_session_accept(Operator):
             state is not None
             and state.active
             and state.interactive
-            and runtime.ready
-            and runtime.preview is not None
-            and not runtime.session.active
+            and runtime.can_accept
         )
 
     def execute(self, context):
@@ -366,6 +385,25 @@ class REMI_OT_instant_meshes_session_accept(Operator):
                 bpy.data.objects.remove(result, do_unlink=True)
                 if mesh.users == 0:
                     bpy.data.meshes.remove(mesh)
+            self.report({"ERROR"}, str(error))
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
+class REMI_OT_instant_meshes_use_native(Operator):
+    bl_idname = "remi.instant_meshes_use_native"
+    bl_label = "Use Native Preview Instead"
+    bl_description = "Explicitly leave Surface Rebuild and display the ordinary Instant Meshes output for inspection and acceptance"
+
+    @classmethod
+    def poll(cls, context):
+        return runtime.ready and runtime.position_ready and not runtime.busy
+
+    def execute(self, context):
+        try:
+            context.scene.remi_instant_meshes.adaptive_quads = False
+            runtime.update_preview()
+        except Exception as error:
             self.report({"ERROR"}, str(error))
             return {"CANCELLED"}
         return {"FINISHED"}
@@ -420,6 +458,7 @@ classes = (
     REMI_OT_instant_meshes_preview,
     REMI_OT_instant_meshes_accept,
     REMI_OT_instant_meshes_session_accept,
+    REMI_OT_instant_meshes_use_native,
     REMI_OT_instant_meshes_cancel,
     REMI_OT_instant_meshes_session_cancel,
 )

@@ -11,16 +11,22 @@ import urllib.parse
 import urllib.request
 import uuid
 
+# This published release is the single-model NCM bundle. The upstream
+# TripoSplat flow requires a newer schema-2 release containing both models.
 DEFAULT_MODEL_BASE = (
     "https://remipublic.hel1.your-objectstorage.com/models/"
     "triposplat-rand6_100_ncm-step1500-af36bcb6-v1/blender/"
 )
 
 if __package__:
-    from .worker import COMPONENTS, status
+    from .worker import (
+        COMPONENTS, DEFAULT_MODEL, MODEL_COMPONENTS, MODEL_LABELS, SHARED_COMPONENTS, status,
+    )
 else:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from worker import COMPONENTS, status
+    from worker import (
+        COMPONENTS, DEFAULT_MODEL, MODEL_COMPONENTS, MODEL_LABELS, SHARED_COMPONENTS, status,
+    )
 
 
 def model_base(value):
@@ -41,18 +47,77 @@ def open_url(url):
     return urllib.request.build_opener(HTTPSRedirectHandler()).open(url, timeout=60)
 
 
-def validate_manifest(manifest):
-    if (not isinstance(manifest, dict) or manifest.get("schema") != 1
-            or manifest.get("model") != "rand6_100_ncm"
-            or not isinstance(manifest.get("files"), dict)
-            or set(manifest["files"]) != set(COMPONENTS)):
+def _valid_name(name):
+    if (not isinstance(name, str) or not name or name.startswith("/")
+            or "\\" in name or ":" in name):
+        return False
+    return all(part not in {"", ".", ".."} for part in name.split("/"))
+
+
+def _validate_files(files):
+    if not isinstance(files, dict) or not files:
         raise ValueError("Unsupported Blender model bundle")
-    for name, item in manifest["files"].items():
-        if (not isinstance(item, dict) or type(item.get("bytes")) is not int
-                or item["bytes"] <= 0
+    for name, item in files.items():
+        if (not _valid_name(name) or not isinstance(item, dict)
+                or type(item.get("bytes")) is not int or item["bytes"] <= 0
                 or not re.fullmatch(r"[a-f0-9]{64}", str(item.get("sha256", "")))):
             raise ValueError(f"Invalid model metadata: {name}")
-    return manifest
+
+
+def validate_manifest(manifest):
+    """Accept the legacy NCM bundle and the multi-model Blender bundle."""
+    if not isinstance(manifest, dict):
+        raise ValueError("Unsupported Blender model bundle")
+    files = manifest.get("files")
+    _validate_files(files)
+    schema = manifest.get("schema")
+    if schema == 1:
+        if manifest.get("model") != DEFAULT_MODEL or set(files) != set(COMPONENTS):
+            raise ValueError("Unsupported Blender model bundle")
+        models = {DEFAULT_MODEL: {
+            "label": MODEL_LABELS[DEFAULT_MODEL],
+            "files": list(MODEL_COMPONENTS[DEFAULT_MODEL]),
+        }}
+        shared = list(SHARED_COMPONENTS)
+    elif schema == 2:
+        models = manifest.get("models")
+        shared = manifest.get("shared")
+        if not isinstance(models, dict) or not models:
+            raise ValueError("Unsupported Blender model bundle")
+        if not isinstance(shared, list) or set(shared) != set(SHARED_COMPONENTS):
+            raise ValueError("Unsupported Blender model bundle")
+        normalized = {}
+        expected = set(shared)
+        for model, entry in models.items():
+            if not isinstance(entry, dict):
+                raise ValueError(f"Invalid model entry: {model}")
+            label = entry.get("label", MODEL_LABELS.get(model, model))
+            names = entry.get("files")
+            if (not isinstance(label, str) or not label.strip()
+                    or not isinstance(names, list) or not names
+                    or (model in MODEL_COMPONENTS
+                        and set(names) != set(MODEL_COMPONENTS[model]))):
+                raise ValueError(f"Invalid model entry: {model}")
+            if set(names) & expected:
+                raise ValueError(f"Model files overlap: {model}")
+            normalized[model] = {"label": label.strip(), "files": list(names)}
+            expected.update(names)
+        if set(files) != expected:
+            raise ValueError("Unsupported Blender model bundle")
+        models = normalized
+    else:
+        raise ValueError("Unsupported Blender model bundle")
+    return {"schema": schema, "models": models, "shared": shared, "files": files}
+
+
+def manifest_components(manifest, model):
+    if model not in manifest["models"]:
+        available = ", ".join(sorted(manifest["models"]))
+        raise ValueError(
+            f"This model release does not include {model}. Available: {available}. "
+            "Set Model Download URL to a release that includes the selected model."
+        )
+    return tuple(manifest["models"][model]["files"]) + tuple(manifest["shared"])
 
 
 def checksum(path):
@@ -112,7 +177,8 @@ def download_chunks(url, expected_bytes, opener):
     raise OSError("Model transfer was interrupted repeatedly; retry Download Models")
 
 
-def download_models(base, models, report=lambda phase: None, *, token=None, opener=open_url):
+def download_models(base, models, report=lambda phase: None, *, model=DEFAULT_MODEL,
+                    token=None, opener=open_url):
     base = model_base(base)
     models = Path(models).resolve()
     token = token or uuid.uuid4().hex
@@ -124,10 +190,14 @@ def download_models(base, models, report=lambda phase: None, *, token=None, open
     if len(raw) > 1024 * 1024:
         raise ValueError("Model manifest is too large")
     manifest = validate_manifest(json.loads(raw))
+    selected = manifest_components(manifest, model)
     files = manifest["files"]
-    # Validate all existing files before writing anything. Never replace user weights.
+    # Validate only the selected model's existing files before writing anything.
+    # Another installed model must not block switching, and user weights are
+    # never replaced.
     missing = []
-    for name, item in files.items():
+    for name in selected:
+        item = files[name]
         path = destination(models, name)
         if path.exists():
             report(f"Verifying {Path(name).name}…")
@@ -174,10 +244,12 @@ def main():
     parser.add_argument("--models", type=Path, required=True)
     parser.add_argument("--status-dir", type=Path, required=True)
     parser.add_argument("--token", required=True)
+    parser.add_argument("--model", default=DEFAULT_MODEL, choices=tuple(MODEL_COMPONENTS))
     args = parser.parse_args()
     try:
         download_models(args.base_url, args.models,
-                        lambda phase: status(args.status_dir, phase), token=args.token)
+                        lambda phase: status(args.status_dir, phase),
+                        model=args.model, token=args.token)
         (args.status_dir / "complete.json").write_text(
             json.dumps({"schema": 1, "complete": True}), encoding="utf-8")
     except Exception as exc:

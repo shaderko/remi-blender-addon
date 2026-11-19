@@ -41,6 +41,8 @@ else:
     workspace = importlib.import_module(MODULE+".features.board.workspace")
     editing = importlib.import_module(MODULE+".features.board.editing")
     toolbar = importlib.import_module(MODULE+".features.board.toolbar")
+    organizing = importlib.import_module(MODULE+".features.board.organizing")
+    layers = importlib.import_module(MODULE+".features.board.layers")
     Asset = importlib.import_module(MODULE+".features.board.assets").Asset
     repository = next(repo for repo in bpy.context.preferences.extensions.repos if repo.module == "user_default")
     assert Path(addon.__file__).resolve().is_relative_to(Path(repository.directory).resolve()/"remi")
@@ -72,7 +74,25 @@ else:
             "enabled_on_startup": True, "launcher": "F3: Open Remi Board",
             "development_launcher": False, "source_scene_unchanged": set(owner.objects.keys()) == original_objects,
             "assets": canvas.BOARD.catalog.documents(),
+            "organization": {"groups": canvas.BOARD.organization.documents(),
+                             "membership": canvas.BOARD.organization.membership},
         }, indent=2), encoding="utf-8")
+
+    def assert_organization(board):
+        model = board.organization
+        child = next(group for group in model.groups.values() if group.title == "Meshes")
+        parent = next(group for group in model.groups.values() if group.title == "Library")
+        assert child.parent == parent.id and model.membership["installed-mesh"] == child.id
+        assert board.catalog.assets["installed-mesh"].label == "Named installed mesh"
+        assert board.catalog.assets["installed-mesh"].title == "Installed mesh"
+        reference = next(asset for asset in board.catalog.assets.values() if asset.kind == "IMAGE")
+        assert reference.label == "Reference" and model.membership[reference.id] == parent.id
+        assert board.layers_collapsed == {child.id}
+        area = canvas.board_area(board)
+        with bpy.context.temp_override(area=area):
+            assert layers.REMI_BOARD_PT_layers.poll(bpy.context)
+        rows = layers.layer_rows(board, query="Named", collapsed=board.layers_collapsed)
+        assert [row.id for row in rows] == [parent.id, child.id, "installed-mesh"]
 
     def first_run():
         board = canvas.BOARD
@@ -100,7 +120,7 @@ else:
             assert [(area.as_pointer(), area.type) for area in original_screen.areas] == original_areas
             assert len(bpy.context.window_manager.windows) == 1
             assert_single_board()
-            assert len(toolbar.TOOLS) == 9 and not board.queue and board.runner.job is None
+            assert len(toolbar.TOOLS) == 11 and not board.queue and board.runner.job is None
             image = bpy.data.images.new("Installed image", 32, 32)
             image.generated_color = (0.15, 0.4, 0.65, 1)
             image.filepath_raw = str(OUTPUT/"reference.png")
@@ -146,6 +166,17 @@ else:
                 return False
             assert board.thumbnail_ready(board.catalog.assets["installed-mesh"])
             assert set(owner.objects.keys()) == original_objects
+            board.selected = {"installed-mesh"}
+            assert bpy.ops.remi_board.group(name="Meshes") == {"FINISHED"}
+            reference = next(asset for asset in board.catalog.assets.values() if asset.kind == "IMAGE")
+            board.selected.add(reference.id)
+            assert bpy.ops.remi_board.group(name="Library") == {"FINISHED"}
+            assert bpy.ops.remi_board.rename(target="installed-mesh", name="Named installed mesh") == {"FINISHED"}
+            assert bpy.ops.remi_board.rename(target=reference.id, name="Reference") == {"FINISHED"}
+            child = next(group for group in board.organization.groups.values() if group.title == "Meshes")
+            with bpy.context.temp_override(area=canvas.board_area(board)):
+                assert bpy.ops.remi_board.layer_fold(target=child.id) == {"FINISHED"}
+            assert_organization(board)
             bpy.ops.screen.screenshot(filepath=str(OUTPUT/"installed-board.png"))
             assert bpy.ops.remi_board.edit_mesh(asset_id="installed-mesh") == {"FINISHED"}
         elif step == 7:
@@ -161,9 +192,11 @@ else:
                 return False
             asset = board.catalog.assets["installed-mesh"]
             assert Path(asset.artifact).suffix == ".glb" and len(asset.revisions) == 1
+            assert Path(asset.native_artifact).suffix == ".blend" and Path(asset.native_artifact).is_file()
             assert Path(asset.revisions[0]["artifact"]).is_file()
             assert set(owner.objects.keys()) == original_objects
             assert_single_board()
+            assert_organization(board)
             assert bpy.ops.wm.save_as_mainfile(filepath=str(OUTPUT/"installed-board.blend")) == {"FINISHED"}
             assert not board.loaded_previews
             record("first-run.json")
@@ -178,7 +211,9 @@ else:
             if board is None or canvas.board_area(board) is None:
                 return False
             assert_single_board()
+            assert_organization(board)
             assert board.catalog.assets["installed-mesh"].artifact.endswith(".glb")
+            assert Path(board.catalog.assets["installed-mesh"].native_artifact).is_file()
             assert len(board.catalog.assets["installed-mesh"].revisions) == 1
             assert not board.queue and board.runner.job is None
             assert not any("isolated native preview" in scene.name for scene in bpy.data.scenes)
@@ -194,6 +229,7 @@ else:
                 return False
             assert len(bpy.data.workspaces) == workspace_count
             assert_single_board()
+            assert_organization(board)
             assert set(owner.objects.keys()) == original_objects
             bpy.ops.screen.screenshot(filepath=str(OUTPUT/"restart.png"))
             record("restart.json")

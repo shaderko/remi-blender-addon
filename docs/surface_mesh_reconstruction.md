@@ -28,10 +28,11 @@ system configuration was modified. The failed runs and logs are preserved.
 
 ## Run
 
-Prepare native views with the multiview renderer first; see
-[posed reconstruction](multiview_mesh_reconstruction.md). The optimizer receives
-**only training views**, never held-out views. Gaussian centers are initialization,
-not independent SfM ground truth. Neither DA3 nor native Gaussian depth is used.
+Prepare native views with the stereo renderer first (the command is in
+[stereo_mesh_benchmark.md](stereo_mesh_benchmark.md#run-one-asset)). The
+optimizer receives **only training views**, never held-out views. Gaussian
+centers are initialization, not independent SfM ground truth; rendered Gaussian
+depth is not used as surface geometry.
 
 ```powershell
 python -B scripts/prepare_surface_optimizer.py

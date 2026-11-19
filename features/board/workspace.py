@@ -185,6 +185,21 @@ def monitor_workspace():
     return 0.25
 
 
+def draw_add_object(layout, context):
+    """Offer the selected scene object only where the board can archive it."""
+    if (canvas.BOARD is None or context.scene != canvas.BOARD.scene
+            or context.mode != "OBJECT"):
+        return False
+    from ...blender import gaussian_splats
+    if not any(obj.select_get() and (obj.type == "MESH"
+                                     or gaussian_splats.is_splat_object(obj))
+               for obj in context.view_layer.objects):
+        return False
+    layout.operator("remi_board.add_object", text="Add Selected Object to Remi Board",
+                    icon="OUTLINER_OB_MESH")
+    return True
+
+
 def draw_board_menu(self, context):
     """Native menu placement also makes the launcher discoverable in F3 search."""
     from .editing import editing_scene
@@ -194,10 +209,20 @@ def draw_board_menu(self, context):
         self.layout.operator("remi_board.return_to_board", text="Back to Remi Board", icon="BACK")
     else:
         self.layout.operator("remi_board.open", text="Open Remi Board", icon="WORKSPACE")
+    if draw_add_object(self.layout, context):
+        self.layout.separator()
+
+
+def draw_object_menu(self, context):
+    draw_add_object(self.layout, context)
 
 
 def register():
     bpy.types.VIEW3D_MT_view.append(draw_board_menu)
+    for name in ("VIEW3D_MT_object", "VIEW3D_MT_object_context_menu"):
+        menu = getattr(bpy.types, name, None)
+        if menu is not None:
+            menu.append(draw_object_menu)
     if not bpy.app.background:
         bpy.app.timers.register(monitor_workspace, first_interval=0.25, persistent=True)
 
@@ -209,3 +234,7 @@ def unregister():
     if bpy.app.timers.is_registered(monitor_workspace):
         bpy.app.timers.unregister(monitor_workspace)
     bpy.types.VIEW3D_MT_view.remove(draw_board_menu)
+    for name in ("VIEW3D_MT_object", "VIEW3D_MT_object_context_menu"):
+        menu = getattr(bpy.types, name, None)
+        if menu is not None:
+            menu.remove(draw_object_menu)

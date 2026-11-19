@@ -67,8 +67,9 @@ class RetopologyFeature(FeatureDefaults):
         if instant_settings.preserve_creases:
             row.prop(instant_settings, "crease_angle", text="Angle")
         layout.prop(instant_settings, "align_boundaries", text="Align Open Boundaries")
-        from .instant_meshes.panel import draw_automatic_guides
+        from .instant_meshes.panel import draw_automatic_guides, draw_adaptive_quads
 
+        draw_adaptive_quads(layout, instant_settings)
         draw_automatic_guides(layout, instant_settings)
         layout.separator()
         action = layout.column()

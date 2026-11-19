@@ -11,7 +11,7 @@ from .settings import default_python
 class Remi_OT_DownloadModels(Operator):
     bl_idname = "remi.download_models"
     bl_label = "Download Models"
-    bl_description = "Download and verify local generation weights from public model storage (about 4.5 GB)"
+    bl_description = "Download and verify the selected local generation model from public model storage"
 
     @classmethod
     def poll(cls, context):
@@ -36,8 +36,14 @@ class Remi_OT_DownloadModels(Operator):
 
     def draw(self, context):
         settings = context.scene.remi_generation
-        self.layout.label(text="Download generation weights (about 4.5 GB)?", icon="IMPORT")
-        self.layout.label(text="Verified existing files are reused. Your images are not uploaded.")
+        from ...integrations.triposplat.worker import MODEL_LABELS
+        label = MODEL_LABELS.get(settings.model, settings.model)
+        self.layout.label(text=f"Download {label} generation weights?", icon="IMPORT")
+        self.layout.label(text="Verified existing files are reused; only missing files download.")
+        self.layout.label(text="About 4.5 GB for a fresh Remi NCM install or 3.8 GB for TripoSplat.")
+        if settings.model == "triposplat":
+            self.layout.label(text="Requires a multi-model release (bundle schema 2).", icon="INFO")
+        self.layout.label(text="Your images are not uploaded.")
         self.layout.label(text=settings.download_url)
         self.layout.label(text=bpy.path.abspath(settings.models))
 
@@ -52,6 +58,7 @@ class Remi_OT_DownloadModels(Operator):
             runtime.job = ModelDownloadJob.start(
                 python=bpy.path.abspath(settings.python) if settings.python else default_python(),
                 models=bpy.path.abspath(settings.models), base_url=settings.download_url,
+                model=settings.model,
             )
             runtime.manager = context.window_manager
             runtime.timer = runtime.manager.event_timer_add(0.25, window=context.window)

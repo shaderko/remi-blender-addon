@@ -10,6 +10,10 @@ from bpy.props import (
 
 
 SCENE_SETTINGS = {
+    "lod_levels": IntProperty(name="Reduced LODs", default=3, min=1, max=6,
+        description="Number of reduced scene meshes; the original mesh serves as LOD0"),
+    "lod_ratio": FloatProperty(name="Keep per Level", default=0.5, min=0.05, max=0.95,
+        subtype="FACTOR", description="Triangle fraction per LOD, relative to LOD0 (50%, 25%, 12.5%)"),
     "remesh_backend": EnumProperty(
             name="Remesh Method",
             description="Choose the fast standard voxel flow or the slower fitted closing-volume reconstruction",
@@ -98,7 +102,7 @@ SCENE_SETTINGS = {
     "decimation_with_texture": BoolProperty(
             name="Keep Texture",
             description=(
-                "Preserve the working mesh's UVs and image texture during MeshLab decimation"
+                "Preserve the render UV channel and original material graphs during MeshLab decimation"
             ),
             default=False,
         ),

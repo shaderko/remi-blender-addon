@@ -31,15 +31,29 @@ TESTS = (
     "blender_instant_meshes_smoke.py",
     "blender_instant_meshes_topology_regression.py",
     "blender_instant_meshes_guides_regression.py",
+    "blender_instant_meshes_adaptive_regression.py",
+    "blender_surface_adaptive_regression.py",
+    "blender_surface_field_regression.py",
     "blender_uv_regression.py",
     "blender_bake_material_slots_regression.py",
     "blender_target_decimation_regression.py",
+    "blender_shared_lod_regression.py",
+    "blender_board_lods_regression.py",
     "blender_uv_small_faces_regression.py",
     "blender_voxel_surface_regression.py",
     "blender_generation_regression.py",
     "blender_image_generation_regression.py",
     "blender_workspace_ui_regression.py",
     "blender_board_assets_regression.py",
+    "blender_board_add_object_regression.py",
+    "blender_board_duplicate_regression.py",
+    "blender_board_group_actions_regression.py",
+    "blender_board_organization_regression.py",
+    "blender_board_layers_regression.py",
+    "blender_board_group_drop_regression.py",
+    "blender_board_mesh_bake_regression.py",
+    "blender_board_texture_lod_regression.py",
+    "blender_board_native_topology_regression.py",
     "blender_texture_projection_regression.py",
 )
 
@@ -179,12 +193,16 @@ def verify_archive(artifact, target):
                             "integrations/splat_mesh/requirements-splatmesh.txt"}
         if not required_surface.issubset(archive.namelist()):
             raise RuntimeError("Archive is missing packaged splat-to-mesh modules")
+        if not {"features/remesh/lods.py", "features/remesh/textured_exchange.py",
+                "features/board/lods.py"}.issubset(archive.namelist()):
+            raise RuntimeError("Archive is missing in-Blender shared-texture LOD generation")
         if not {"integrations/splat_project/octree.py", "integrations/splat_project/octree_native.py",
                 "integrations/splat_project/local_gaussian.py", "integrations/splat_project/local_gaussian_native.py"}.issubset(archive.namelist()):
             raise RuntimeError("Archive is missing the whole-mesh octree ray baker")
         if not {f"features/retopology/instant_meshes/{name}.py" for name in
-                ("guides", "detection", "rounded", "quality")}.issubset(archive.namelist()):
-            raise RuntimeError("Archive is missing the automatic retopology guide modules")
+                ("guides", "detection", "rounded", "quality", "adaptive", "surface_adaptive",
+                 "surface_topology", "surface_organic")}.issubset(archive.namelist()):
+            raise RuntimeError("Archive is missing retopology geometry, guide or field modules")
         iris_required = {
             "integrations/iris3b/client.py",
             "integrations/iris3b/constants.py",
@@ -201,7 +219,7 @@ def verify_archive(artifact, target):
         if not iris_required.issubset(archive.namelist()):
             raise RuntimeError("Archive is missing the Iris image-generation integration")
         if not {f"features/board/{name}.py" for name in
-                ("__init__", "canvas", "workspace", "assets", "jobs", "local_worker", "splat_preview", "editing", "texture_effects", "toolbar")}.issubset(archive.namelist()):
+                ("__init__", "canvas", "workspace", "assets", "jobs", "local_worker", "splat_preview", "editing", "texture_effects", "toolbar", "native_assets", "organization", "organizing", "layers")}.issubset(archive.namelist()):
             raise RuntimeError("Archive is missing the docked generation workspace")
         if any(name.startswith("scripts/") or name.lower().endswith("spirula.exe") for name in archive.namelist()):
             raise RuntimeError("Developer scripts and external surface executables must not be bundled")
@@ -246,6 +264,9 @@ def installed_smoke(blender, artifact):
             env=environment)
         run(blender, "--background", "--factory-startup", "--python-exit-code", "1",
             "--python", ROOT / "tests" / "blender_installed_extension_smoke.py", env=environment)
+        environment["REMI_MESH_BAKE_INSTALLED"] = "1"
+        run(blender, "--background", "--factory-startup", "--python-exit-code", "1",
+            "--python", ROOT / "tests" / "blender_board_mesh_bake_regression.py", env=environment)
 
 
 def installed_ui_smoke(blender, artifact, output):
@@ -271,7 +292,13 @@ def installed_ui_smoke(blender, artifact, output):
         run(blender, "--enable-event-simulate", "--python-exit-code", "1",
             "--python", script, "--", "--first-run", env=environment)
         run(blender, output / "installed-board.blend", "--enable-event-simulate", "--python-exit-code", "1",
-            "--python", script, "--", "--restart", env=environment)
+             "--python", script, "--", "--restart", env=environment)
+        for name, flag in (("blender_board_layers_smoke.py", "REMI_LAYERS_INSTALLED"),
+                           ("blender_board_naming_menu_smoke.py", "REMI_NAMING_MENU_INSTALLED"),
+                           ("blender_board_group_drop_smoke.py", "REMI_GROUP_DROP_INSTALLED"),
+                           ("blender_board_render_smoke.py", "REMI_RENDER_INSTALLED")):
+            run(blender, "--factory-startup", "--enable-event-simulate", "--python-exit-code", "1",
+                "--python", ROOT / "tests" / name, env=dict(environment, **{flag: "1"}))
     print(f"Installed board UI checks: {output}", flush=True)
 
 
@@ -298,7 +325,9 @@ def main():
         installed_ui_smoke(args.blender, args.artifact.resolve(), args.output_dir.resolve())
     else:
         if args.command == "check":
-            for pattern in ("test_platform_support.py", "test_model_download.py", "test_iris_setup.py"):
+            for pattern in ("test_platform_support.py", "test_model_download.py", "test_iris_setup.py",
+                            "test_instant_meshes_adaptive.py", "test_surface_adaptive.py",
+                            "test_surface_topology.py", "test_board_organization.py", "test_board_layers.py"):
                 run(sys.executable, "-m", "unittest", "discover", "-s", ROOT / "tests",
                     "-p", pattern)
             for test in TESTS:

@@ -110,8 +110,11 @@ def import_asset(path, addon):
         from importlib import import_module
         importer = import_module(addon.__name__ + ".blender.reconstructed_mesh")
         return importer.import_reconstructed_mesh(bpy.context, path)
-    if path.suffix.lower() in {".glb", ".gltf"}:
-        bpy.ops.import_scene.gltf(filepath=str(path))
+    if path.suffix.lower() in {".glb", ".gltf", ".blend"}:
+        if path.suffix.lower() == ".blend":
+            importlib.import_module(addon.__name__ + ".features.board.native_assets").read(bpy.context, path)
+        else:
+            bpy.ops.import_scene.gltf(filepath=str(path))
         meshes = [obj for obj in bpy.context.scene.objects if obj.type == "MESH"]
         if not meshes:
             raise ValueError("The board asset contains no mesh")
@@ -127,6 +130,22 @@ def import_asset(path, addon):
             bpy.ops.object.join()
         return obj
     raise ValueError("Unsupported board mesh artifact")
+
+
+def import_bake_mesh(path, addon):
+    """Append a mesh archive and join its parts without clearing the scene."""
+    from importlib import import_module
+    editing = import_module(addon.__name__ + ".features.board.editing")
+    meshes = editing.import_working_mesh(bpy.context, path)
+    if not meshes:
+        raise ValueError("The bake asset contains no mesh")
+    bpy.ops.object.select_all(action="DESELECT")
+    for mesh in meshes:
+        mesh.select_set(True)
+    bpy.context.view_layer.objects.active = meshes[0]
+    if len(meshes) > 1:
+        bpy.ops.object.join()
+    return bpy.context.view_layer.objects.active
 
 
 def render_preview(obj, output, request):
@@ -170,13 +189,15 @@ def render_preview(obj, output, request):
 
 def run(request, directory):
     operation = request.get("operation")
-    if operation not in {"FLOW", "PREVIEW", "TEXTURE"}:
+    if operation not in {"FLOW", "PREVIEW", "TEXTURE", "MESH_BAKE"}:
         raise ValueError("Unsupported board worker operation")
     source = Path(request["input"])
     if not source.is_file():
         raise ValueError("The source asset file is missing")
     if operation == "TEXTURE" and not Path(request.get("gaussian_source", "")).is_file():
         raise ValueError("The Gaussian texture source is missing")
+    if operation == "MESH_BAKE" and not Path(request.get("bake_source", "")).is_file():
+        raise ValueError("The mesh bake source is missing")
     def status(phase, progress):
         if (directory / "cancel.request").exists():
             raise InterruptedError("Board job cancelled")
@@ -185,8 +206,9 @@ def run(request, directory):
     addon = load_addon()
     registered = False
     try:
-        if operation == "FLOW":
-            prepare_dependencies(request)
+        if operation in {"FLOW", "MESH_BAKE"}:
+            if operation == "FLOW":
+                prepare_dependencies(request)
             addon.register()
             registered = True
         obj = import_asset(source, addon)
@@ -232,6 +254,80 @@ def run(request, directory):
             status("Saving textured GLB", 0.9)
             bpy.ops.export_scene.gltf(filepath=str(artifact), export_format="GLB",
                                       use_selection=True, export_image_format="AUTO")
+        elif operation == "MESH_BAKE":
+            from importlib import import_module
+            bpy.ops.object.select_all(action="SELECT")
+            bpy.ops.object.delete(use_global=False)
+            status("Importing bake source", 0.06)
+            bake_source = import_bake_mesh(Path(request["bake_source"]), addon)
+            status("Importing bake target", 0.12)
+            obj = import_bake_mesh(source, addon)
+            status("Baking albedo, roughness, normal and AO", 0.25)
+            engine = import_module(addon.__name__ + ".features.bake.engine")
+            settings = bpy.context.scene.remi_settings
+            passes = ("diffuse", "roughness", "normal", "ao")
+            result = engine.bake_textures(
+                [bake_source], obj,
+                texture_size=int(request.get("texture_size", settings.bake_texture_size)),
+                final_name="RemiMeshBake",
+                uv_method=settings.bake_uv_method,
+                uv_island_margin=settings.bake_uv_island_margin,
+                uv_profile=settings.bake_uv_profile,
+                uv_margin_px=settings.bake_uv_margin_px,
+                uv_preserve_seams=settings.bake_uv_preserve_seams,
+                auto_unwrap=settings.bake_auto_unwrap,
+                recalc_normals=settings.bake_recalc_normals,
+                cage_extrusion=settings.bake_cage_extrusion,
+                max_ray_distance=settings.bake_max_ray_distance,
+                auto_cage=settings.bake_auto_cage,
+                passes=passes,
+                consume_sources=True,
+                reuse_outputs=False,
+            )
+            if not result.get("success"):
+                raise RuntimeError(result.get("error", "Mesh bake failed"))
+            images = {}
+            expected_images = {f"bake_{channel}" for channel in passes}
+            for material in set(obj.data.materials):
+                if material is None or material.node_tree is None:
+                    continue
+                for node in material.node_tree.nodes:
+                    if (node.type == "TEX_IMAGE" and node.image is not None
+                            and node.name in expected_images):
+                        images[node.name] = node.image
+                ao = material.node_tree.nodes.get("bake_ao")
+                if ao is not None and ao.image is not None:
+                    # Keep AO separate from the surface shader, but explicitly
+                    # expose it to glTF so the portable asset retains the map.
+                    group = bpy.data.node_groups.new("glTF Material Output", "ShaderNodeTree")
+                    socket = group.interface.new_socket("Occlusion", in_out="INPUT", socket_type="NodeSocketFloat")
+                    socket.default_value = 1.0
+                    group.nodes.new("NodeGroupInput")
+                    output = material.node_tree.nodes.new("ShaderNodeGroup")
+                    output.node_tree = group
+                    output.name = "bake_ao_output"
+                    output.label = "Ambient Occlusion (glTF)"
+                    output.location = (50, -350)
+                    material.node_tree.links.new(ao.outputs["Color"], output.inputs["Occlusion"])
+            if set(images) != expected_images:
+                missing = ", ".join(sorted(expected_images-set(images)))
+                raise RuntimeError(f"Mesh bake did not produce all four textures; missing: {missing}")
+            status("Saving baked textures", 0.75)
+            texture_dir = directory / "textures"
+            texture_dir.mkdir()
+            for name, image in images.items():
+                path = texture_dir / f"{name}.png"
+                image.filepath_raw = str(path)
+                image.file_format = "PNG"
+                image.save()
+                image.pack()
+            status("Saving baked GLB", 0.9)
+            bpy.ops.object.select_all(action="DESELECT")
+            obj.select_set(True)
+            bpy.context.view_layer.objects.active = obj
+            artifact = directory / "textured.glb"
+            bpy.ops.export_scene.gltf(filepath=str(artifact), export_format="GLB",
+                                      use_selection=True, export_image_format="AUTO")
         elif operation == "FLOW":
             from importlib import import_module
             flow_module = import_module(addon.__name__ + ".app.flow")
@@ -255,6 +351,11 @@ def run(request, directory):
             bpy.ops.export_scene.gltf(filepath=str(artifact), export_format="GLB", use_selection=True)
         else:
             artifact = directory / "preview.png"
+        native_artifact = ""
+        if operation != "PREVIEW":
+            status("Saving editable mesh topology", 0.92)
+            native = importlib.import_module(addon.__name__ + ".features.board.native_assets")
+            native_artifact = str(native.write(bpy.context, [obj], directory / "asset.blend"))
         status("Rendering preview", 0.94)
         preview = directory / "preview.png"
         preview_error = ""
@@ -267,6 +368,7 @@ def run(request, directory):
             preview_error = str(exc)
             traceback.print_exc()
         write_json(directory / "result.json", {"schema": 1, "artifact": str(artifact),
+            "native_artifact": native_artifact,
             "preview": str(preview) if preview.is_file() else "", "preview_error": preview_error})
         status("Complete", 1.0)
     finally:

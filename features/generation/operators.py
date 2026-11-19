@@ -1,5 +1,6 @@
 """Modal Blender adapters; the external worker never touches scene data."""
 from pathlib import Path
+import re
 import tempfile
 
 import bpy
@@ -48,7 +49,7 @@ def _progress_label(phase):
         return "Generating."
     if phase.startswith("Removing"):
         return "Preparing image…"
-    if phase.startswith(("Encoding", "Generating", "Decoding")):
+    if phase.startswith(("Encoding", "Generating", "Sampling", "Decoding")):
         return "Generating…"
     if phase.startswith("Saving"):
         return "Saving…"
@@ -63,6 +64,12 @@ def _progress_fraction(phase):
     if phase.startswith("Encoding"):
         return 0.28
     if phase.startswith("Generating"):
+        return 0.55
+    if phase.startswith("Sampling"):
+        match = re.search(r"(\d+)\s*/\s*(\d+)", phase)
+        if match:
+            step, total = int(match.group(1)), max(1, int(match.group(2)))
+            return 0.28 + 0.54 * min(1.0, step / total)
         return 0.55
     if phase.startswith("Decoding"):
         return 0.82
@@ -92,7 +99,7 @@ def can_generate(context):
 class Remi_OT_GenerateSplats(Operator):
     bl_idname = "remi.generate_splats"
     bl_label = "Generate from Image"
-    bl_description = "Generate native Gaussian splats locally with rand6_100_ncm"
+    bl_description = "Generate native Gaussian splats locally with the selected model"
     bl_options = {"REGISTER", "UNDO"}
 
     image_path: StringProperty(
@@ -121,6 +128,10 @@ class Remi_OT_GenerateSplats(Operator):
                 models=bpy.path.abspath(settings.models),
                 image=image, output=bpy.path.abspath(settings.output),
                 gaussians=int(settings.gaussians), seed=settings.seed,
+                model=settings.model,
+                steps=settings.triposplat_steps,
+                guidance=settings.triposplat_guidance,
+                shift=settings.triposplat_shift,
                 cache_minutes=int(settings.model_cache_minutes),
                 cache_dir=Path(bpy.app.tempdir or tempfile.gettempdir()) / "remi-generation-cache",
             )

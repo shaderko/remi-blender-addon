@@ -33,7 +33,7 @@ assert adapter.native_splats_available()
 settings = bpy.context.scene.remi_generation
 assert Path(bpy.path.abspath(settings.python)).is_file(), settings.python
 models = Path(bpy.path.abspath(settings.models))
-for name in client.COMPONENTS:
+for name in client.components_for_model(settings.model):
     assert (models / name).is_file(), name
 assert settings.output
 print(f"Installed module: {addon.__file__}", flush=True)
@@ -44,6 +44,8 @@ if args.image:
     job = client.GenerationJob.start(
         python=bpy.path.abspath(settings.python), models=models, image=args.image.resolve(),
         output=bpy.path.abspath(settings.output), gaussians=65536, seed=20261023,
+        model=settings.model, steps=settings.triposplat_steps,
+        guidance=settings.triposplat_guidance, shift=settings.triposplat_shift,
     )
     print(f"Installed worker output: {job.directory}", flush=True)
     try:

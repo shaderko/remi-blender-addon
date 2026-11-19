@@ -21,7 +21,8 @@ def _configuration_defaults():
     if not isinstance(values, dict):
         return {}
     return {key: value for key, value in values.items()
-            if key in {"python", "models", "output", "mesh_output", "download_url"} and isinstance(value, str) and value.strip()}
+            if key in {"python", "models", "output", "mesh_output", "download_url", "model"}
+            and isinstance(value, str) and value.strip()}
 
 
 _LOCAL_DEFAULTS = _configuration_defaults()
@@ -36,6 +37,11 @@ def _models_default():
     return os.environ.get("REMI_TRIPOSPLAT_MODELS") or _LOCAL_DEFAULTS.get("models") or str(
         local if local.is_dir() else Path(bpy.utils.user_resource("DATAFILES")) / "remi" / "models" / "triposplat"
     )
+
+
+def _model_default():
+    value = os.environ.get("REMI_TRIPOSPLAT_MODEL") or _LOCAL_DEFAULTS.get("model")
+    return value if value in {"rand6_100_ncm", "triposplat"} else "rand6_100_ncm"
 
 
 def _cache_changed(self, context):
@@ -57,6 +63,28 @@ class RemiGenerationSettings(PropertyGroup):
         description="Detected automatically; leave empty to use the local default, or choose a CUDA/PyTorch Python environment",
     )
     models: StringProperty(name="Model Folder", subtype="DIR_PATH", default=_models_default())
+    model: EnumProperty(
+        name="Model",
+        items=[
+            ("rand6_100_ncm", "Remi NCM · Fast",
+             "Remi NCM flow transplant; eight-level single-pass generation"),
+            ("triposplat", "TripoSplat · Upstream",
+             "Original TripoSplat flow model; Euler sampling with classifier-free guidance, slower"),
+        ],
+        default=_model_default(),
+    )
+    triposplat_steps: IntProperty(
+        name="TripoSplat Steps", default=20, min=10, max=50,
+        description="Euler sampler steps for the upstream TripoSplat model; more is slower",
+    )
+    triposplat_guidance: FloatProperty(
+        name="TripoSplat Guidance", default=3.0, min=1.0, max=10.0,
+        description="Classifier-free guidance scale for the upstream model; 1 disables CFG",
+    )
+    triposplat_shift: FloatProperty(
+        name="TripoSplat Shift", default=3.0, min=1.0, max=10.0,
+        description="Timestep schedule shift for the upstream model",
+    )
     download_url: StringProperty(
         name="Model Download URL",
         description="Public HTTPS directory containing bundle.json on Hetzner Object Storage; no credentials",

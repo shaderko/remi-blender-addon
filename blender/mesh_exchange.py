@@ -38,6 +38,7 @@ def export_obj_for_tool(
     obj: bpy.types.Object,
     filepath: str,
     export_materials: bool = False,
+    triangulate: bool = False,
 ) -> bool:
     """Export one OBJ for an external tool, optionally retaining materials."""
     previous_active = bpy.context.view_layer.objects.active
@@ -53,6 +54,7 @@ def export_obj_for_tool(
             forward_axis="NEGATIVE_Z",
             up_axis="Y",
             export_materials=export_materials,
+            export_triangulated_mesh=triangulate,
             path_mode="ABSOLUTE" if export_materials else "AUTO",
         )
         return True

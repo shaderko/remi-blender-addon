@@ -16,6 +16,9 @@ WEIGHTS = (
     ("ckpts/vae/triposplat_vae_decoder_fp16.safetensors", "ckpts/vae/triposplat_vae_decoder_fp16.safetensors"),
     ("ckpts/background_removal/birefnet.safetensors", "ckpts/background_removal/birefnet.safetensors"),
 )
+SHARED = tuple(name for _, name in WEIGHTS[1:])
+UPSTREAM_FLOW = "ckpts/diffusion_models/triposplat_fp16.safetensors"
+LICENSES = ("APACHE-2.0.txt", "BIREFNET-MIT.txt", "DINOV3-LICENSE.txt")
 
 
 def digest(path):
@@ -40,7 +43,7 @@ def copy_verified(source, destination):
     return {"sha256": checksum, "bytes": source.stat().st_size}
 
 
-def prepare(source, output):
+def prepare(source, output, upstream_flow=None):
     source, output = source.resolve(), output.resolve()
     vendor = ROOT / "integrations" / "triposplat" / "vendor"
     if output.is_relative_to(source) or vendor.is_relative_to(source):
@@ -48,21 +51,38 @@ def prepare(source, output):
     for name in SOURCES + tuple(name for name, _ in WEIGHTS):
         if not (source / name).is_file():
             raise FileNotFoundError(source / name)
+    if upstream_flow is None:
+        candidate = source / UPSTREAM_FLOW
+        upstream_flow = candidate if candidate.is_file() else None
+    upstream_flow = upstream_flow.resolve() if upstream_flow is not None else None
+    if upstream_flow is not None and not upstream_flow.is_file():
+        raise FileNotFoundError(upstream_flow)
     sources = {}
     for name in SOURCES:
         print(f"Snapshot source: {name}", flush=True)
         sources[name] = copy_verified(source / name, vendor / name)
     (vendor / "provenance.json").write_text(json.dumps({
         "upstream": "https://github.com/VAST-AI-Research/TripoSplat",
-        "fork": "local NCM flow-transplant, rand6_100_ncm (step 600)",
+        "fork": "local NCM flow-transplant, rand6_100_ncm",
         "files": sources,
     }, indent=2) + "\n", encoding="utf-8")
     weights = {}
     for original, name in WEIGHTS:
         print(f"Snapshot weights: {name}", flush=True)
         weights[name] = copy_verified(source / original, output / name)
+    for name in LICENSES:
+        print(f"Snapshot license: {name}", flush=True)
+        copy_verified(ROOT / "licenses" / name, output / "licenses" / name)
+    models = {"rand6_100_ncm": {
+        "label": "Remi NCM",
+        "files": [WEIGHTS[0][1]],
+    }}
+    if upstream_flow is not None:
+        print(f"Snapshot weights: {UPSTREAM_FLOW}", flush=True)
+        weights[UPSTREAM_FLOW] = copy_verified(upstream_flow, output / UPSTREAM_FLOW)
+        models["triposplat"] = {"label": "TripoSplat", "files": [UPSTREAM_FLOW]}
     (output / "bundle.json").write_text(json.dumps({
-        "schema": 1, "model": "rand6_100_ncm", "files": weights,
+        "schema": 2, "shared": list(SHARED), "models": models, "files": weights,
     }, indent=2) + "\n", encoding="utf-8")
     print(f"Ready. Blender Model Folder: {output}", flush=True)
 
@@ -71,5 +91,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, required=True, help="Read-only TripoSplat repository")
     parser.add_argument("--output", type=Path, default=ROOT / "models" / "triposplat")
+    parser.add_argument("--upstream-flow", type=Path,
+                        help="Optional upstream TripoSplat fp16 safetensors to install as a second model")
     args = parser.parse_args()
-    prepare(args.source, args.output)
+    prepare(args.source, args.output, args.upstream_flow)

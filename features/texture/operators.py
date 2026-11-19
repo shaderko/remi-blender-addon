@@ -397,7 +397,7 @@ class Remi_OT_ProjectView(Operator):
             if render_splat is None:
                 state.status = "Importing splat for view render…"
                 state.status_kind = "PROGRESS"
-                temp_splat = import_splats(context, archive, display="AUTO")
+                temp_splat = import_splats(context, archive)
                 render_splat = temp_splat
             if render_splat.name not in context.scene.objects:
                 raise RuntimeError("The splat source is not in the active scene")

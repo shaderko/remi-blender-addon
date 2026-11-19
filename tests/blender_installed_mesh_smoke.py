@@ -25,7 +25,7 @@ settings.mesh_output = str(output)
 client = importlib.import_module(module_name + ".integrations.splat_mesh.client")
 adapter = importlib.import_module(module_name + ".blender.reconstructed_mesh")
 splats = importlib.import_module(module_name + ".blender.gaussian_splats")
-splat = splats.import_splats(bpy.context, archive, display="NATIVE")
+splat = splats.import_splats(bpy.context, archive)
 snapshot = output / "selected_object.npz"
 splats.write_splat_archive(splat, snapshot)
 job = client.MeshJob.start(

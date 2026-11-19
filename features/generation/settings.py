@@ -114,10 +114,6 @@ class RemiGenerationSettings(PropertyGroup):
         (str(n), f"{n:,}", "Number of native Gaussian splats") for n in (32768, 65536, 131072, 262144)
     ], default="65536")
     seed: IntProperty(name="Seed", default=20261023, min=0, max=2147483647)
-    preview_limit: IntProperty(
-        name="Preview Limit", default=32768, min=1, max=262144,
-        description="Maximum ellipsoid proxies for new imports; all native Gaussians are retained",
-    )
     # Retained for older saved scenes; runtime controls now live in the gear popover.
     show_setup: BoolProperty(name="Local Runtime Setup", default=True, options={"HIDDEN"})
 

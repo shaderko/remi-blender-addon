@@ -36,7 +36,7 @@ from remi.features.texture.projection_area import state as projection_area
 
 bpy.ops.object.select_all(action="SELECT")
 bpy.ops.object.delete(use_global=False)
-splat = import_splats(bpy.context, args.archive, display="NATIVE")
+splat = import_splats(bpy.context, args.archive)
 bpy.ops.mesh.primitive_uv_sphere_add(segments=48, ring_count=24, radius=0.5)
 mesh = bpy.context.active_object
 mesh.name = "TextureViewSmokeSphere"

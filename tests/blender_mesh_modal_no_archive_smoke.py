@@ -34,7 +34,7 @@ bpy.ops.object.select_all(action="SELECT")
 bpy.ops.object.delete(use_global=False)
 source_copy = Path(tempfile.mkdtemp(prefix="remi-no-archive-", dir=args.output)) / "splats.npz"
 shutil.copy2(args.archive, source_copy)
-splat = import_splats(bpy.context, source_copy, display="NATIVE")
+splat = import_splats(bpy.context, source_copy)
 source_copy.unlink()
 assert not source_copy.exists()
 assert len(splat_arrays(splat)["positions"]) > 0

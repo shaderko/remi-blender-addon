@@ -23,7 +23,7 @@ from remi.blender.gaussian_splats import import_splats
 from remi.blender.reconstructed_mesh import mesh_for_splat
 from remi.features.generation.mesh_operators import runtime
 
-splat = import_splats(bpy.context, args.archive, display="NATIVE")
+splat = import_splats(bpy.context, args.archive)
 settings = bpy.context.scene.remi_generation
 settings.mesh_quality = "DENSE"
 settings.mesh_output = str(args.output.resolve())

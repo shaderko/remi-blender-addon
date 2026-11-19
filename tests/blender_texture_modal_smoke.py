@@ -41,7 +41,7 @@ source_archive = args.archive
 if args.delete_archive:
     source_archive = args.output / "temporary_source.npz"
     shutil.copy2(args.archive, source_archive)
-splat = import_splats(bpy.context, source_archive, display="AUTO")
+splat = import_splats(bpy.context, source_archive)
 if args.delete_archive:
     source_archive.unlink()
 bpy.ops.mesh.primitive_uv_sphere_add(segments=16 if args.low_poly else 48,

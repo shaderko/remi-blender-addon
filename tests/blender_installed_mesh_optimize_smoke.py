@@ -18,7 +18,7 @@ settings.mesh_output = str(output)
 client = importlib.import_module(module_name + ".integrations.splat_mesh.client")
 adapter = importlib.import_module(module_name + ".blender.reconstructed_mesh")
 splats = importlib.import_module(module_name + ".blender.gaussian_splats")
-splat = splats.import_splats(bpy.context, archive, display="NATIVE")
+splat = splats.import_splats(bpy.context, archive)
 job = client.MeshJob.start(
     python=bpy.path.abspath(settings.python), archive=archive, output=output, quality=settings.mesh_quality,
 )

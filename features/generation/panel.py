@@ -3,7 +3,6 @@ from pathlib import Path
 
 import bpy
 
-from ...blender.gaussian_splats import native_splats_available
 from ...blender.reconstructed_mesh import is_reconstructed_mesh, mesh_for_splat
 from .mesh_operators import can_convert, splat_source
 
@@ -72,9 +71,6 @@ def draw_mesh_controls(layout, context, state):
             layout.label(text=state.mesh_status)
         elif state.mesh_status_kind == "SUCCESS" and state.mesh_status == "Surface tool ready":
             layout.label(text=state.mesh_status, icon="CHECKMARK")
-    if source is not None:
-        if not native_splats_available():
-            layout.label(text="Create Mesh requires native Gaussians in Blender 5.3+", icon="INFO")
     if can_convert(context):
         row = layout.row()
         row.scale_y = 1.35
@@ -98,8 +94,6 @@ def draw_generation_settings(layout, context):
         controls.prop(settings, "triposplat_steps")
         controls.prop(settings, "triposplat_guidance")
         controls.prop(settings, "triposplat_shift")
-    if not native_splats_available():
-        controls.prop(settings, "preview_limit")
     controls.separator()
     controls.prop(settings, "python")
     controls.prop(settings, "models")

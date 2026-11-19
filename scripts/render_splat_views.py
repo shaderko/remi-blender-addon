@@ -69,7 +69,7 @@ positions = data["positions"]
 low, high = np.quantile(positions, [0.01, 0.99], axis=0)
 center = (low + high) / 2
 radius = max(float(np.max(high - low)) / 2, 1e-4)
-splat = import_splats(bpy.context, archive, display="NATIVE")
+splat = import_splats(bpy.context, archive)
 
 scene = bpy.context.scene
 scene.render.engine = args.engine

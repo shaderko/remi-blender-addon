@@ -18,7 +18,6 @@ else:
 
 from remi.app.ui import main_panel
 from remi.app.ui.workspace import active_workspace
-from remi.blender.gaussian_splats import native_splats_available
 from remi.features.edit_tools.panel import Remi_PT_EditToolsPanel
 from remi.features.generation.panel import Remi_PT_GenerationSettings
 from remi.features.generation import settings as generation_settings
@@ -121,7 +120,7 @@ try:
     properties = {entry[1] for entry in entries_of(settings_layout.entries, "prop")}
     assert {"python", "models", "output", "gaussians", "seed", "model", "size", "prompt"} & properties
     assert {"python", "models", "output", "gaussians", "seed"} <= properties
-    assert ("preview_limit" in properties) != native_splats_available()
+    assert "preview_limit" not in properties
     with mock.patch.dict(generation_settings._LOCAL_DEFAULTS, {"python": "configured-python"}, clear=True):
         assert generation_settings.default_python() == "configured-python"
     with mock.patch.dict(generation_settings._LOCAL_DEFAULTS, {}, clear=True), \

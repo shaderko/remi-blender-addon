@@ -32,7 +32,7 @@ from remi.features.generation.mesh_operators import runtime as mesh_runtime
 
 bpy.ops.object.select_all(action="SELECT")
 bpy.ops.object.delete(use_global=False)
-splat = import_splats(bpy.context, args.archive, display="NATIVE")
+splat = import_splats(bpy.context, args.archive)
 settings = bpy.context.scene.remi_generation
 settings.python = args.python or settings.python
 settings.mesh_output = str((args.output / "meshes").resolve())

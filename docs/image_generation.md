@@ -277,54 +277,28 @@ temporary directory, and each output's `worker.log` points to it.
 
 ## What appears in Blender
 
-### Blender 5.3+ — native Gaussian rendering
+### Native Gaussian rendering
 
-When the build exposes the `GAUSSIAN_SPLAT` point-cloud type, Remi creates a
-**native Gaussian point cloud**, automatically. There are no ellipsoid meshes,
-Geometry Nodes modifiers, custom shaders, or third-party rendering add-ons.
-Blender handles anisotropic scale, quaternion rotation, spherical-harmonic DC
-color, and Gaussian opacity falloff. Use **Rendered** shading to inspect it.
+Remi creates a **native Gaussian point cloud**, automatically. There are no
+ellipsoid meshes, Geometry Nodes modifiers, custom shaders, or third-party
+rendering add-ons. Blender handles anisotropic scale, quaternion rotation,
+spherical-harmonic DC color, and Gaussian opacity falloff. Use **Rendered**
+shading to inspect it.
 
 All generated Gaussians are retained and rendered, including low-opacity ones.
-**Preview Limit** is hidden because it only applies to the older fallback.
-Existing ellipsoid objects are not silently migrated; re-import `splats.npz` in
-5.3 to create a native object. The native `.blend` uses Blender's own Gaussian
-data representation and remains renderable without Remi installed.
+The native `.blend` uses Blender's own Gaussian data representation and remains
+renderable without Remi installed. Remi's mesh-session and Full Flow entry
+points reject splat objects; reconstruct a surface with **Create Mesh** instead.
 
 This path is tested against the installed 5.3 beta's actual API, not just a
 version number. Beta behavior may change. Generation tests do not establish
 5.3 compatibility for Remi's optional compiled remeshing/UV backends.
 
-### Blender 5.1/5.2 — ellipsoid fallback
-
-The object still stores **every** splat, even when its preview is limited. Its
-base mesh contains one vertex per Gaussian and **no polygon surface**.
-Non-destructive Geometry Nodes displays opaque low-poly ellipsoids, limited to
-**Preview Limit** points with opacity at least 0.05. Use **Material Preview** or
-rendered shading for colors. This fallback does **not** implement opacity
-blending or Gaussian rasterization and is not equivalent to native rendering.
-
-Remi's mesh-session and Full Flow entry points reject splat objects. Do not apply
-the preview modifier as a substitute for reconstructing a surface: that would
-only create disconnected ellipsoid proxies.
-
-The base data is self-contained in `.blend` and retains:
-
-| Data | Native 5.3 storage | Older fallback storage |
-| --- | --- | --- |
-| Z-up centers, same frame as exported PLY | `position` vector | Base vertex positions |
-| Activated standard deviations | `scale` vector | `remi_splat_scale` vector |
-| Unit quaternion, WXYZ | `rotation` quaternion | `remi_splat_rot_w/x/y/z` floats |
-| Linear opacity | `radiance:base` fourth component | `remi_splat_opacity` float |
-| Unclipped SH DC color | `radiance:base` first three components | `remi_splat_sh_dc` vector |
-
 Native `radiance:base` is a **FLOAT4**, not an RGBA color attribute. Its RGB
 components are raw SH coefficients, without pre-applied SH basis constants,
 clamping, or sRGB conversion. This matches Blender's own native PLY importer.
-
-In the fallback, `remi_splat_color`, `remi_splat_euler`, and `remi_splat_preview` are derived
-display attributes. Mesh reconstruction consumes the native attributes or
-archive, **not** the evaluated preview geometry.
+Mesh reconstruction consumes those native attributes or the archive, **not**
+evaluated preview geometry.
 
 ## Saved files and recovery
 
@@ -365,7 +339,7 @@ python -B -m unittest discover -s tests -p "test_generation.py"
 # Warm-cache protocol test is included; set Keep Model Loaded to 0 in Blender
 # to force the one-shot path.
 python -B scripts/generate_splats.py "C:\path\to\image.png"
-& "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" --background --factory-startup --python-exit-code 1 --python tests/blender_generation_regression.py
+& "C:\Program Files\Blender Foundation\Blender 5.3 Beta\blender.exe" --background --factory-startup --python-exit-code 1 --python tests/blender_generation_regression.py
 & "C:\Program Files\Blender Foundation\Blender 5.3 Beta\blender.exe" --background --factory-startup --python-exit-code 1 --python tests/blender_mesh_conversion_regression.py
 ```
 
@@ -375,14 +349,13 @@ generated `splats.npz` and the external Python.
 
 The regression uses synthetic Gaussians and needs no model weights or torch.
 For a real modal UI test (launches a temporary factory-startup Blender window,
-generates, renders the available display type, saves a `.blend`, tests
-cancellation, and exits):
+generates, renders native Gaussians, saves a `.blend`, tests cancellation, and
+exits):
 
 ```powershell
-& "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" --factory-startup --python tests/blender_generation_modal_smoke.py -- --image "C:\path\to\image.png" --python "C:\path\to\python.exe"
+& "C:\Program Files\Blender Foundation\Blender 5.3 Beta\blender.exe" --factory-startup --python tests/blender_generation_modal_smoke.py -- --image "C:\path\to\image.png" --python "C:\path\to\python.exe"
 ```
 
-Use the 5.3 beta executable in the same command for native generation/rendering.
 To render an **existing** generation in both EEVEE and Cycles, and compare its
 native attributes to Blender's own PLY importer (no inference needed):
 
@@ -391,5 +364,5 @@ native attributes to Blender's own PLY importer (no inference needed):
 ```
 
 This writes native PNG renders, a self-contained `native_splats.blend`, and a
-JSON report in a new directory beside the archive. It refuses to use an
-ellipsoid fallback if native Gaussian support is missing.
+JSON report in a new directory beside the archive. It fails if native Gaussian
+support is missing.

@@ -47,7 +47,7 @@ def main():
     from remi.integrations.triposplat.splat_data import load
 
     if not native_splats_available():
-        raise RuntimeError("Native Gaussian rendering requires Blender 5.3+; ellipsoid fallback is not valid")
+        raise RuntimeError("Native Gaussian rendering requires Blender 5.3+")
     if args.samples < 1:
         raise ValueError("Samples must be positive")
     archive, output = args.archive.resolve(), args.output.resolve()
@@ -65,7 +65,7 @@ def main():
     (output / "dataset.json").write_text(json.dumps(rig, indent=2), encoding="utf-8")
     for obj in list(bpy.data.objects):
         bpy.data.objects.remove(obj, do_unlink=True)
-    import_splats(bpy.context, archive, display="NATIVE")
+    import_splats(bpy.context, archive)
     scene = bpy.context.scene
     scene.render.engine = "BLENDER_EEVEE"
     scene.eevee.taa_render_samples = args.samples

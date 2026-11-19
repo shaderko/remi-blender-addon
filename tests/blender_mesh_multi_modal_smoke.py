@@ -38,8 +38,8 @@ arrays2["positions"][:, 0] += 2.0
 archive1, archive2 = root / "one.npz", root / "two.npz"
 save(archive1, arrays1)
 save(archive2, arrays2)
-splat1 = import_splats(bpy.context, archive1, display="NATIVE")
-splat2 = import_splats(bpy.context, archive2, display="NATIVE")
+splat1 = import_splats(bpy.context, archive1)
+splat2 = import_splats(bpy.context, archive2)
 archive1.unlink()
 archive2.unlink()
 settings = bpy.context.scene.remi_generation

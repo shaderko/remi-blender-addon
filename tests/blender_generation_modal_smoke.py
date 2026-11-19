@@ -54,11 +54,9 @@ def finish():
     assert obj and obj.get("remi_gaussian_splats"), state.status
     assert state.status_kind == "SUCCESS"
     assert obj["remi_splat_count"] == 65536
-    from remi.blender.gaussian_splats import native_splats_available, uses_native_splats
-    native_display = uses_native_splats(obj)
-    assert native_display == native_splats_available()
-    if native_display:
-        assert len(obj.data.points) == 65536 and not obj.modifiers
+    from remi.blender.gaussian_splats import uses_native_splats
+    assert uses_native_splats(obj)
+    assert len(obj.data.points) == 65536 and not obj.modifiers
     assert not bpy.ops.remi.start_session.poll()
     assert "torch" not in sys.modules
     directory = Path(state.directory)
@@ -100,7 +98,7 @@ def finish():
     scene.render.resolution_x = scene.render.resolution_y = 640
     scene.render.resolution_percentage = 100
     scene.render.image_settings.file_format = "PNG"
-    scene.render.filepath = str(directory / ("native_gaussians.png" if native_display else "ellipsoid_preview.png"))
+    scene.render.filepath = str(directory / "native_gaussians.png")
     scene.world.color = (0.15, 0.15, 0.15)
     scene.view_settings.view_transform = "Standard"
     bpy.ops.wm.save_as_mainfile(filepath=str(directory / "splats_preview.blend"))

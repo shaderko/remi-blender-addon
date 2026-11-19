@@ -123,7 +123,7 @@ try:
             "opacities": np.array([1.0], dtype=np.float32),
             "sh_dc": np.array([[0.0, 0.0, 0.0]], dtype=np.float32),
         })
-        splat = import_splats(bpy.context, splat_archive, display="ELLIPSOID")
+        splat = import_splats(bpy.context, splat_archive)
 
         mesh = make_mesh()
         assert resolve_splat_source(mesh) == (None, None)

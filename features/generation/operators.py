@@ -8,7 +8,7 @@ from bpy.props import StringProperty
 from bpy.types import Operator
 from bpy_extras.io_utils import ImportHelper
 
-from ...blender.gaussian_splats import import_splats, splat_display_label, splat_for_image
+from ...blender.gaussian_splats import import_splats, splat_for_image
 from ...integrations.triposplat.client import GenerationJob
 from .settings import default_python
 
@@ -152,7 +152,6 @@ class Remi_OT_GenerateSplats(Operator):
             if image_state is not None:
                 image_state.selected = image
             self._scene = context.scene
-            self._preview_limit = settings.preview_limit
             context.window_manager.modal_handler_add(self)
         except Exception as exc:
             runtime.stop()
@@ -189,13 +188,13 @@ class Remi_OT_GenerateSplats(Operator):
             session = getattr(context.window_manager, "remi_session", None)
             if context.scene != self._scene or context.mode != "OBJECT" or (session and session.active):
                 raise RuntimeError("Generation saved, but scene/mode changed. Import splats.npz when ready")
-            obj = import_splats(context, path, preview_limit=self._preview_limit)
+            obj = import_splats(context, path)
             image = bpy.path.abspath(self.image_path or context.scene.remi_generation.image)
             if image:
                 obj["remi_source_image"] = str(Path(image).resolve())
             state.mesh_source_object = ""
             state.progress = 1.0
-            state.status = f"Generated {obj['remi_splat_count']:,} Gaussians · {splat_display_label(obj)}"
+            state.status = f"Generated {obj['remi_splat_count']:,} native Gaussians"
             state.status_kind = "SUCCESS"
             self.report({"INFO"}, state.status)
             return {"FINISHED"}
@@ -265,8 +264,7 @@ class Remi_OT_ImportSplats(Operator, ImportHelper):
     def execute(self, context):
         state = context.window_manager.remi_generation
         try:
-            obj = import_splats(context, bpy.path.abspath(self.filepath),
-                                preview_limit=context.scene.remi_generation.preview_limit)
+            obj = import_splats(context, bpy.path.abspath(self.filepath))
             state.status = f"Imported {obj['remi_splat_count']:,} Gaussians"
             state.status_kind = "SUCCESS"
             state.mesh_status = ""

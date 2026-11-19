@@ -36,7 +36,7 @@ from remi.integrations.triposplat.splat_data import load
 
 assert native_splats_available(), "This Blender build does not expose native GAUSSIAN_SPLAT point clouds"
 data = load(archive)
-obj = import_splats(bpy.context, archive, display="NATIVE", preview_limit=1)
+obj = import_splats(bpy.context, archive)
 assert obj.type == "POINTCLOUD" and obj.data.type == "GAUSSIAN_SPLAT"
 assert len(obj.data.points) == len(data["positions"])
 assert not obj.modifiers and not obj.data.materials

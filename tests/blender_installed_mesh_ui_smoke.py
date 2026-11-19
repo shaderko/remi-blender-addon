@@ -11,7 +11,7 @@ archive = Path(sys.argv[sys.argv.index("--") + 1]).resolve()
 out = Path(sys.argv[sys.argv.index("--") + 2]).resolve()
 out.parent.mkdir(parents=True, exist_ok=True)
 adapter = importlib.import_module(module_name + ".blender.gaussian_splats")
-adapter.import_splats(bpy.context, archive, display="NATIVE")
+adapter.import_splats(bpy.context, archive)
 bpy.context.window_manager.remi_ui.workspace = "OPTIMIZE"
 area = next(area for area in bpy.context.screen.areas if area.type == "VIEW_3D")
 area.spaces.active.show_region_ui = True

@@ -90,6 +90,14 @@ assert callable(board_organization.layer_rows) and callable(board_layers.thumbna
 assert callable(board_organizing.drop_target) and callable(board_organizing.apply_drop)
 print("REMI_INSTALLED_BOARD_LAYERS_OK")
 print("REMI_INSTALLED_DOCKED_WORKSPACE_OK")
+cloud_jobs=importlib.import_module(module_name+".integrations.remi_cloud.jobs")
+cloud_controls=importlib.import_module(module_name+".features.cloud.jobs")
+assert cloud_jobs.CloudRequest is not None
+assert not bpy.context.window_manager.remi_cloud.signed_in
+assert not cloud_controls.Remi_OT_CloudGenerate.poll(bpy.context)
+assert bpy.ops.remi.cloud_generate.get_rna_type() is not None
+assert bpy.ops.remi.cloud_resume.get_rna_type() is not None
+print("REMI_INSTALLED_CLOUD_CLIENT_OK")
 instant_native = importlib.import_module(module_name + ".features.retopology.instant_meshes._native")
 assert instant_native.Session is not None
 assert instant_native.GUIDE_API_VERSION == 1

@@ -5,6 +5,7 @@ activated standard deviations, opacity is linear, and SH DC is NOT clipped RGB.
 """
 from pathlib import Path
 import zipfile
+import struct
 
 import numpy as np
 
@@ -43,6 +44,26 @@ def save(path, arrays):
 
 
 def load(path):
+    path = Path(path)
+    with path.open("rb") as stream:
+        header = stream.read(16)
+        if header[:8] == b"REMIGAUS":
+            if len(header) != 16:
+                raise ValueError("Incomplete REMIGAUS header")
+            version, count = struct.unpack_from("<II", header, 8)
+            if version != SCHEMA or not 1 <= count <= MAX_SPLATS:
+                raise ValueError("Unsupported REMIGAUS schema or count")
+            expected = 16 + count * 56
+            if path.stat().st_size != expected:
+                raise ValueError("REMIGAUS byte length does not match its count")
+            raw = stream.read(count * 56 + 1)
+            if len(raw) != count * 56:
+                raise ValueError("Incomplete REMIGAUS payload")
+            values = np.frombuffer(raw, dtype="<f4").reshape(count, 14)
+            return validate({"positions":values[:,0:3], "scales":values[:,3:6],
+                             "rotations":values[:,6:10], "opacities":values[:,10], "sh_dc":values[:,11:14]})
+    if path.suffix.lower() == ".splat":
+        raise ValueError("Expected native Remi REMIGAUS data, not a viewer .splat file")
     with zipfile.ZipFile(path) as archive:
         if sum(item.file_size for item in archive.infolist()) > 32 * 1024 * 1024:
             raise ValueError("Gaussian archive exceeds the supported size")

@@ -6,6 +6,7 @@ from ..features import edit_tools
 from ..features import generation
 from ..features import images
 from ..features import board
+from ..features import cloud
 from ..features import registration as feature_registration
 from ..features import settings
 from ..features import texture
@@ -29,6 +30,7 @@ MODULES = (
     generation,
     images,
     board,
+    cloud,
     edit_tools,
 )
 

@@ -1,0 +1,2 @@
+# Integrity records hash the shipped LF source bytes on every platform.
+integrations/triposplat/vendor/** text eol=lf

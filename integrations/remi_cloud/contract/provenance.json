@@ -1,0 +1,9 @@
+{
+  "source": "remi-cloud-app/sdks/python/src/remi_cloud",
+  "apiVersion": "v1",
+  "sdkVersion": "0.1.0a2",
+  "files": {
+    "models.py": "34199cb08938c8fd7a7bd8c34b1d052f97c5f07bdc47c2f5c23ca4163a4abbe9",
+    "errors.py": "7a3c6c605e5e8c0b04770d5d5238fb3fab404adce638d1b503e6ed5eed559d08"
+  }
+}

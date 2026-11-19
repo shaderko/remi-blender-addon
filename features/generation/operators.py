@@ -241,10 +241,10 @@ class Remi_OT_CancelGeneration(Operator):
 class Remi_OT_ImportSplats(Operator, ImportHelper):
     bl_idname = "remi.import_splats"
     bl_label = "Import Generated Splats"
-    bl_description = "Import a previously generated splats.npz model"
+    bl_description = "Import native Gaussian data from Remi Cloud or local generation"
     bl_options = {"REGISTER", "UNDO"}
     filename_ext = ".npz"
-    filter_glob: StringProperty(default="*.npz", options={"HIDDEN"})
+    filter_glob: StringProperty(default="*.npz;*.splat", options={"HIDDEN"})
 
     @classmethod
     def poll(cls, context):

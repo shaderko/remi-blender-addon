@@ -20,18 +20,18 @@
 
 [**Open remi3d.app →**](https://remi3d.app)
 
-Optimize a GLB in your browser, or queue a batch and come back for the results.
-Remi Cloud remeshes, simplifies, unwraps, and rebakes your models on cloud workers,
-with a 3D preview, processing progress, and downloadable outputs. No Blender
-installation is needed.
+The development branch includes browser/device sign-in and a Cloud generation
+client for Iris-3B Turbo images and Remi's custom NCM 3D model. The same Remi
+account authenticates website and Blender API requests. Public PAYG generation
+is not connected in this branch; the server must explicitly enable each operation.
+Retail pricing, Stripe enrollment and retention commitments are still under review.
 
-1. Create an account and verify your email. You get **10 free credits**.
-2. Upload a GLB or add several models to a batch. Choose the detail, triangle
-   target, and texture size, then start optimization.
-3. Follow the progress or return later to preview and download your results.
+When available, choose an input and a required EUR spending cap in **Remi Cloud**,
+then keep its private request folder to resume interrupted work. Verified results
+can be imported while billing is pending. **Stop Waiting** stops only local polling;
+it does not cancel Cloud execution or release a spending hold. [Cloud client and
+current verification limits](docs/cloud_generation.md).
 
-**One full optimization costs one credit.** Monthly plans add more credits;
-uploaded models and results remain available for 30 days after processing.
 The Blender add-on remains free and open source for local work and manual tools.
 
 ## What Remi does

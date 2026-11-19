@@ -40,6 +40,25 @@ def copy_verified(source, destination):
     return {"sha256": checksum, "bytes": source.stat().st_size}
 
 
+def copy_source(source, destination):
+    """Keep original provenance while shipping the same LF bytes on Windows/macOS."""
+    original = source.read_bytes()
+    canonical = original.replace(b"\r\n", b"\n")
+    if b"\r" in canonical:
+        raise ValueError(f"Unsupported source line endings: {source.name}")
+    if destination.exists() and destination.read_bytes() != canonical:
+        raise RuntimeError(f"Refusing to overwrite different file: {destination}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if not destination.exists():
+        with destination.open("xb") as handle:
+            handle.write(canonical)
+    result = {"sha256": hashlib.sha256(canonical).hexdigest(), "bytes": len(canonical)}
+    if original != canonical:
+        result.update(sourceSha256=hashlib.sha256(original).hexdigest(),
+                      sourceBytes=len(original), normalization="CRLF to LF")
+    return result
+
+
 def prepare(source, output):
     source, output = source.resolve(), output.resolve()
     vendor = ROOT / "integrations" / "triposplat" / "vendor"
@@ -51,12 +70,12 @@ def prepare(source, output):
     sources = {}
     for name in SOURCES:
         print(f"Snapshot source: {name}", flush=True)
-        sources[name] = copy_verified(source / name, vendor / name)
-    (vendor / "provenance.json").write_text(json.dumps({
+        sources[name] = copy_source(source / name, vendor / name)
+    (vendor / "provenance.json").write_bytes((json.dumps({
         "upstream": "https://github.com/VAST-AI-Research/TripoSplat",
-        "fork": "local NCM flow-transplant, rand6_100_ncm (step 600)",
+        "fork": "Remi custom NCM flow-transplant, rand6_100_ncm; checkpoint version is recorded separately in bundle.json",
         "files": sources,
-    }, indent=2) + "\n", encoding="utf-8")
+    }, indent=2) + "\n").encode("utf-8"))
     weights = {}
     for original, name in WEIGHTS:
         print(f"Snapshot weights: {name}", flush=True)

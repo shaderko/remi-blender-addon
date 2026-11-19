@@ -38,6 +38,7 @@ TESTS = (
     "blender_voxel_surface_regression.py",
     "blender_generation_regression.py",
     "blender_image_generation_regression.py",
+    "blender_cloud_generation_regression.py",
     "blender_mesh_conversion_regression.py",
     "blender_workspace_ui_regression.py",
     "blender_texture_projection_regression.py",
@@ -200,6 +201,15 @@ def verify_archive(artifact, target):
         }
         if not iris_required.issubset(archive.namelist()):
             raise RuntimeError("Archive is missing the Iris image-generation integration")
+        cloud_required={"features/cloud/__init__.py","features/cloud/jobs.py",
+            *{f"integrations/remi_cloud/{name}.py" for name in ("protocol","client","worker","jobs")},
+            *{f"integrations/remi_cloud/contract/{name}" for name in ("__init__.py","models.py","errors.py","provenance.json")}}
+        if not cloud_required.issubset(archive.namelist()):
+            raise RuntimeError("Archive is missing the authenticated Cloud client")
+        cloud_source=json.loads(archive.read("integrations/remi_cloud/contract/provenance.json"))
+        for name,expected in cloud_source["files"].items():
+            if hashlib.sha256(archive.read("integrations/remi_cloud/contract/"+name)).hexdigest()!=expected:
+                raise RuntimeError("Cloud response-validator source hash mismatch")
         if any(name.startswith("scripts/") or name.lower().endswith("spirula.exe") for name in archive.namelist()):
             raise RuntimeError("Developer scripts and external surface executables must not be bundled")
         if any(name.endswith((".nbc", ".nbi")) for name in archive.namelist()):
@@ -264,7 +274,7 @@ def main():
         installed_smoke(args.blender, args.artifact.resolve())
     else:
         if args.command == "check":
-            for pattern in ("test_platform_support.py", "test_model_download.py", "test_iris_setup.py"):
+            for pattern in ("test_platform_support.py", "test_model_download.py", "test_iris_setup.py", "test_cloud_auth.py", "test_cloud_generation.py"):
                 run(sys.executable, "-m", "unittest", "discover", "-s", ROOT / "tests",
                     "-p", pattern)
             for test in TESTS:

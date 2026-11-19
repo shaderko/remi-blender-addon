@@ -4,6 +4,7 @@ import hashlib
 import contextlib
 import io
 import json
+import struct
 from pathlib import Path
 import subprocess
 import sys
@@ -45,6 +46,21 @@ def example(count=3):
 
 
 class SplatDataTests(unittest.TestCase):
+    def test_cloud_archive_preserves_native_frame_activations_and_unclipped_sh(self):
+        original = example()
+        columns = [original[key] if original[key].ndim==2 else original[key][:,None] for key in data.WIDTHS]
+        body = b"REMIGAUS" + struct.pack("<II",1,3) + np.concatenate(columns,axis=1).astype("<f4").tobytes()
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/"cloud.splat"
+            path.write_bytes(body)
+            for key,value in data.load(path).items():
+                np.testing.assert_array_equal(value,original[key])
+            for broken in (body[:-1],body+b"extra",b"REMIGAUS",body[:8]+struct.pack("<II",2,3)+body[16:]):
+                path.write_bytes(broken)
+                with self.assertRaises(ValueError): data.load(path)
+            path.write_bytes(b"viewer splat without native header")
+            with self.assertRaisesRegex(ValueError,"REMIGAUS"): data.load(path)
+
     def test_roundtrip_preserves_all_native_values(self):
         original = example()
         with tempfile.TemporaryDirectory() as directory:
@@ -90,7 +106,14 @@ class WorkerTests(unittest.TestCase):
         provenance = json.loads((vendor / "provenance.json").read_text(encoding="utf-8"))
         for name, metadata in provenance["files"].items():
             with self.subTest(name=name), (vendor / name).open("rb") as stream:
-                self.assertEqual(hashlib.file_digest(stream, "sha256").hexdigest(), metadata["sha256"])
+                body = stream.read()
+                self.assertEqual(hashlib.sha256(body).hexdigest(), metadata["sha256"])
+                self.assertEqual(len(body), metadata["bytes"])
+                if metadata.get("normalization") == "CRLF to LF":
+                    self.assertNotIn(b"\r", body)
+                    original = body.replace(b"\n", b"\r\n")
+                    self.assertEqual(hashlib.sha256(original).hexdigest(), metadata["sourceSha256"])
+                    self.assertEqual(len(original), metadata["sourceBytes"])
 
     def test_spawn_uses_isolated_python_and_file_protocol(self):
         with tempfile.TemporaryDirectory(prefix="remi path with spaces ") as directory:

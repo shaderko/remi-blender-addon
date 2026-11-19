@@ -183,6 +183,8 @@ def create_native_splat(path, data, collection):
     Scale is activated XYZ sigma, rotation is Blender's WXYZ quaternion.
     No material or Geometry Nodes modifier is needed for default native shading.
     """
+    if not native_splats_available():
+        raise RuntimeError("Remi requires Blender 5.3 with native GAUSSIAN_SPLAT support")
     count = len(data["positions"])
     cloud = bpy.data.pointclouds.new(f"{path.parent.name} · Native Gaussian data")
     obj = None
@@ -218,8 +220,6 @@ def import_splats(context, path):
     """Import a splats.npz archive as a native Blender 5.3 Gaussian cloud."""
     if context.mode != "OBJECT":
         raise ValueError("Switch to Object Mode before importing splats")
-    if not native_splats_available():
-        raise RuntimeError("Remi requires Blender 5.3 with native GAUSSIAN_SPLAT support")
     path = Path(path).resolve()
     data = load(path)  # Validate everything before creating any Blender data.
     return _import_native(context, path, data)

@@ -43,11 +43,9 @@ def main():
     remi = importlib.util.module_from_spec(spec)
     sys.modules["remi"] = remi
     spec.loader.exec_module(remi)
-    from remi.blender.gaussian_splats import import_splats, native_splats_available
+    from remi.blender.gaussian_splats import import_splats
     from remi.integrations.triposplat.splat_data import load
 
-    if not native_splats_available():
-        raise RuntimeError("Native Gaussian rendering requires Blender 5.3+")
     if args.samples < 1:
         raise ValueError("Samples must be positive")
     archive, output = args.archive.resolve(), args.output.resolve()

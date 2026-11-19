@@ -91,10 +91,8 @@ class NativePreview:
             raise
 
     def _create_subject(self, arrays):
-        from ...blender.gaussian_splats import create_native_splat, native_splats_available
+        from ...blender.gaussian_splats import create_native_splat
 
-        if not native_splats_available():
-            raise RuntimeError("Remi requires Blender 5.3 with native Gaussian rendering")
         self.obj = create_native_splat(Path("remi-board-preview/splats.npz"), arrays, self.scene.collection)
         return camera_frame(arrays)
 

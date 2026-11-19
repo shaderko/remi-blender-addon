@@ -6,7 +6,7 @@ import uuid
 import bpy
 from bpy.types import Operator
 
-from ...blender.gaussian_splats import is_splat_object, native_splats_available, write_splat_archive
+from ...blender.gaussian_splats import is_splat_object, write_splat_archive
 from ...blender.reconstructed_mesh import import_reconstructed_mesh
 from ...integrations.splat_mesh.client import MeshJob
 from ...integrations.triposplat.client import shutdown_generation_server
@@ -64,7 +64,6 @@ def can_convert(context):
         and not (generation and generation.mesh_busy)
         and runtime.job is None
         and splat_source(context) is not None
-        and native_splats_available()
     )
 
 

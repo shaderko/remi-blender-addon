@@ -1,7 +1,6 @@
 """Texture workspace: source-faithful splat projection controls."""
 from __future__ import annotations
 
-from ...blender.gaussian_splats import native_splats_available
 from ...blender.splat_projection import (
     existing_normal_map,
     projection_available,
@@ -227,7 +226,6 @@ def draw_texture(layout, context):
     source_object, archive, _label = _resolve_source(mesh, settings)
     source_ready = source_is_valid(source_object, archive)
     python_ready = bool(external_python(context))
-    native_ready = native_splats_available()
     viewport_ready = viewport_region(context)[0] is not None
 
     layout.separator()
@@ -242,16 +240,13 @@ def draw_texture(layout, context):
     view_action.scale_y = 1.5 if projection_area.has_points() else 1.0
     area_ready = not projection_area.has_points() or projection_area.valid(context)
     view_action.enabled = bool(
-        can_project(context) and source_ready and python_ready and native_ready
+        can_project(context) and source_ready and python_ready
         and viewport_ready and area_ready)
     view_action.operator(
         "remi.project_view",
         text="Project from View",
         icon="CAMERA_DATA",
     )
-    if not native_ready:
-        layout.label(text="View projection requires Blender 5.3+ native splats", icon="INFO")
-        layout.label(text="Project 3D remains available on this version", icon="INFO")
     if not viewport_ready:
         layout.label(text="Open this panel in a 3D Viewport to project from view", icon="INFO")
     if not python_ready:

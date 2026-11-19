@@ -12,7 +12,6 @@ from bpy.types import Operator
 from ...blender.gaussian_splats import (
     create_normal_splat,
     import_splats,
-    native_splats_available,
     remove_normal_splat,
     uses_native_splats,
 )
@@ -325,7 +324,6 @@ class Remi_OT_ProjectView(Operator):
     def poll(cls, context):
         return bool(
             can_project(context)
-            and native_splats_available()
             and viewport_region(context)[0] is not None
         )
 
@@ -334,9 +332,6 @@ class Remi_OT_ProjectView(Operator):
         state = context.window_manager.remi_texture
         if context.window is None:
             self.report({"ERROR"}, "View projection needs an interactive Blender window")
-            return {"CANCELLED"}
-        if not native_splats_available():
-            self.report({"ERROR"}, "View projection requires Blender 5.3+ native Gaussian splats")
             return {"CANCELLED"}
         area, region = viewport_region(context)
         if area is None or region is None:

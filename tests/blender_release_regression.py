@@ -1,11 +1,11 @@
-"""Headless release-safety regressions for Remi 1.14.
+"""Headless release-safety regressions.
 
 Run with:
   blender --background --factory-startup --python tests/blender_release_regression.py
 """
 
+import importlib.util
 from pathlib import Path
-from types import SimpleNamespace
 import sys
 
 import bmesh
@@ -13,11 +13,17 @@ import bpy
 from mathutils import Vector
 
 
-ADDON_PARENT = Path(__file__).resolve().parents[2]
-if str(ADDON_PARENT) not in sys.path:
-    sys.path.insert(0, str(ADDON_PARENT))
+ROOT = Path(__file__).resolve().parents[1]
+if "remi" not in sys.modules:
+    spec = importlib.util.spec_from_file_location(
+        "remi", ROOT / "__init__.py", submodule_search_locations=[str(ROOT)]
+    )
+    remi = importlib.util.module_from_spec(spec)
+    sys.modules["remi"] = remi
+    spec.loader.exec_module(remi)
+else:
+    remi = sys.modules["remi"]
 
-import remi
 from remi.features.remesh import geometry_nodes
 from remi.features.repair.manual import create_surface_ring_patch
 from remi.integrations import meshlab
@@ -62,25 +68,9 @@ def _source_state(obj):
     }
 
 
-def test_modifier_input_compatibility():
-    class LegacyModifier(dict):
-        pass
-
-    legacy = LegacyModifier()
-    assert geometry_nodes._set_modifier_input(legacy, "Socket_7", 0.125)
-    assert legacy["Socket_7"] == 0.125
-
-    modern_value = SimpleNamespace(value=None)
-    modern = SimpleNamespace(
-        properties=SimpleNamespace(
-            inputs=SimpleNamespace(Socket_7=modern_value),
-        )
-    )
-    assert geometry_nodes._set_modifier_input(modern, "Socket_7", 0.25)
-    assert modern_value.value == 0.25
-
+def test_modifier_inputs():
     _clean_scene()
-    obj = _cube("ModifierCompatibility")
+    obj = _cube("ModifierInputs")
     modifier = geometry_nodes.apply_remi_modifier(obj, voxel_size=0.125)
     node_group = modifier.node_group
     voxel_identifier = next(
@@ -88,12 +78,9 @@ def test_modifier_input_compatibility():
         for item in node_group.interface.items_tree
         if getattr(item, "name", "") == "Voxel Size"
     )
-    if bpy.app.version < (5, 2, 0):
-        assert abs(float(modifier[voxel_identifier]) - 0.125) < 1e-8
-    else:
-        value = getattr(modifier.properties.inputs, voxel_identifier).value
-        assert abs(float(value) - 0.125) < 1e-8
-    print("PASS Blender 5.1/5.2 Geometry Nodes inputs")
+    value = getattr(modifier.properties.inputs, voxel_identifier).value
+    assert abs(float(value) - 0.125) < 1e-8
+    print("PASS Blender 5.3 Geometry Nodes inputs")
 
 
 def test_duplicate_isolation():
@@ -251,7 +238,7 @@ def test_dependency_message_is_actionable():
 
 remi.register()
 try:
-    test_modifier_input_compatibility()
+    test_modifier_inputs()
     test_duplicate_isolation()
     test_targeted_patch_preserves_source()
     test_boundary_repair_preserves_source()

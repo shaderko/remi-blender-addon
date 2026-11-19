@@ -116,7 +116,7 @@ class Remi_OT_CloudImport(Operator):
             validate_output(body,intent)
             if intent["operation"]=="generate":
                 from ...blender.gaussian_splats import import_splats
-                obj=import_splats(context,path,preview_limit=context.scene.remi_generation.preview_limit)
+                obj=import_splats(context,path)
                 obj["remi_cloud_job_id"]=current["job_id"]
                 obj["remi_source_image"]=str(directory/intent["source"]["filename"])
                 message=f"Imported {obj['remi_splat_count']:,} custom-model Gaussians."

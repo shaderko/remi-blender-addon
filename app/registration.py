@@ -29,8 +29,8 @@ MODULES = (
     ui,
     generation,
     images,
-    board,
     cloud,
+    board,
     edit_tools,
 )
 

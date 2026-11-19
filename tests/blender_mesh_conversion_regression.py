@@ -108,8 +108,8 @@ try:
         directory = Path(directory)
         archive = directory / "splats.npz"
         save(archive, arrays())
-        display = "NATIVE" if native_splats_available() else "ELLIPSOID"
-        splat = import_splats(bpy.context, archive, display=display)
+        assert native_splats_available(), "Blender 5.3 native Gaussians are required"
+        splat = import_splats(bpy.context, archive)
         assert splat_source(bpy.context) is splat
         assert bpy.ops.remi.create_mesh.poll() == mesh_supported
         layout = draw()
@@ -166,7 +166,7 @@ try:
         # the first result must not become a global "only one model" cache.
         archive2 = directory / "splats_2.npz"
         save(archive2, arrays(offset=3.0))
-        splat2 = import_splats(bpy.context, archive2, display=display)
+        splat2 = import_splats(bpy.context, archive2)
         assert splat_source(bpy.context) is splat2
         assert mesh_for_splat(splat2) is None
         state.mesh_status = "Mesh ready · 2 triangles"

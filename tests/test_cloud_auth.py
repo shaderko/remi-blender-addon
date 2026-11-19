@@ -48,6 +48,13 @@ class Handler(BaseHTTPRequestHandler):
             value = {"success":True}
         elif self.path.endswith("/capabilities"):
             value = {"apiVersion":"v1","enabled":False,"operations":{"generate":False,"generate_image":False,"reconstruct":False,"optimize":False,"pipeline":False},"inputModes":{"single":True,"batch":True,"multiview":False},"billing":{"currency":"EUR","spendCapsRequired":True}}
+            if server.capabilities_enabled:
+                value["enabled"] = True
+                value["operations"]["generate_image"] = True
+            if server.capabilities_fault == "missing": status, value = 404, {}
+            if server.capabilities_fault == "malformed": value = {"enabled":True}
+            if server.capabilities_fault == "html":
+                self.send_response(503); self.end_headers(); self.wfile.write(b"<html>Not deployed</html>"); return
         elif self.path.endswith("/redirect"):
             self.send_response(302); self.send_header("Location",server.base+"/leak"); self.end_headers(); return
         else: status,value = 404,{}
@@ -61,6 +68,8 @@ class CloudAuthTests(unittest.TestCase):
         self.server.base = "http://127.0.0.1:"+str(self.server.server_port)
         self.server.requests = []
         self.server.bad_origin = self.server.denied = self.server.revoked = False
+        self.server.capabilities_fault = None
+        self.server.capabilities_enabled = False
         self.thread = threading.Thread(target=self.server.serve_forever,daemon=True); self.thread.start()
         self.api = self.server.base+"/api/v1"
     def tearDown(self):
@@ -126,6 +135,43 @@ class CloudAuthTests(unittest.TestCase):
             child,directory = process.stop()
             child.wait(timeout=4); process.reap()
             self.assertFalse(directory.exists()); self.assertEqual(process.status()["state"],"signed_out")
+        finally: process.cleanup()
+    def test_login_and_refresh_survive_unavailable_generation_discovery(self):
+        for fault in ("missing", "malformed", "html"):
+            with self.subTest(fault=fault):
+                self.server.revoked = False
+                self.server.capabilities_fault = fault
+                process = CloudProcess(sys.executable)
+                try:
+                    process.command("login", self.api)
+                    value = self.wait(lambda: (v if (v := process.status()).get("state") == "signed_in" else None))
+                    self.assertTrue(value["signed_in"])
+                    self.assertEqual(value["email"], "test@example.test")
+                    self.assertNotIn("capabilities", value)
+                    self.assertIn("could not be checked", value["message"])
+                    self.server.capabilities_fault = None
+                    self.server.capabilities_enabled = True
+                    process.command("status", self.api)
+                    value = self.wait(lambda: (v if (v := process.status()).get("state") == "signed_in" else None))
+                    self.assertTrue(value["capabilities"]["enabled"])
+                    self.server.capabilities_fault = fault
+                    process.command("status", self.api)
+                    value = self.wait(lambda: (v if (v := process.status()).get("state") == "signed_in" else None))
+                    self.assertNotIn("capabilities", value)  # No stale admission.
+                    process.command("logout", self.api)
+                    self.wait(lambda: process.status().get("state") == "signed_out" and not process.pending)
+                    self.assertTrue(self.server.revoked)
+                finally: process.cleanup()
+    def test_worker_refresh_revocation_clears_account(self):
+        process = CloudProcess(sys.executable)
+        try:
+            process.command("login", self.api)
+            self.wait(lambda: process.status().get("state") == "signed_in")
+            self.server.revoked = True
+            process.command("status", self.api)
+            value = self.wait(lambda: (v if (v := process.status()).get("state") == "error" else None))
+            self.assertFalse(value["signed_in"])
+            self.assertNotIn("email", value)
         finally: process.cleanup()
     def test_invalid_api_locations_and_environment_tokens_are_never_used(self):
         for value in ["http://evil.test/api/v1","https://user:secret@remi.test/api/v1","https://remi.test/api/v1?token=abc","https://remi.test/api/v1#secret","https://remi.test/other"]:

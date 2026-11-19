@@ -22,7 +22,12 @@
 
 The development branch includes browser/device sign-in and a Cloud generation
 client for Iris-3B Turbo images and Remi's custom NCM 3D model. The same Remi
-account authenticates website and Blender API requests. Public PAYG generation
+account authenticates website and Blender API requests. Open the **Remi Board**
+and click **Sign In** in its header, then **Open Sign-in Page** and approve the
+displayed code in your browser. Refresh and Sign Out live in the same popover.
+Authentication works independently of generation availability; the new Cloud
+backend must be deployed before the public server can accept this login.
+Public PAYG generation
 is not connected in this branch; the server must explicitly enable each operation.
 Retail pricing, Stripe enrollment and retention commitments are still under review.
 

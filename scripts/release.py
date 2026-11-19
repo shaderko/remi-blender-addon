@@ -44,6 +44,7 @@ TESTS = (
     "blender_generation_regression.py",
     "blender_image_generation_regression.py",
     "blender_cloud_generation_regression.py",
+    "blender_cloud_auth_regression.py",
     "blender_mesh_conversion_regression.py",
     "blender_workspace_ui_regression.py",
     "blender_board_assets_regression.py",
@@ -275,6 +276,9 @@ def installed_smoke(blender, artifact):
             env=environment)
         run(blender, "--background", "--factory-startup", "--python-exit-code", "1",
             "--python", ROOT / "tests" / "blender_installed_extension_smoke.py", env=environment)
+        run(blender, "--background", "--factory-startup", "--python-exit-code", "1",
+            "--python", ROOT / "tests" / "blender_cloud_auth_regression.py",
+            env=dict(environment, REMI_AUTH_INSTALLED_MODULE="bl_ext.user_default.remi"))
         environment["REMI_MESH_BAKE_INSTALLED"] = "1"
         run(blender, "--background", "--factory-startup", "--python-exit-code", "1",
             "--python", ROOT / "tests" / "blender_board_mesh_bake_regression.py", env=environment)

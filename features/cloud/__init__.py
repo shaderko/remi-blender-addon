@@ -78,7 +78,7 @@ def tick():
             state.message="Cloud polling stopped. Resume the saved request."
     if bpy.context.screen:
         for area in bpy.context.screen.areas:
-            if area.type=="VIEW_3D": area.tag_redraw()
+            if area.type in {"VIEW_3D", "IMAGE_EDITOR"}: area.tag_redraw()
     return 0.25 if runtime.pending or runtime.retired else 1.0
 
 
@@ -104,6 +104,7 @@ class Remi_OT_CloudRefresh(Operator):
         try: runtime.command("status",context.window_manager.remi_cloud.base_url)
         except (CloudError,RuntimeError,OSError) as error:
             self.report({"ERROR"},str(error)); return {"CANCELLED"}
+        context.window_manager.remi_cloud.busy = True
         return {"FINISHED"}
 
 
@@ -143,7 +144,7 @@ class Remi_PT_Cloud(Panel):
     bl_category = "Remi"
     bl_options = {"DEFAULT_CLOSED"}
 
-    def draw(self,context):
+    def draw_account(self,context):
         import textwrap
         state = context.window_manager.remi_cloud
         layout = self.layout
@@ -154,7 +155,8 @@ class Remi_PT_Cloud(Panel):
             layout.operator("remi.cloud_open_approval",icon="URL")
         row = layout.row(align=True)
         if state.busy:
-            row.operator("remi.cloud_stop_waiting" if state.request_path else "remi.cloud_logout",text="Stop Waiting" if state.request_path else "Cancel Sign-in")
+            if runtime.following: row.operator("remi.cloud_stop_waiting")
+            else: row.operator("remi.cloud_logout",text="Sign Out" if state.signed_in else "Cancel Sign-in")
         elif runtime.following:
             row.operator("remi.cloud_stop_waiting")
         elif state.signed_in:
@@ -165,6 +167,11 @@ class Remi_PT_Cloud(Panel):
         settings.enabled = not state.busy and not state.signed_in
         settings.prop(state,"base_url")
         layout.label(text="Sign-in lasts for this Blender session.",icon="INFO")
+
+    def draw(self,context):
+        self.draw_account(context)
+        state = context.window_manager.remi_cloud
+        layout = self.layout
         layout.separator()
         controls=layout.column()
         controls.enabled=not state.busy and not runtime.following
@@ -195,7 +202,18 @@ class Remi_PT_Cloud(Panel):
             layout.operator("wm.path_open",text="Open Request Folder",icon="FILE_FOLDER").filepath=str(Path(state.request_path).parent)
 
 
-CLASSES = (RemiCloudState,Remi_OT_CloudLogin,Remi_OT_CloudRefresh,Remi_OT_CloudLogout,Remi_OT_CloudOpenApproval,*JOB_CLASSES,Remi_PT_Cloud)
+class Remi_PT_BoardCloud(Panel):
+    bl_label = "Remi Cloud Account"
+    bl_idname = "Remi_PT_BoardCloud"
+    bl_space_type = "IMAGE_EDITOR"
+    bl_region_type = "HEADER"
+    bl_ui_units_x = 22
+
+    def draw(self, context):
+        Remi_PT_Cloud.draw_account(self, context)
+
+
+CLASSES = (RemiCloudState,Remi_OT_CloudLogin,Remi_OT_CloudRefresh,Remi_OT_CloudLogout,Remi_OT_CloudOpenApproval,*JOB_CLASSES,Remi_PT_Cloud,Remi_PT_BoardCloud)
 
 
 @persistent

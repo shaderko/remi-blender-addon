@@ -25,6 +25,19 @@ def main(directory):
     request_id = 0
     request_path = None
     caps = None
+    def connected(profile):
+        nonlocal caps
+        # Account authentication does not depend on the generation API being
+        # deployed. Forget stale admission flags before every discovery attempt.
+        caps = None
+        try:
+            caps = session.capabilities()
+        except CloudError:
+            message = "Signed in. Generation availability could not be checked. Refresh to retry."
+        else:
+            message = "Cloud connected." if caps["enabled"] else "Signed in. Cloud generation is not enabled on this server yet."
+        publish({"state":"signed_in", **profile, "message":message})
+
     def publish(value):
         # This file may contain public profile/code metadata, never a bearer,
         # secret device_code, raw HTTP body or exception traceback.
@@ -49,19 +62,19 @@ def main(directory):
                     if session is not None and session.base_url != command["base_url"]:
                         if not session.logout(): raise CloudError("Previous session revocation was not confirmed. Review your Remi Cloud sessions.")
                         session = None
+                        caps = None
                     session = session or CloudSession(command["base_url"])
                     profile = session.login(publish,lambda:stopping)
-                    caps = session.capabilities()
-                    publish({"state":"signed_in",**profile,"capabilities":caps,
-                             "message":"Cloud connected." if caps["enabled"] else "Signed in. Cloud generation is not enabled on this server yet."})
+                    connected(profile)
                 elif action == "status":
-                    if session is None: raise CloudError("Sign in to Remi Cloud first.")
+                    if session is None or session.base_url != command["base_url"]:
+                        raise CloudError("Sign in to the original Remi Cloud server first.")
                     profile = session.status()
-                    caps = session.capabilities()
-                    publish({"state":"signed_in",**profile,"capabilities":caps,"message":"Cloud connected." if caps["enabled"] else "Cloud generation is not enabled on this server yet."})
+                    connected(profile)
                 elif action == "logout":
                     revoked = session.logout() if session is not None else True
                     session = None
+                    caps = None
                     publish({"state":"signed_out","message":"Signed out." if revoked else "Local login cleared; server revocation was not confirmed. Review your Remi Cloud sessions."})
                 elif action in ("generate","resume","poll"):
                     if session is None or session.base_url != command["base_url"]:

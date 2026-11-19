@@ -33,7 +33,6 @@ workflow action.
 | Local image generation UI, gallery, and Iris worker | `features/images/`, `integrations/iris3b/` |
 | UV algorithms and native xatlas bridge | `features/uv/engine/` |
 | Bridge and inner-shell edit tools | `features/edit_tools/` |
-| Legacy operator compatibility only | `compat/` |
 
 The repository root is the Blender extension boundary. Keep Python
 implementation inside an owner package; root `__init__.py` should only delegate
@@ -78,11 +77,9 @@ the same feature service through the same session transaction as manual use.
 
 ## Stable external contracts
 
-Preserve published Blender operator IDs, scene properties, session recovery,
-and saved-file behavior when moving implementation. Internal Python module
-paths are not a public API and should not be preserved with root forwarding
-modules. Put intentionally retained legacy product behavior under `compat/`
-and test the user-visible contract through its canonical owner.
+Preserve scene properties, session recovery, and saved-file behavior when
+moving implementation. Internal Python module paths are not a public API and
+should not be preserved with root forwarding modules.
 
 ## Validation
 

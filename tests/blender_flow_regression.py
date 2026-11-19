@@ -1,4 +1,5 @@
 """Automatic flow integration: presets, real stages, interruption and recovery."""
+import importlib.util
 from pathlib import Path
 import copy
 import json
@@ -8,8 +9,17 @@ from unittest.mock import patch
 
 import bpy
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-import remi
+ROOT = Path(__file__).resolve().parents[1]
+if "remi" not in sys.modules:
+    spec = importlib.util.spec_from_file_location(
+        "remi", ROOT / "__init__.py", submodule_search_locations=[str(ROOT)]
+    )
+    remi = importlib.util.module_from_spec(spec)
+    sys.modules["remi"] = remi
+    spec.loader.exec_module(remi)
+else:
+    remi = sys.modules["remi"]
+
 from remi.app import flow
 from remi.app.application import get_application
 from remi.workflow.automatic import AutomaticFlow

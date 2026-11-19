@@ -10,7 +10,6 @@ from ..features import registration as feature_registration
 from ..features import settings
 from ..features import texture
 from ..features.retopology import instant_meshes
-from ..compat import registration as compatibility_registration
 from ..workflow import session
 from .application import (
     clear_application,
@@ -23,7 +22,6 @@ MODULES = (
     settings,
     instant_meshes,
     feature_registration,
-    compatibility_registration,
     session,
     flow,
     texture,

@@ -156,8 +156,6 @@ the geometry service itself still executes inside a normal session transaction.
 - `blender`: reusable object lifecycle and OBJ/PLY/GLB adapters.
 - `integrations`: the bundled PyMeshLab client and optional AutoRemesher client;
   the MeshLab subprocess worker lives with its client rather than at add-on root.
-- `compat`: operator IDs retained for older scripts and Blender files. The old
-  multi-object full pipeline lives here and is not part of the primary UI.
 - repository root: Blender entrypoint, extension manifest, and project metadata
   only; internal Python import paths are not preserved through forwarding files.
 

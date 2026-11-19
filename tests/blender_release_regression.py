@@ -178,32 +178,6 @@ def test_hybrid_repair_preserves_source():
     print("PASS non-destructive hybrid repair")
 
 
-def test_full_pipeline_dependency_preflight():
-    _clean_scene()
-    source = _cube("PreflightSource")
-    before = _source_state(source)
-    before_objects = tuple(obj.as_pointer() for obj in bpy.context.scene.objects)
-    settings = bpy.context.scene.remi_settings
-    settings.use_sdf_remesh = True
-    settings.use_decimation = True
-    settings.use_autoremesher = False
-    settings.use_baking = False
-    original_check = meshlab.ensure_pymeshlab
-    try:
-        meshlab.ensure_pymeshlab = lambda: False
-        try:
-            outcome = bpy.ops.remi.full_pipeline()
-        except RuntimeError as exc:
-            assert "bundled PyMeshLab" in str(exc)
-        else:
-            assert outcome == {"CANCELLED"}
-    finally:
-        meshlab.ensure_pymeshlab = original_check
-    assert _source_state(source) == before
-    assert tuple(obj.as_pointer() for obj in bpy.context.scene.objects) == before_objects
-    print("PASS dependency preflight runs before mesh changes")
-
-
 def test_standalone_decimation_preserves_source():
     if not meshlab.ensure_pymeshlab():
         print("SKIP source decimation: bundled wheel is exercised after extension installation")
@@ -243,7 +217,6 @@ try:
     test_targeted_patch_preserves_source()
     test_boundary_repair_preserves_source()
     test_hybrid_repair_preserves_source()
-    test_full_pipeline_dependency_preflight()
     test_standalone_decimation_preserves_source()
     test_dependency_message_is_actionable()
 finally:

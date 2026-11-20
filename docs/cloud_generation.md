@@ -1,3 +1,44 @@
+# Cloud generation in Blender — shared SDK update, 20 November 2026
+
+Beta.12 makes the signed-in board header's **Cloud Generate** popover the direct
+image/3D entry point. The 3D View sidebar also exposes **Remi → Remi Cloud**.
+Choose Image (prompt and dimensions) or 3D (input image and Gaussian count), set
+Maximum EUR and an output folder, then **Generate on Cloud**. **Import Cloud
+Result** loads verified PNG/native Gaussian data only on an explicit action.
+The separate board/local generation actions still use local compute.
+
+The add-on's isolated process imports the reusable SDK snapshot at
+`integrations/remi_cloud/sdk`. Shared `embedded.CloudSession` owns device login,
+revocation/capability/API transport; shared `workflow.CloudRequest` owns frozen
+inputs, upload/job idempotency, polling, recovery and output validation. The
+add-on's `protocol.py` only selects the registered `remi-blender` device identity;
+`jobs.py` is a compatibility alias. No duplicate HTTP/recovery logic remains in
+the adapter. `contract` imports alias the same SDK model/error classes.
+
+The SDK source of truth is the Cloud repo's `sdks/python/src/remi_cloud`.
+`tools/dev/sync_addon_sdk.py /path/to/remi --check` verifies byte identity, and
+the release script verifies every SDK source hash in `sdk/provenance.json`.
+The embedded core needs only Python's standard library; no user pip/CLI login,
+httpx/keyring dependency or Modal/Stripe credential is needed inside Blender.
+Device/account tokens stay only in the isolated process's memory, never .blend,
+logs or request files. Existing validation/recovery safeguards are retained.
+
+For the current isolated manual test, the Cloud base is
+`http://127.0.0.1:5173/api/v1`. Use the local browser account and one-time
+synthetic test-entitlement setup on `http://127.0.0.1:5173/api/manual-test`.
+This is test billing without card charges, with two real GPU jobs across all
+clients; the updated add-on checks did not consume either slot. The hosted
+paid launch remains gated. The default public URL remains unchanged.
+
+Checks passed: shared SDK tests; 33 add-on HTTP/process tests; Blender 5.3
+account/popover and image/native-generation/import/recovery regressions; real
+Better Auth/PostgreSQL/backend interop with synthetic provider responses and
+archived GPU bytes; package build/validation and temporary-profile installed
+account/native/board checks. No new real GPU execution, production deployment,
+or automatic replacement of a user's running add-on was performed.
+
+---
+
 # Blender Cloud authentication and generation candidate
 
 Consolidated on `codex/cloud-auth-cleanup`, based on `cleanup/5.3-only`, 19 November 2026. This build requires Blender 5.3 with native Gaussian clouds. It retains the board UI, adaptive retopology and generation work inherited through `design/ui-shell`. See [branch consolidation and validation](cloud_auth_consolidation.md).

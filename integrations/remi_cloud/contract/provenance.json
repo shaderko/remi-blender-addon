@@ -2,8 +2,9 @@
   "source": "remi-cloud-app/sdks/python/src/remi_cloud",
   "apiVersion": "v1",
   "sdkVersion": "0.1.0a2",
+  "compatibilityAliases": true,
   "files": {
-    "models.py": "34199cb08938c8fd7a7bd8c34b1d052f97c5f07bdc47c2f5c23ca4163a4abbe9",
-    "errors.py": "7a3c6c605e5e8c0b04770d5d5238fb3fab404adce638d1b503e6ed5eed559d08"
+    "models.py": "1f87e30c7262e59fa8cf057846d237734a5c2ae97e4a298d4dcaa3dba1b9ddb4",
+    "errors.py": "0cbffaecec35345b3983bcac3e2f294c36e056673f2260f56a59533aee53701d"
   }
 }

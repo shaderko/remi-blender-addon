@@ -226,13 +226,18 @@ def verify_archive(artifact, target):
             raise RuntimeError("Archive is missing the docked generation workspace")
         cloud_required={"features/cloud/__init__.py","features/cloud/jobs.py",
             *{f"integrations/remi_cloud/{name}.py" for name in ("protocol","client","worker","jobs")},
-            *{f"integrations/remi_cloud/contract/{name}" for name in ("__init__.py","models.py","errors.py","provenance.json")}}
+            *{f"integrations/remi_cloud/contract/{name}" for name in ("__init__.py","models.py","errors.py","provenance.json")},
+            *{f"integrations/remi_cloud/sdk/{name}" for name in ("__init__.py","_version.py","models.py","errors.py","embedded.py","workflow.py","provenance.json")}}
         if not cloud_required.issubset(archive.namelist()):
             raise RuntimeError("Archive is missing the authenticated Cloud client")
         cloud_source=json.loads(archive.read("integrations/remi_cloud/contract/provenance.json"))
         for name,expected in cloud_source["files"].items():
             if hashlib.sha256(archive.read("integrations/remi_cloud/contract/"+name)).hexdigest()!=expected:
                 raise RuntimeError("Cloud response-validator source hash mismatch")
+        sdk_source=json.loads(archive.read("integrations/remi_cloud/sdk/provenance.json"))
+        for name,expected in sdk_source["files"].items():
+            if hashlib.sha256(archive.read("integrations/remi_cloud/sdk/"+name)).hexdigest()!=expected:
+                raise RuntimeError("Bundled Remi SDK source hash mismatch")
         if any(name.startswith("scripts/") or name.lower().endswith("spirula.exe") for name in archive.namelist()):
             raise RuntimeError("Developer scripts and external surface executables must not be bundled")
         if any(name.endswith((".nbc", ".nbi")) for name in archive.namelist()):

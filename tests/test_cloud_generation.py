@@ -141,8 +141,14 @@ class CloudGenerationTests(unittest.TestCase):
             time.sleep(.01)
         self.fail("Timed out waiting for the owned Cloud fixture")
     def test_shared_sdk_response_validators_are_pinned_and_unmodified(self):
-        root=ROOT/"integrations/remi_cloud/contract";source=json.loads((root/"provenance.json").read_text())
+        root=ROOT/"integrations/remi_cloud/sdk";source=json.loads((root/"provenance.json").read_text())
         for name,expected in source["files"].items():self.assertEqual(sha((root/name).read_bytes()),expected)
+    def test_addon_uses_the_shared_sdk_workflow_and_thin_session_adapter(self):
+        from integrations.remi_cloud.sdk.embedded import CloudSession as SdkSession
+        from integrations.remi_cloud.sdk.workflow import CloudRequest as SdkRequest
+        self.assertIs(CloudRequest, SdkRequest)
+        self.assertIsInstance(self.session, SdkSession)
+        self.assertEqual(self.session.client_id, "remi-blender")
     def test_image_request_download_and_pending_bill_use_only_authenticated_remi_api(self):
         work=self.create();self.assertEqual(work.submit()["state"],"job_running")
         result=work.poll();self.assertEqual(result["state"],"job_ready");self.assertIsNone(result["billing"]["actual_cost_micros"])

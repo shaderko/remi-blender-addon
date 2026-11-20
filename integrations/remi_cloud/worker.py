@@ -8,7 +8,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from protocol import CloudError, CloudSession
 from jobs import CloudRequest
-from contract.errors import ProtocolError
+from sdk.errors import ProtocolError
 
 stopping = False
 

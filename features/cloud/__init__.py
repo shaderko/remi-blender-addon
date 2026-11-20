@@ -169,7 +169,7 @@ class Remi_PT_Cloud(Panel):
         layout.label(text="Sign-in lasts for this Blender session.",icon="INFO")
 
     def draw(self,context):
-        self.draw_account(context)
+        Remi_PT_Cloud.draw_account(self,context)
         state = context.window_manager.remi_cloud
         layout = self.layout
         layout.separator()
@@ -203,14 +203,18 @@ class Remi_PT_Cloud(Panel):
 
 
 class Remi_PT_BoardCloud(Panel):
-    bl_label = "Remi Cloud Account"
+    bl_label = "Remi Cloud Generation"
     bl_idname = "Remi_PT_BoardCloud"
     bl_space_type = "IMAGE_EDITOR"
     bl_region_type = "HEADER"
-    bl_ui_units_x = 22
+    bl_ui_units_x = 26
 
     def draw(self, context):
-        Remi_PT_Cloud.draw_account(self, context)
+        state = context.window_manager.remi_cloud
+        if state.signed_in and state.generation_enabled:
+            Remi_PT_Cloud.draw(self, context)
+        else:
+            Remi_PT_Cloud.draw_account(self, context)
 
 
 CLASSES = (RemiCloudState,Remi_OT_CloudLogin,Remi_OT_CloudRefresh,Remi_OT_CloudLogout,Remi_OT_CloudOpenApproval,*JOB_CLASSES,Remi_PT_Cloud,Remi_PT_BoardCloud)

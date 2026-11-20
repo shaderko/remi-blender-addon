@@ -1,0 +1,13 @@
+{
+  "source": "remi-cloud-app/sdks/python/src/remi_cloud",
+  "apiVersion": "v1",
+  "sdkVersion": "0.1.0a2",
+  "files": {
+    "__init__.py": "c5c07295bb1af5b178547de99464ebddda9bb37810e2345907af78923dc49ab8",
+    "_version.py": "3150b7c46f54f0a5d74e267614c67d01101200957603e42eed4725884f8dfe12",
+    "models.py": "34199cb08938c8fd7a7bd8c34b1d052f97c5f07bdc47c2f5c23ca4163a4abbe9",
+    "errors.py": "7a3c6c605e5e8c0b04770d5d5238fb3fab404adce638d1b503e6ed5eed559d08",
+    "embedded.py": "9b75e5be5ef20ce4edffa27f099398399fa13c3a20412a97aac2a6ce44dd70a5",
+    "workflow.py": "33bea0cc3af86ce6ec591c3264842606f0f1bdee6254a899d117de100db8247f"
+  }
+}

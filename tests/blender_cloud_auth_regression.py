@@ -87,6 +87,18 @@ try:
     cloud.Remi_PT_BoardCloud.draw(SimpleNamespace(layout=layout), bpy.context)
     assert {"remi.cloud_refresh", "remi.cloud_logout"} <= set(layout.actions)
     assert not any("generate" in action for action in layout.actions)
+    fixture.server.capabilities_enabled = True
+    fixture.server.capabilities_fault = None
+    assert bpy.ops.remi.cloud_refresh() == {"FINISHED"}
+    wait(lambda: not state.busy)
+    assert state.generation_enabled
+    layout = Layout()
+    cloud.Remi_PT_BoardCloud.draw(SimpleNamespace(layout=layout), bpy.context)
+    assert "remi.cloud_generate" in layout.actions
+    layout = Layout()
+    with patch.object(canvas, "BOARD", SimpleNamespace()), patch.object(canvas, "board_area", return_value=bpy.context.area):
+        canvas.draw_board_header(SimpleNamespace(layout=layout), bpy.context)
+    assert any(p["panel"] == "Remi_PT_BoardCloud" and p["text"] == "Cloud Generate" for p in layout.panels)
     fixture.server.revoked = True
     assert bpy.ops.remi.cloud_refresh() == {"FINISHED"}
     wait(lambda: not state.busy)

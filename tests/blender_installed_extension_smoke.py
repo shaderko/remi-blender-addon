@@ -35,6 +35,13 @@ assert hasattr(bpy.ops.remi, "generate_image")
 assert hasattr(bpy.ops.remi, "download_iris")
 assert (iris_worker.VENDOR / "iris3b" / "config.py").is_file()
 assert image_panel.gallery is not None
+embedded_sdk = importlib.import_module(module_name + ".integrations.remi_cloud.sdk")
+cloud_adapter = importlib.import_module(module_name + ".integrations.remi_cloud.protocol")
+cloud_requests = importlib.import_module(module_name + ".integrations.remi_cloud.jobs")
+assert issubclass(cloud_adapter.CloudSession, embedded_sdk.CloudSession)
+assert cloud_requests.CloudRequest is embedded_sdk.CloudRequest
+assert importlib.import_module(module_name + ".features.cloud").Remi_PT_BoardCloud.bl_label == "Remi Cloud Generation"
+print("REMI_INSTALLED_SHARED_CLOUD_SDK_OK")
 print("REMI_INSTALLED_IRIS_IMAGES_OK")
 board_canvas = importlib.import_module(module_name + ".features.board.canvas")
 board_workspace = importlib.import_module(module_name + ".features.board.workspace")

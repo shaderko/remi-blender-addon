@@ -3588,7 +3588,7 @@ def draw_board_header(self, context):
     row.operator("remi_board.add_object", text="", icon="OUTLINER_OB_MESH")
     row.popover(panel="Remi_PT_ImageSettings", text="", icon="PREFERENCES")
     cloud = context.window_manager.remi_cloud
-    row.popover(panel="Remi_PT_BoardCloud", text="Cloud Generate" if cloud.signed_in else "Sign In",
+    row.popover(panel="Remi_PT_BoardCloud", text="Account" if cloud.signed_in else "Sign In",
                 icon="USER" if cloud.signed_in else "URL")
     row.operator("screen.screen_full_area", text="", icon="FULLSCREEN_ENTER")
     self.layout.separator()

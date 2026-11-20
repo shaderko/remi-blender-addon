@@ -52,7 +52,7 @@ class Layout:
     def label(self, **kwargs): self.labels.append(kwargs.get("text", ""))
     def operator(self, name, **_kwargs): self.actions.append(name)
     def popover(self, **kwargs): self.panels.append(kwargs)
-    def prop(self, *_args): pass
+    def prop(self, *_args, **_kwargs): pass
     def separator(self): pass
 
 
@@ -94,11 +94,11 @@ try:
     assert state.generation_enabled
     layout = Layout()
     cloud.Remi_PT_BoardCloud.draw(SimpleNamespace(layout=layout), bpy.context)
-    assert "remi.cloud_generate" in layout.actions
+    assert "remi.cloud_generate" not in layout.actions
     layout = Layout()
     with patch.object(canvas, "BOARD", SimpleNamespace()), patch.object(canvas, "board_area", return_value=bpy.context.area):
         canvas.draw_board_header(SimpleNamespace(layout=layout), bpy.context)
-    assert any(p["panel"] == "Remi_PT_BoardCloud" and p["text"] == "Cloud Generate" for p in layout.panels)
+    assert any(p["panel"] == "Remi_PT_BoardCloud" and p["text"] == "Account" for p in layout.panels)
     fixture.server.revoked = True
     assert bpy.ops.remi.cloud_refresh() == {"FINISHED"}
     wait(lambda: not state.busy)

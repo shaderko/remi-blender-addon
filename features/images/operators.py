@@ -108,9 +108,10 @@ class _JobOperator:
         if runtime.job is None:
             return {"CANCELLED"}
         if runtime.cancel_requested or (event.type == "ESC" and event.value == "PRESS"):
+            api = getattr(runtime.job, "backend", "LOCAL") == "API"
             runtime.stop()
             state.progress = 0.0
-            state.status = f"{self.label} cancelled. Completed files are kept."
+            state.status = "Stopped waiting. The API job continues; resume it from Account." if api else f"{self.label} cancelled. Completed files are kept."
             state.status_kind = "CANCELLED"
             return {"CANCELLED"}
         if event.type != "TIMER":
@@ -149,7 +150,7 @@ class _JobOperator:
 class Remi_OT_GenerateImage(_JobOperator, Operator):
     bl_idname = "remi.generate_image"
     bl_label = "Generate Image"
-    bl_description = "Generate a concept image locally with Iris-3B"
+    bl_description = "Generate a concept image with Iris-3B using the selected Local or API backend"
     bl_options = {"REGISTER"}
 
     @classmethod
@@ -165,22 +166,26 @@ class Remi_OT_GenerateImage(_JobOperator, Operator):
             return {"CANCELLED"}
         try:
             width, height = dimensions(settings)
-            job = IrisJob.start(
-                python=_python(context),
-                models=bpy.path.abspath(settings.models),
-                output=bpy.path.abspath(settings.output),
-                variant=settings.model,
-                prompt=settings.prompt,
-                negative_prompt=settings.negative_prompt if settings.model == "base" else "",
-                width=width,
-                height=height,
-                steps=settings.steps,
-                cfg_scale=float(settings.cfg_scale),
-                seed=settings.seed,
-                count=settings.count,
-                memory_mode=settings.memory_mode,
-                cache_minutes=settings.cache_minutes,
-            )
+            from ..cloud.generation import is_api, start_image
+            if is_api(context):
+                job = start_image(context)
+            else:
+                job = IrisJob.start(
+                    python=_python(context),
+                    models=bpy.path.abspath(settings.models),
+                    output=bpy.path.abspath(settings.output),
+                    variant=settings.model,
+                    prompt=settings.prompt,
+                    negative_prompt=settings.negative_prompt if settings.model == "base" else "",
+                    width=width,
+                    height=height,
+                    steps=settings.steps,
+                    cfg_scale=float(settings.cfg_scale),
+                    seed=settings.seed,
+                    count=settings.count,
+                    memory_mode=settings.memory_mode,
+                    cache_minutes=settings.cache_minutes,
+                )
             self._start_modal(context, job, "Starting Iris worker…")
         except Exception as exc:
             runtime.stop()

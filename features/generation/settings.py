@@ -57,6 +57,10 @@ def _cache_changed(self, context):
 
 
 class RemiGenerationSettings(PropertyGroup):
+    backend: EnumProperty(name="Run Generation", items=[
+        ("LOCAL", "Local", "Run the selected model on this computer"),
+        ("API", "API", "Run the same model through your signed-in Remi Cloud account"),
+    ], default="LOCAL")
     image: StringProperty(name="Image", subtype="FILE_PATH")
     python: StringProperty(
         name="Python", subtype="FILE_PATH", default=default_python(),

@@ -40,7 +40,9 @@ cloud_adapter = importlib.import_module(module_name + ".integrations.remi_cloud.
 cloud_requests = importlib.import_module(module_name + ".integrations.remi_cloud.jobs")
 assert issubclass(cloud_adapter.CloudSession, embedded_sdk.CloudSession)
 assert cloud_requests.CloudRequest is embedded_sdk.CloudRequest
-assert importlib.import_module(module_name + ".features.cloud").Remi_PT_BoardCloud.bl_label == "Remi Cloud Generation"
+assert importlib.import_module(module_name + ".features.cloud").Remi_PT_BoardCloud.bl_label == "Remi Account"
+assert bpy.context.scene.remi_generation.backend == "LOCAL"
+assert callable(importlib.import_module(module_name + ".features.cloud.generation").start_image)
 print("REMI_INSTALLED_SHARED_CLOUD_SDK_OK")
 print("REMI_INSTALLED_IRIS_IMAGES_OK")
 board_canvas = importlib.import_module(module_name + ".features.board.canvas")

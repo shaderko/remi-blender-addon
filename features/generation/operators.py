@@ -99,7 +99,7 @@ def can_generate(context):
 class Remi_OT_GenerateSplats(Operator):
     bl_idname = "remi.generate_splats"
     bl_label = "Generate from Image"
-    bl_description = "Generate native Gaussian splats locally with the selected model"
+    bl_description = "Generate native Gaussian splats using the selected Local or API backend"
     bl_options = {"REGISTER", "UNDO"}
 
     image_path: StringProperty(
@@ -121,20 +121,24 @@ class Remi_OT_GenerateSplats(Operator):
         try:
             if not image or not Path(image).is_file():
                 raise ValueError("Choose an image first")
-            if not settings.output or not settings.models:
-                raise ValueError("Choose a model folder and output folder in Create settings")
-            runtime.job = GenerationJob.start(
-                python=bpy.path.abspath(settings.python) if settings.python else default_python(),
-                models=bpy.path.abspath(settings.models),
-                image=image, output=bpy.path.abspath(settings.output),
-                gaussians=int(settings.gaussians), seed=settings.seed,
-                model=settings.model,
-                steps=settings.triposplat_steps,
-                guidance=settings.triposplat_guidance,
-                shift=settings.triposplat_shift,
-                cache_minutes=int(settings.model_cache_minutes),
-                cache_dir=Path(bpy.app.tempdir or tempfile.gettempdir()) / "remi-generation-cache",
-            )
+            from ..cloud.generation import is_api, start_3d
+            if not settings.output or (not is_api(context) and not settings.models):
+                raise ValueError("Choose an output folder and, for Local, a model folder in Create settings")
+            if is_api(context):
+                runtime.job = start_3d(context, image=image, output=bpy.path.abspath(settings.output))
+            else:
+                runtime.job = GenerationJob.start(
+                    python=bpy.path.abspath(settings.python) if settings.python else default_python(),
+                    models=bpy.path.abspath(settings.models),
+                    image=image, output=bpy.path.abspath(settings.output),
+                    gaussians=int(settings.gaussians), seed=settings.seed,
+                    model=settings.model,
+                    steps=settings.triposplat_steps,
+                    guidance=settings.triposplat_guidance,
+                    shift=settings.triposplat_shift,
+                    cache_minutes=int(settings.model_cache_minutes),
+                    cache_dir=Path(bpy.app.tempdir or tempfile.gettempdir()) / "remi-generation-cache",
+                )
             runtime.manager = context.window_manager
             runtime.timer = runtime.manager.event_timer_add(0.25, window=context.window)
             runtime.cancel_requested = False
@@ -168,17 +172,20 @@ class Remi_OT_GenerateSplats(Operator):
         if runtime.job is None:
             return {"CANCELLED"}
         if runtime.cancel_requested or (event.type == "ESC" and event.value == "PRESS"):
+            api = getattr(runtime.job, "backend", "LOCAL") == "API"
             runtime.stop()
             state.busy = False
             state.progress = 0.0
-            state.status = "Cancelled. Logs and any completed files are kept in Output Folder."
+            state.status = "Stopped waiting. The API job continues; resume it from Account." if api else "Cancelled. Logs and any completed files are kept in Output Folder."
             state.status_kind = "CANCELLED"
             return {"CANCELLED"}
         if event.type != "TIMER":
             return {"PASS_THROUGH"}
-        phase = runtime.job.status().get("phase", "Generating")
-        state.status = _progress_label(phase)
-        state.progress = _progress_fraction(phase)
+        update = runtime.job.status()
+        phase = update.get("phase", "Generating")
+        api = getattr(runtime.job, "backend", "LOCAL") == "API"
+        state.status = phase if api else _progress_label(phase)
+        state.progress = float(update.get("progress", 0)) if api else _progress_fraction(phase)
         if context.area:
             context.area.tag_redraw()
         if runtime.job.poll() is None:

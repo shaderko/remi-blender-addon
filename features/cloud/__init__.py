@@ -30,7 +30,7 @@ class RemiCloudState(PropertyGroup):
     width: IntProperty(name="Width",default=1024,min=256,max=1024,step=16,options={"SKIP_SAVE"})
     height: IntProperty(name="Height",default=1024,min=256,max=1024,step=16,options={"SKIP_SAVE"})
     gaussians: EnumProperty(name="Gaussians",items=[(str(n),f"{n:,}","Native Gaussian count") for n in (32768,65536,131072,262144)],default="65536",options={"SKIP_SAVE"})
-    max_cost_eur: StringProperty(name="Maximum EUR",description="Required spending cap for this request; the server sets the actual reservation and price",options={"SKIP_SAVE"})
+    max_cost_eur: StringProperty(name="Maximum EUR",default="1.00",description="Required spending cap for this request; the server sets the actual reservation and price",options={"SKIP_SAVE"})
     output: StringProperty(name="Output Folder",subtype="DIR_PATH",options={"SKIP_SAVE"})
     request_path: StringProperty(name="Saved Request",subtype="FILE_PATH",options={"SKIP_SAVE"})
     output_path: StringProperty(options={"SKIP_SAVE"})
@@ -154,6 +154,8 @@ class Remi_PT_Cloud(Panel):
             layout.label(text=f"Code: {state.user_code[:4]}-{state.user_code[4:]}")
             layout.operator("remi.cloud_open_approval",icon="URL")
         row = layout.row(align=True)
+        generation_active = context.window_manager.remi_generation.busy or context.window_manager.remi_image.busy
+        row.enabled = not generation_active
         if state.busy:
             if runtime.following: row.operator("remi.cloud_stop_waiting")
             else: row.operator("remi.cloud_logout",text="Sign Out" if state.signed_in else "Cancel Sign-in")
@@ -171,50 +173,24 @@ class Remi_PT_Cloud(Panel):
     def draw(self,context):
         Remi_PT_Cloud.draw_account(self,context)
         state = context.window_manager.remi_cloud
-        layout = self.layout
-        layout.separator()
-        controls=layout.column()
-        controls.enabled=not state.busy and not runtime.following
-        controls.prop(state,"operation")
-        controls.label(text="Iris-3B Turbo" if state.operation=="generate_image" else "Custom NCM · native Gaussians")
-        if state.operation=="generate_image":
-            controls.prop(state,"prompt")
-            size=controls.row(align=True);size.prop(state,"width");size.prop(state,"height")
-        else:
-            controls.prop(state,"image")
-            controls.prop(state,"gaussians")
-        controls.prop(state,"seed")
-        controls.prop(state,"max_cost_eur")
-        controls.prop(state,"output")
-        controls.operator("remi.cloud_generate",icon="PLAY")
-        if state.signed_in and not state.generation_enabled:
-            controls.label(text="Cloud generation is unavailable on this server.",icon="INFO")
-        if state.job_id: layout.label(text="Cloud job: "+state.job_id)
-        if state.billing_message: layout.label(text=state.billing_message,icon="INFO")
-        if runtime.following: layout.progress(factor=state.progress,type="BAR",text="Cloud generation")
-        if state.output_path: layout.operator("remi.cloud_import",icon="IMPORT")
-        controls.prop(state,"request_path")
-        controls.operator("remi.cloud_resume",icon="FILE_REFRESH")
-        if state.request_path:
-            if state.request_path!=runtime.completed_request and not runtime.following:
-                layout.label(text="Resume this request before creating another.",icon="INFO")
-            layout.label(text="Stop Waiting does not cancel Cloud work.",icon="INFO")
-            layout.operator("wm.path_open",text="Open Request Folder",icon="FILE_FOLDER").filepath=str(Path(state.request_path).parent)
+        generation_active = context.window_manager.remi_generation.busy or context.window_manager.remi_image.busy
+        if state.signed_in and not generation_active:
+            self.layout.prop(state, "request_path", text="Saved API Request")
+        if not generation_active and state.request_path and state.request_path != runtime.completed_request:
+            self.layout.operator("remi.cloud_resume", text="Resume API Request", icon="FILE_REFRESH")
+        if state.job_id and state.billing_message:
+            self.layout.label(text=state.billing_message, icon="INFO")
 
 
 class Remi_PT_BoardCloud(Panel):
-    bl_label = "Remi Cloud Generation"
+    bl_label = "Remi Account"
     bl_idname = "Remi_PT_BoardCloud"
     bl_space_type = "IMAGE_EDITOR"
     bl_region_type = "HEADER"
     bl_ui_units_x = 26
 
     def draw(self, context):
-        state = context.window_manager.remi_cloud
-        if state.signed_in and state.generation_enabled:
-            Remi_PT_Cloud.draw(self, context)
-        else:
-            Remi_PT_Cloud.draw_account(self, context)
+        Remi_PT_Cloud.draw(self, context)
 
 
 CLASSES = (RemiCloudState,Remi_OT_CloudLogin,Remi_OT_CloudRefresh,Remi_OT_CloudLogout,Remi_OT_CloudOpenApproval,*JOB_CLASSES,Remi_PT_Cloud,Remi_PT_BoardCloud)

@@ -1,5 +1,8 @@
 # Cloud authentication consolidation — 19 November 2026
 
+Historical consolidation record. Current generation uses the existing Local/API
+controls described in [generation](cloud_generation.md).
+
 Development branch: `codex/cloud-auth-cleanup`. Base: `cleanup/5.3-only`
 at `d48faeaef1b44b5978e80f9bc18ead00bad47dbc`.
 

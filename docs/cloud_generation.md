@@ -1,76 +1,44 @@
-# Cloud generation in Blender — shared SDK update, 20 November 2026
+# Generation through Local or API
 
-Beta.12 makes the signed-in board header's **Cloud Generate** popover the direct
-image/3D entry point. The 3D View sidebar also exposes **Remi → Remi Cloud**.
-Choose Image (prompt and dimensions) or 3D (input image and Gaussian count), set
-Maximum EUR and an output folder, then **Generate on Cloud**. **Import Cloud
-Result** loads verified PNG/native Gaussian data only on an explicit action.
-The separate board/local generation actions still use local compute.
+Beta.13 uses the existing image and 3D generation controls for both backends.
+Open the existing settings gear and choose **Local** or **API** under **Run
+Generation**. The selection applies to image generation and the board's 3D
+queue. Model, seed, Gaussian count, image size, image count and output settings
+stay in their existing places. Switching backends preserves those settings.
+Local Python/model downloads and cache controls appear only in Local mode.
 
-The add-on's isolated process imports the reusable SDK snapshot at
-`integrations/remi_cloud/sdk`. Shared `embedded.CloudSession` owns device login,
-revocation/capability/API transport; shared `workflow.CloudRequest` owns frozen
-inputs, upload/job idempotency, polling, recovery and output validation. The
-add-on's `protocol.py` only selects the registered `remi-blender` device identity;
-`jobs.py` is a compatibility alias. No duplicate HTTP/recovery logic remains in
-the adapter. `contract` imports alias the same SDK model/error classes.
+For API generation, sign in through the board header's **Account** menu using
+`https://remi3d.app/api/v1`, then use the normal **Create Image** or **Generate
+3D** action. There is no separate Cloud generation form. Results use the same
+image gallery and ready 3D cards/native import path as local results.
 
-The SDK source of truth is the Cloud repo's `sdks/python/src/remi_cloud`.
-`tools/dev/sync_addon_sdk.py /path/to/remi --check` verifies byte identity, and
-the release script verifies every SDK source hash in `sdk/provenance.json`.
-The embedded core needs only Python's standard library; no user pip/CLI login,
-httpx/keyring dependency or Modal/Stripe credential is needed inside Blender.
-Device/account tokens stay only in the isolated process's memory, never .blend,
-logs or request files. Existing validation/recovery safeguards are retained.
+The currently deployed API runs Iris-3B Turbo and the custom Remi NCM model.
+Image requests currently accept up to 1024 pixels per side. Unsupported model
+or size choices fail before submission rather than silently changing the model
+or dimensions. Multiple images submit sequentially with incrementing seeds.
+The per-job EUR ceiling defaults to 1.00; the server owns actual reservations
+and billing. It is a spending limit, not a quoted generation price.
 
-For the current isolated manual test, the Cloud base is
-`http://127.0.0.1:5173/api/v1`. Use the local browser account and one-time
-synthetic test-entitlement setup on `http://127.0.0.1:5173/api/manual-test`.
-This is test billing without card charges, with two real GPU jobs across all
-clients; the updated add-on checks did not consume either slot. The hosted
-paid launch remains gated. The default public URL remains unchanged.
+**Stop Waiting does not cancel an accepted API job.** Work continues on the
+server. Its durable request folder retains frozen inputs and original request
+keys. In Account, select the saved `request.json` and use **Resume API Request**
+to recover interrupted work. Completed results and source files stay on disk.
+No automatic deletion is introduced.
 
-Checks passed: shared SDK tests; 33 add-on HTTP/process tests; Blender 5.3
-account/popover and image/native-generation/import/recovery regressions; real
-Better Auth/PostgreSQL/backend interop with synthetic provider responses and
-archived GPU bytes; package build/validation and temporary-profile installed
-account/native/board checks. No new real GPU execution, production deployment,
-or automatic replacement of a user's running add-on was performed.
+The add-on delegates authentication, HTTP, request identity, upload, polling,
+recovery and verified downloads to the shared Python SDK snapshot at
+`integrations/remi_cloud/sdk`. The canonical source is the Cloud repository's
+`sdks/python/src/remi_cloud`; `tools/dev/sync_addon_sdk.py /path/to/remi --check`
+checks exact byte identity. Release validation checks its provenance hashes.
 
----
+Device credentials stay in the isolated helper process's memory, outside
+`.blend`, request journals, logs and process arguments. Blender needs no Modal
+or Stripe credential and no inference Python for API requests. On macOS,
+embedded Python without default certificate roots loads the trusted host CA
+bundle while retaining certificate and hostname verification.
 
-# Blender Cloud authentication and generation candidate
-
-Consolidated on `codex/cloud-auth-cleanup`, based on `cleanup/5.3-only`, 19 November 2026. This build requires Blender 5.3 with native Gaussian clouds. It retains the board UI, adaptive retopology and generation work inherited through `design/ui-shell`. See [branch consolidation and validation](cloud_auth_consolidation.md).
-
-Open the **Remi Board** and click **Sign In** in its header. Start sign-in, click **Open Sign-in Page**, and approve the matching code using your existing Remi account. The same popover shows your account, **Refresh**, and **Sign Out**. The viewport's **Remi Cloud** panel also retains these controls and the experimental generation/recovery controls.
-
-Login lasts only for this Blender process; credentials stay in the isolated network worker's memory. No session or provider credential is saved in `.blend`, request files, process arguments or the child environment. Logging out revokes the device session without logging out the approving browser. Stopping a busy worker may leave revocation unconfirmed; review account sessions if needed. Loading another `.blend` or disabling the add-on clears the connection.
-
-Account login and refresh succeed when generation is disabled. Missing, malformed or unreachable generation capabilities leave the authenticated profile visible, disable new generation, and offer Refresh to retry. Revoked sessions clear the profile. The new Cloud backend is **not deployed**; local proof does not imply the public default URL accepts device login yet. Public PAYG generation is disconnected and this client cannot enable it, create an entitlement or select a provider price. Local board generation remains separate.
-
-For local development, use the frontend proxy's public URL (normally `http://localhost:5173/api/v1`), matching the backend's `REMI_CLI_VERIFICATION_URL` origin. The client intentionally rejects approval links on another origin. HTTP is accepted only on loopback; other servers require HTTPS. No backend configuration is changed by this add-on.
-
-Once the server enables generation:
-
-1. Select image (Iris-3B Turbo) or 3D (custom `rand6_100_ncm` native Gaussians). Supply a prompt or one local PNG/JPEG/WebP, seed and supported output settings.
-2. Choose an existing output folder and enter a positive EUR spending cap. There is no default price/cap. The backend validates access and inputs, sets its reservation from the accepted engine/price and owns execution and billing.
-3. Generate. The private `remi-cloud-<id>/request.json` folder holds the frozen input/settings, exact request and original upload/job keys. Keep it intact. Polling checks only the accepted job; it cannot submit another generation.
-4. Use **Import Cloud Result** after verified download. Images are fully decoded by Blender; 3D imports preserve native Gaussian attributes. Import is explicit and does not replace existing scene objects. Source/result files remain in the chosen folder.
-5. After interruption, sign in to the original server/account, select that `request.json`, then **Resume Saved Request**. If acceptance was uncertain, this explicit action resends only the original bytes/keys. A known job resumes with reads and download, even if new compute admission is disabled.
-
-**Stop Waiting does not cancel Cloud work.** Its reservation remains authoritative on the server. There is no client promise of a refund, release or provider termination. New submission is blocked in this panel while the displayed request is unresolved; resume it first. Closing/reloading Blender drops the local session and leaves the durable request/output folder intact.
-
-A successful output can have pending billing: the final amount remains unknown and the original spending hold stays reserved. The client distinguishes pending, settled usage and confirmed no-charge outcomes. Missing billing from an older response stays unknown. A settled usage amount is not proof of card collection. Full provider-billed GPU allocation, including startup and idle, is the selected policy; duration evidence, retail rates and Stripe eligibility still gate activation.
-
-## Local recovery and security boundary
-
-The stdlib worker uses only Remi's versioned authenticated API. Signed artifact downloads receive no bearer, cookies or proxy credentials and reject redirects. Remote filenames never become local paths. Downloads are bounded, checked by size/SHA-256 and validated for the selected PNG/native format before atomic no-clobber publication. Existing different bytes and symlinks are rejected. Request facts use private files, checksum envelopes, `fsync` and no-clobber writes. Checksums detect changes; they do not authenticate an attacker-controlled local journal. POSIX permissions are enforced; Windows ACL behavior and network filesystems need deployed/platform verification. There is no automatic local cleanup or selected server retention promise.
-
-Response validators are exact stdlib copies of `remi-cloud-app/sdks/python/src/remi_cloud/{models,errors}.py`; their SHA-256 values and SDK/API versions are recorded in `integrations/remi_cloud/contract/provenance.json` and verified during tests and archive validation. No `httpx`, keyring, Modal SDK, runtime pip installation or inference environment is needed for Cloud requests.
-
-Real loopback HTTP/process tests cover authenticated submission, exact input/key replay, lost server and local acknowledgments, actual worker death after acceptance, account/API binding, disabled admission, credential/payment/scope failures, job/output mismatch, pending/unknown/no-charge billing, bounded/corrupt/redirected downloads, no secret persistence, immutable local output and source integrity. Current Blender 5.3 checks cover account/board controls, unavailable generation discovery, profile revocation, image decoding, native Gaussian import, scene preservation, recovery, stop-waiting, save/reload and register/unregister reset. A clean installed archive passes authentication, extension and board mesh/bake checks. The real backend's Better Auth plugin is exercised by the optional interoperability test below. These are targeted current checks, not a claim that the full release suite passed.
-
-Run the stdlib suite with `python3 -m unittest discover -s tests -p 'test_cloud*.py' -q`. To additionally use a local Cloud checkout's actual backend implementation and installed dependencies, set `REMI_CLOUD_CHECKOUT=/path/to/remi-cloud` for that command. The optional test starts only a loopback server with an ephemeral in-memory database, approves a test device, checks the existing account and disabled admission, and revokes its login. It imports no production environment, provider or payment setup.
-
-These fixtures do not prove deployed Remi API behavior, Modal permissions/lifecycle, GPU metering, real object storage, Windows execution, Stripe enrollment/invoices, production recovery or legal/model rights. Those remain Cloud goal gates. No live provider run or payment is performed by these tests.
+Validation covers the original image action, image batches/gallery metadata,
+the board 3D queue, unchanged local configuration, unsupported model rejection,
+shared SDK authentication/recovery, and installed extension checks. Integration
+fixtures use loopback HTTP, not paid GPU execution. These checks do not establish
+production PAYG, Stripe collection, model rights or legal readiness.

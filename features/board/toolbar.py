@@ -343,15 +343,20 @@ class REMI_BOARD_OT_tool_settings(Operator):
             state = context.window_manager.remi_generation
             controls = layout.column()
             controls.enabled = not (state.busy or state.mesh_busy)
+            from ..cloud.generation import draw_backend, is_api
+            if self.tool == "generate3d":
+                draw_backend(controls, context)
             fields = (("mesh_quality", "mesh_output", "python") if self.tool == "mesh" else
-                      ("model", "gaussians", "seed", "model_cache_minutes", "python", "models", "output"))
+                      ("model", "gaussians", "seed", "output"))
             for name in fields:
                 controls.prop(settings, name)
             if self.tool == "generate3d" and settings.model == "triposplat":
                 controls.prop(settings, "triposplat_steps")
                 controls.prop(settings, "triposplat_guidance")
                 controls.prop(settings, "triposplat_shift")
-            if self.tool == "generate3d":
+            if self.tool == "generate3d" and not is_api(context):
+                for name in ("model_cache_minutes", "python", "models"):
+                    controls.prop(settings, name)
                 controls.operator("remi.download_models", text="Download 3D Model", icon="IMPORT")
             if state.busy or state.mesh_busy:
                 layout.label(text="Settings unlock when the active generation finishes", icon="TIME")

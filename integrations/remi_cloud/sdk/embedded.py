@@ -7,10 +7,12 @@ from datetime import datetime, timezone
 from http.client import HTTPException
 import json
 import re
+import ssl
+import sys
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlsplit, urlencode
-from urllib.request import Request, HTTPRedirectHandler, build_opener
+from urllib.request import Request, HTTPRedirectHandler, HTTPSHandler, build_opener
 
 DEFAULT_API = "https://remi3d.app/api/v1"
 
@@ -24,6 +26,29 @@ class CloudError(RuntimeError):
 class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, *_args, **_kwargs):
         return None
+
+
+def verified_https_context():
+    """Blender's embedded OpenSSL may have no default CA paths. Use a trusted
+    host-provided bundle without disabling hostname or certificate validation.
+    The same opener verifies both API requests and private result downloads.
+    """
+    context = ssl.create_default_context()
+    if not context.cert_store_stats().get("x509_ca"):
+        try:
+            import certifi
+        except ImportError:
+            certifi = None
+        try:
+            if certifi is not None:
+                context.load_verify_locations(cafile=certifi.where())
+            elif sys.platform == "darwin":
+                context.load_verify_locations(cafile="/etc/ssl/cert.pem")
+        except (OSError, ssl.SSLError):
+            raise CloudError("Trusted HTTPS certificates could not be loaded. Repair Blender's certificate bundle and retry.") from None
+        if not context.cert_store_stats().get("x509_ca"):
+            raise CloudError("No trusted HTTPS certificates are available in this Python runtime. Install a trusted certificate bundle and retry.")
+    return context
 
 
 def api_url(value):
@@ -58,7 +83,7 @@ class CloudSession:
         # No proxy discovery, cookies, redirect following, environment token or
         # plaintext persistence. A Blender session is deliberately independent.
         from urllib.request import ProxyHandler
-        self._http = build_opener(ProxyHandler({}), NoRedirect())
+        self._http = build_opener(ProxyHandler({}), NoRedirect(), HTTPSHandler(context=verified_https_context()))
         self._token = None
         self._expiry = None
         self.profile = None

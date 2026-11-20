@@ -163,7 +163,9 @@ def draw_create(layout, context):
     controls = prompt.column()
     controls.enabled = not image_state.busy
     controls.prop(settings, "prompt", text="")
-    missing = missing_components(bpy.path.abspath(settings.models), settings.model)
+    from ..cloud.generation import is_api
+    api = is_api(context)
+    missing = [] if api else missing_components(bpy.path.abspath(settings.models), settings.model)
     action = layout.row(align=True)
     action.scale_y = 1.35
     generate_row = action.row(align=True)
@@ -181,7 +183,7 @@ def draw_create(layout, context):
         size = 12 if settings.model == "base" else 6
         warning.label(text=f"Download about {size + 9} GB (model + Qwen3-VL text encoder)")
         warning.operator("remi.download_iris", text="Download Model", icon="IMPORT")
-    elif not generation_settings.python:
+    elif not api and not generation_settings.python:
         layout.label(text="Set the external CUDA/PyTorch Python in Create settings", icon="INFO")
     if image_state.status and not image_state.busy and image_state.status_kind != "SUCCESS":
         icon = {"ERROR": "ERROR", "CANCELLED": "CANCEL"}.get(image_state.status_kind, "INFO")
@@ -213,20 +215,24 @@ class Remi_PT_ImageSettings(Panel):
         layout.label(text="Image Generation", icon="IMAGE_DATA")
         controls = layout.column()
         controls.enabled = not context.window_manager.remi_image.busy
+        from ..cloud.generation import draw_backend, is_api
+        draw_backend(controls, context)
         controls.prop(settings, "model")
         controls.prop(settings, "size")
         controls.prop(settings, "count")
-        controls.prop(settings, "steps")
-        controls.prop(settings, "cfg_scale")
+        if settings.model == "base":
+            controls.prop(settings, "steps")
+            controls.prop(settings, "cfg_scale")
+            controls.prop(settings, "negative_prompt")
         controls.prop(settings, "seed")
-        controls.prop(settings, "negative_prompt")
-        controls.prop(settings, "models")
         controls.prop(settings, "output")
-        controls.prop(settings, "memory_mode")
-        controls.prop(settings, "cache_minutes")
-        controls.operator("remi.download_iris", text="Download Image Model", icon="IMPORT")
+        if not is_api(context):
+            controls.prop(settings, "models")
+            controls.prop(settings, "memory_mode")
+            controls.prop(settings, "cache_minutes")
+            controls.operator("remi.download_iris", text="Download Image Model", icon="IMPORT")
         layout.separator()
-        draw_generation_settings(layout, context)
+        draw_generation_settings(layout, context, include_backend=False)
 
 
 classes = (Remi_PT_ImageSettings,)

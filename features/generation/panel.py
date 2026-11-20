@@ -13,7 +13,7 @@ def _draw_status(layout, state):
     row = layout.row(align=True)
     if state.busy:
         row.label(text=state.status, icon="TIME")
-        row.operator("remi.cancel_generation", text="", icon="CANCEL")
+        row.operator("remi.cancel_generation", text="Stop Waiting" if state.status.startswith("API") else "", icon="CANCEL")
     elif state.status_kind == "SUCCESS":
         row.label(text="Models ready" if state.status.startswith("Models downloaded") else "Model ready", icon="CHECKMARK")
     elif state.status_kind == "CANCELLED":
@@ -77,7 +77,7 @@ def draw_mesh_controls(layout, context, state):
         row.operator("remi.create_mesh", text="Recreate Mesh" if mesh else "Create Mesh", icon="MOD_REMESH")
 
 
-def draw_generation_settings(layout, context):
+def draw_generation_settings(layout, context, include_backend=True):
     layout.use_property_split = True
     layout.use_property_decorate = False
     controls = layout.column()
@@ -86,7 +86,10 @@ def draw_generation_settings(layout, context):
         or context.window_manager.remi_generation.mesh_busy
     )
     settings = context.scene.remi_generation
+    from ..cloud.generation import draw_backend, is_api
     controls.label(text="3D Generation", icon="OUTLINER_OB_POINTCLOUD")
+    if include_backend:
+        draw_backend(controls, context)
     controls.prop(settings, "model")
     controls.prop(settings, "gaussians")
     controls.prop(settings, "seed")
@@ -95,13 +98,14 @@ def draw_generation_settings(layout, context):
         controls.prop(settings, "triposplat_guidance")
         controls.prop(settings, "triposplat_shift")
     controls.separator()
-    controls.prop(settings, "python")
-    controls.prop(settings, "models")
-    controls.prop(settings, "download_url")
-    controls.operator("remi.download_models", text="Download Models", icon="IMPORT")
-    controls.prop(settings, "model_cache_minutes", text="Keep Model Loaded (min)")
-    if settings.model_cache_minutes:
-        controls.label(text=f"Warm cache for {settings.model_cache_minutes} min", icon="TIME")
+    if not is_api(context):
+        controls.prop(settings, "python")
+        controls.prop(settings, "models")
+        controls.prop(settings, "download_url")
+        controls.operator("remi.download_models", text="Download Models", icon="IMPORT")
+        controls.prop(settings, "model_cache_minutes", text="Keep Model Loaded (min)")
+        if settings.model_cache_minutes:
+            controls.label(text=f"Warm cache for {settings.model_cache_minutes} min", icon="TIME")
     controls.prop(settings, "output")
     controls.separator()
     controls.label(text="Reconstructed Mesh")

@@ -93,12 +93,16 @@ class Runner:
             raise ValueError("Choose an output folder in generation settings")
         if asset.operation == "GENERATE_3D":
             shutdown_iris_server()
-            self.job = GenerationJob.start(python=options["python"], models=options["models"],
-                image=parent.artifact, output=options["output"], gaussians=options["gaussians"], seed=options["seed"],
-                model=options.get("model", "rand6_100_ncm"),
-                steps=options.get("steps", 20), guidance=options.get("guidance", 3.0),
-                shift=options.get("shift", 3.0),
-                cache_minutes=options["cache_minutes"], cache_dir=options["cache_dir"])
+            from ..cloud.generation import start_3d
+            if options.get("backend", "LOCAL") == "API":
+                self.job = start_3d(context, image=parent.artifact, output=options["output"], options=options)
+            else:
+                self.job = GenerationJob.start(python=options["python"], models=options["models"],
+                    image=parent.artifact, output=options["output"], gaussians=options["gaussians"], seed=options["seed"],
+                    model=options.get("model", "rand6_100_ncm"),
+                    steps=options.get("steps", 20), guidance=options.get("guidance", 3.0),
+                    shift=options.get("shift", 3.0),
+                    cache_minutes=options["cache_minutes"], cache_dir=options["cache_dir"])
             state = context.window_manager.remi_generation
             state.busy, state.source_image = True, parent.artifact
             state.status_kind = "PROGRESS"
@@ -158,7 +162,8 @@ class Runner:
                 pass
             if asset.operation == "GENERATE_3D":
                 from ..generation.operators import _progress_fraction
-                asset.progress = _progress_fraction(asset.status)
+                if getattr(self.job, "backend", "LOCAL") != "API":
+                    asset.progress = _progress_fraction(asset.status)
                 context.window_manager.remi_generation.status = asset.status
                 context.window_manager.remi_generation.progress = asset.progress
             if self.job.poll() is not None:
@@ -216,11 +221,13 @@ class Runner:
         if asset is None or asset.state not in {"QUEUED", "RUNNING"}:
             return
         if identifier == self.asset_id and self.job is not None:
+            api = getattr(self.job, "backend", "LOCAL") == "API"
             self.job.cancel()
-            asset.state, asset.status = "CANCELLED", "Cancelled; source and completed files are kept"
+            asset.state, asset.status = ("INTERRUPTED", "Stopped waiting; the API job continues. Resume from Account.") if api else ("CANCELLED", "Cancelled; source and completed files are kept")
             self.release_state(context, asset)
             self.job, self.asset_id = None, ""
-        asset.state, asset.status = "CANCELLED", "Cancelled; source and completed files are kept"
+        if asset.state != "INTERRUPTED":
+            asset.state, asset.status = "CANCELLED", "Cancelled; source and completed files are kept"
 
     def close(self, context, catalog):
         if self.asset_id:
@@ -232,7 +239,7 @@ class Runner:
 
 def generation_options(context):
     settings = context.scene.remi_generation
-    return {"python": bpy.path.abspath(settings.python) if settings.python else default_python(),
+    return {"backend": settings.backend, "python": bpy.path.abspath(settings.python) if settings.python else default_python(),
             "models": bpy.path.abspath(settings.models), "output": bpy.path.abspath(settings.output),
             "gaussians": int(settings.gaussians), "seed": settings.seed,
             "model": settings.model,

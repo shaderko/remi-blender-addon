@@ -34,7 +34,8 @@ try:
             time.sleep(.02)
         raise AssertionError(f"Cloud fixture did not reach expected state: {runtime.status()}")
     wait(lambda:state.signed_in and not state.busy)
-    assert not Remi_OT_CloudGenerate.poll(bpy.context)  # No invented default spending cap.
+    state.max_cost_eur=""
+    assert not Remi_OT_CloudGenerate.poll(bpy.context)  # Explicitly empty caps remain rejected.
     state.max_cost_eur="0.001";state.prompt="A blue teapot";state.width=state.height=256
     tick();assert Remi_OT_CloudGenerate.poll(bpy.context)
     original=bpy.data.objects.get("Cube");assert original is not None

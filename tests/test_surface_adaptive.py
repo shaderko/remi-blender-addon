@@ -1,7 +1,9 @@
 """Independent source patches: density contrast, conformity and error guards."""
 
 import importlib
+import sys
 import unittest
+from unittest.mock import patch
 from types import SimpleNamespace
 
 import numpy as np
@@ -122,9 +124,13 @@ class SurfaceAdaptiveTests(unittest.TestCase):
         centers = task.result[0][task.result[1]].mean(axis=1)
         self.assertTrue(np.any(centers[:, 0] < 0) and np.any(centers[:, 0] > 0))
 
-    def test_guides_are_not_silently_ignored(self):
+    def test_guides_are_not_silently_ignored_without_native_solver(self):
         vertices, faces = grid(7)
-        task = rebuild(vertices, faces, guides=[SimpleNamespace(enabled=True)])
+        # This is the no-native fallback contract. CI builds the extension before
+        # running pure-Python tests, so model that boundary explicitly rather
+        # than accidentally entering Blender's mathutils-dependent solver.
+        with patch.dict(sys.modules, {PACKAGE+"._native": None}):
+            task = rebuild(vertices, faces, guides=[SimpleNamespace(enabled=True)])
         self.assertFalse(task.report["rebuilt"])
         self.assertIn("Seed Simplify", task.report["reason"])
         np.testing.assert_array_equal(task.result[0], vertices)

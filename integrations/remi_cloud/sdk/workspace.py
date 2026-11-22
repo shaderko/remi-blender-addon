@@ -102,7 +102,8 @@ class WorkspaceClient:
             if self._verified.get(str(path))==stamp:return str(path)
             if stamp[1]==file.bytes and hashlib.sha256(path.read_bytes()).hexdigest()==file.sha256:
                 self._verified[str(path)]=stamp;return str(path)
-        headers={"Authorization":"Bearer "+self.session._token,"Accept-Encoding":"identity"}
+        headers={"Authorization":"Bearer "+self.session._token,"Accept-Encoding":"identity",
+                 "User-Agent":"remi-cloud-embedded/0.1","Origin":self.session._origin}
         if self.session.project_id:headers["X-Remi-Project"]=self.session.project_id
         try:
             request=Request(self.session.base_url+"/files/"+file.id+"/content",headers=headers)

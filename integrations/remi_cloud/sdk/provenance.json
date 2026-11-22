@@ -41,7 +41,7 @@
     "models.py": "bbe910f22a36d0687d13e14b77e63fb55be3371ee1a267f6bebaddd2805035e8",
     "realtime.py": "20a0eec3a1c17bb519ae292ce9844f0ecd5285de6e8d3c83dca31166fc17691d",
     "workflow.py": "43b8c523b49cc98e4e13aeaa6986ba036aed488e0f96388ab1df03feabfad297",
-    "workspace.py": "80bbcc53b108c55d383d2cab47a4d4d48d45ba87a55048c0f7bbdd41a2308f95",
+    "workspace.py": "348cc521da05e06d347496644df644b18a31beefa456ee2db85706b52e4d77de",
     "_vendor/websockets/provenance.json": "4c0a501c6a21558a31d8f233af55f064b9abefecc01285b4d6c750d772757bb1"
   }
 }

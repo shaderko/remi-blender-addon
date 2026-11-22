@@ -8,6 +8,7 @@ without removing source files, completed versions, or explicit scene imports.
 from collections import OrderedDict
 from copy import deepcopy
 from functools import lru_cache
+from contextlib import contextmanager
 import json
 import math
 import os
@@ -34,6 +35,7 @@ from .jobs import Runner, generation_options
 from .splat_preview import NativePreview, NativeMeshPreview, Preview
 from . import texture_effects, toolbar, organizing
 from .organization import Organization, group_bounds, organizer, place_in_view
+from .ui_metrics import logical_pointer, logical_size, ui_scale
 
 SELECTION_KEY = "remi_board_selection"
 
@@ -76,6 +78,10 @@ _native_drop_override = None
 
 
 def gallery_entries(context):
+    if context.scene.get("remi_cloud_board_scope"):
+        from ..cloud.board_sync import current,scope
+        value=current(context)
+        if value and context.scene.get("remi_cloud_board_scope")==scope(value):return []
     try:
         settings = context.scene.remi_image
         state = context.window_manager.remi_image
@@ -184,23 +190,54 @@ def draw_image(texture, x, y, w, h, premultiplied=False):
     batch.draw(shader)
 
 
+_DRAW_SCALE = 1.0
+
+
+@contextmanager
+def scaled_drawing(scale):
+    """Draw logical board units; leave Blender's shared GPU matrix unchanged."""
+    global _DRAW_SCALE
+    previous = _DRAW_SCALE
+    with gpu.matrix.push_pop():
+        gpu.matrix.scale((scale, scale, 1))
+        _DRAW_SCALE = scale
+        try:
+            yield
+        finally:
+            _DRAW_SCALE = previous
+
+
 def draw_text(text, x, y, size=12, colour=TEXT):
     font = 0
-    blf.size(font, int(max(8, size)))
+    scale = _DRAW_SCALE
+    blf.size(font, max(8, size)*scale)
     blf.color(font, *colour)
-    blf.position(font, x, y, 0)
-    blf.draw(font, text)
+    # Rasterize at the actual display density, rather than stretching a small
+    # glyph bitmap with the board's geometry. BLF also uses the GPU matrix.
+    with gpu.matrix.push_pop():
+        gpu.matrix.scale((1/scale, 1/scale, 1))
+        blf.position(font, x*scale, y*scale, 0)
+        blf.draw(font, text)
 
 
-@lru_cache(maxsize=1024)
-def text_width(text, size):
+@lru_cache(maxsize=2048)
+def _text_width(text, size, scale):
     if not text:
         return 0.0
     try:
-        blf.size(0, int(max(8, size)))
-        return blf.dimensions(0, text)[0]
+        blf.size(0, max(8, size)*scale)
+        return blf.dimensions(0, text)[0]/scale
     except Exception:
         return len(text) * size * 0.55
+
+
+def text_width(text, size):
+    return _text_width(text, size, ui_scale())
+
+
+def text_width_pixels(text, size):
+    """Dialogs already convert their coordinates and font sizes to pixels."""
+    return _text_width(text, size, 1.0)
 
 
 def clip_text(text, size, limit):
@@ -430,6 +467,10 @@ def board_view_size(area, region=None):
     return max(1, right-region.x), region.height
 
 
+def board_logical_size(area, region=None):
+    return logical_size(*board_view_size(area, region), ui_scale())
+
+
 def cycle_enum(owner, name):
     try:
         items = list(owner.bl_rna.properties[name].enum_items)
@@ -522,6 +563,7 @@ class Board:
 
     # data ---------------------------------------------------------------
     def load(self, context, entries):
+        self.layout_namespace=layout_key(context)
         layout = load_layout(context)
         documents = layout.get("assets", [])
         try:
@@ -582,8 +624,9 @@ class Board:
             for path in self.order:
                 if path not in self.positions:
                     self.place_asset(path, self.catalog.assets[path].parent)
-        self.migrate_scene_splats(context)
-        self.discover_generation_files(context)
+        if not context.scene.get("remi_cloud_board_scope"):
+            self.migrate_scene_splats(context)
+            self.discover_generation_files(context)
         saved_order = layout.get("order", [])
         if isinstance(saved_order, list):
             saved_order = [aliases.get(key, key) for key in saved_order if isinstance(key, str)]
@@ -760,7 +803,7 @@ class Board:
                 self.positions[path] = self.new_slot()
                 self.order.append(path)
         self.known = len(entries)
-        self.migrate_scene_splats(context)
+        if not context.scene.get("remi_cloud_board_scope"):self.migrate_scene_splats(context)
         save_layout(context)
 
     # geometry -----------------------------------------------------------
@@ -1414,12 +1457,16 @@ def import_image_file(context, source):
         (job / "complete.json").write_text("{}", encoding="utf-8")
     except OSError:
         return None
+    if BOARD is not None and context.scene.get("remi_cloud_board_scope"):
+        asset=BOARD.catalog.image(target,source.name)
+        BOARD.place_asset(asset.id)
+        if asset.id not in BOARD.order:BOARD.order.append(asset.id)
     return target
 
 
 def incoming_folder(context):
     try:
-        output = Path(bpy.path.abspath(context.scene.remi_image.output))
+        output = Path(layout_key(context))
         folder = output / ".incoming"
         folder.mkdir(parents=True, exist_ok=True)
         return folder
@@ -1624,6 +1671,8 @@ def duplicate_assets(context, identifiers):
             package_artifact=asset.package_artifact,
             label=_duplicate_title(board, asset) if asset.label or asset.kind == "IMAGE" else "",
         )
+        # A duplicate is a new shared card, never another alias of the original.
+        duplicate.settings.pop("cloud",None)
         board.catalog.assets[duplicate.id] = duplicate
         model = organizer(board)
         if asset.id in model.membership:
@@ -2036,13 +2085,15 @@ def board_draw():
     region = window_region(area)
     if region is None:
         return
-    board.region = board_view_size(area, region)
+    scale = ui_scale(context)
+    board.region = board_logical_size(area, region)
     width, height = board.region
     blend, depth, depth_mask = gpu.state.blend_get(), gpu.state.depth_test_get(), gpu.state.depth_mask_get()
     try:
         gpu.state.depth_test_set("NONE")
         gpu.state.depth_mask_set(False)
-        _draw_board(board, width, height, region.width, region.height)
+        with scaled_drawing(scale):
+            _draw_board(board, width, height, region.width/scale, region.height/scale)
     finally:
         # Draw handlers share Blender's GPU context with native editors and UI.
         gpu.state.blend_set(blend)
@@ -2215,7 +2266,8 @@ def layout_file():
 
 def layout_key(context):
     try:
-        return str(Path(bpy.path.abspath(context.scene.remi_image.output)).resolve())
+        from ..cloud.board_sync import gallery
+        return gallery(context)
     except Exception:
         return "default"
 
@@ -2259,12 +2311,15 @@ def save_layout(context):
         "organization": {"groups": model.documents(), "membership": dict(model.membership)},
         "layers_collapsed": sorted(getattr(board, "layers_collapsed", set()) & model.groups.keys()),
     }
-    write_layout(context, payload)
+    write_layout(context, payload,key=getattr(board,"layout_namespace",None))
+    from ..cloud.board_sync import saved
+    saved(context)
 
 
-def write_layout(context, payload):
+def write_layout(context, payload,*,key=None):
     """Persist a board document, including while its editor is unmounted."""
-    context.scene[SCENE_ASSETS_KEY] = json.dumps({"gallery": layout_key(context), **payload}, allow_nan=False)
+    key=key or layout_key(context)
+    context.scene[SCENE_ASSETS_KEY] = json.dumps({"gallery": key, **payload}, allow_nan=False)
     path = layout_file()
     if path is None:
         return
@@ -2277,7 +2332,7 @@ def write_layout(context, payload):
         galleries = data.get("galleries")
         if not isinstance(galleries, dict):
             galleries = {}
-        galleries[layout_key(context)] = payload
+        galleries[key] = payload
         data["galleries"] = galleries
         temporary = path.with_suffix(".tmp")
         temporary.write_text(json.dumps(data, allow_nan=False), encoding="utf-8")
@@ -2347,7 +2402,7 @@ class REMI_BOARD_OT_run(Operator):
         board = Board(context)
         region = window_region(context.area)
         if region is not None:
-            board.region = board_view_size(context.area, region)
+            board.region = board_logical_size(context.area, region)
         board.load(context, gallery_entries(context))
         if not board.restored:
             board.fit()
@@ -2527,8 +2582,8 @@ class REMI_BOARD_OT_run(Operator):
             return {"PASS_THROUGH"}
         # Region x/y are already window-relative; adding area.x/y double-counts
         # the offset in split editors (and steals input from the next editor).
-        mx, my = event.mouse_x - region.x, event.mouse_y - region.y
-        board.region = board_view_size(area, region)
+        mx, my = logical_pointer(event.mouse_x, event.mouse_y, region, ui_scale(context))
+        board.region = board_logical_size(area, region)
         inside = 4 <= mx < board.region[0] - 4 and 4 <= my < board.region[1] - 4
         dragging = any((board.pan_drag is not None, board.card_drag is not None,
                         board.box_drag is not None, board.resize_drag is not None,
@@ -2566,7 +2621,9 @@ class REMI_BOARD_OT_run(Operator):
                 or event.type in {"F3", "F11", "F12"}):
             return {"PASS_THROUGH"}
 
-        if toolbar.handle_event(context, board, event, mx, my, dragging):
+        with context.temp_override(area=area, region=region):
+            handled_tool = toolbar.handle_event(context, board, event, mx, my, dragging)
+        if handled_tool:
             self._redraw(context)
             return {"RUNNING_MODAL"}
 
@@ -2727,6 +2784,12 @@ class REMI_BOARD_OT_run(Operator):
             return {"RUNNING_MODAL"}
 
         if event.type == "RIGHTMOUSE" and event.value == "PRESS":
+            bx, by, bw, bh = board.bar_rect
+            if bx <= mx <= bx+bw and by <= my <= by+bh:
+                board.focused = board.text_drag = False
+                with context.temp_override(area=area, region=region):
+                    bpy.ops.remi_board.settings("INVOKE_DEFAULT", section="image")
+                return {"RUNNING_MODAL"}
             path = board.hit(mx, my)
             if path is not None and not path.startswith("pending:"):
                 if path not in board.selected:
@@ -2995,6 +3058,8 @@ def board_tick():
         # scene in a nested override so an isolated edit cannot change the board.
         with bpy.context.temp_override(window=window):
             with bpy.context.temp_override(scene=board.scene, view_layer=board.view_layer):
+                from ..cloud.board_sync import tick as sync_cloud_board
+                sync_cloud_board(bpy.context)
                 advance_board(bpy.context)
     except ReferenceError:
         stop_board(save=False)
@@ -3217,7 +3282,7 @@ class REMI_BOARD_OT_drop_images(Operator):
 
     def invoke(self, context, event):
         region = window_region(context.area)
-        self.drop_x, self.drop_y = event.mouse_x-region.x, event.mouse_y-region.y
+        self.drop_x, self.drop_y = logical_pointer(event.mouse_x, event.mouse_y, region, ui_scale(context))
         self.at_cursor = True
         return self.execute(context)
 
@@ -3584,12 +3649,22 @@ def draw_board_header(self, context):
         return
     row = self.layout.row(align=True)
     row.label(text="Remi", icon="IMAGE_DATA")
-    row.operator("remi.add_image", text="", icon="IMPORT")
-    row.operator("remi_board.add_object", text="", icon="OUTLINER_OB_MESH")
-    row.popover(panel="Remi_PT_ImageSettings", text="", icon="PREFERENCES")
+    settings = row.row(align=True)
+    settings.operator_context = "INVOKE_DEFAULT"
+    settings.operator("remi_board.settings", text="", icon="PREFERENCES").section = "general"
     cloud = context.window_manager.remi_cloud
-    row.popover(panel="Remi_PT_BoardCloud", text="Account" if cloud.signed_in else "Sign In",
-                icon="USER" if cloud.signed_in else "URL")
+    account = row.row(align=True)
+    account.operator_context = "INVOKE_DEFAULT"
+    account.operator("remi.cloud_account", text=cloud.email if cloud.signed_in else "Sign In", icon="USER")
+    if cloud.signed_in:
+        selector=row.row(align=True)
+        from ..cloud.projects import busy as cloud_busy
+        selector.enabled=not cloud_busy(context)
+        selector.prop(cloud,"project",text="")
+        selector.operator("remi.cloud_projects",text="",icon="FILE_FOLDER")
+        logout = row.row(align=True)
+        logout.enabled = not (context.window_manager.remi_generation.busy or context.window_manager.remi_image.busy)
+        logout.operator("remi.cloud_logout", text="", icon="QUIT")
     row.operator("screen.screen_full_area", text="", icon="FULLSCREEN_ENTER")
     self.layout.separator()
 
@@ -3618,6 +3693,8 @@ def stop_board(*, save=True):
 
 @persistent
 def before_load(_unused):
+    from .settings_window import close_window
+    close_window()
     stop_board()
 
 

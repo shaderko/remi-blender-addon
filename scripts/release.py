@@ -225,10 +225,10 @@ def verify_archive(artifact, target):
         if not {f"features/board/{name}.py" for name in
                 ("__init__", "canvas", "workspace", "assets", "jobs", "local_worker", "splat_preview", "editing", "texture_effects", "toolbar", "native_assets", "organization", "organizing", "layers")}.issubset(archive.namelist()):
             raise RuntimeError("Archive is missing the docked generation workspace")
-        cloud_required={"features/cloud/__init__.py","features/cloud/jobs.py",
-            *{f"integrations/remi_cloud/{name}.py" for name in ("protocol","client","worker","jobs")},
+        cloud_required={"features/cloud/__init__.py","features/cloud/jobs.py","features/cloud/projects.py","features/cloud/board_sync.py",
+            *{f"integrations/remi_cloud/{name}.py" for name in ("protocol","client","worker","workspace_worker","jobs")},
             *{f"integrations/remi_cloud/contract/{name}" for name in ("__init__.py","models.py","errors.py","provenance.json")},
-            *{f"integrations/remi_cloud/sdk/{name}" for name in ("__init__.py","_version.py","models.py","errors.py","embedded.py","workflow.py","provenance.json")}}
+            *{f"integrations/remi_cloud/sdk/{name}" for name in ("__init__.py","_version.py","models.py","errors.py","embedded.py","workflow.py","realtime.py","workspace.py","provenance.json")}}
         if not cloud_required.issubset(archive.namelist()):
             raise RuntimeError("Archive is missing the authenticated Cloud client")
         cloud_source=json.loads(archive.read("integrations/remi_cloud/contract/provenance.json"))
@@ -349,7 +349,7 @@ def main():
             for pattern in ("test_platform_support.py", "test_model_download.py", "test_iris_setup.py",
                             "test_instant_meshes_adaptive.py", "test_surface_adaptive.py",
                             "test_surface_topology.py", "test_board_organization.py", "test_board_layers.py",
-                            "test_cloud_auth.py", "test_cloud_generation.py"):
+                            "test_cloud_auth.py", "test_cloud_generation.py", "test_cloud_projects.py"):
                 run(sys.executable, "-m", "unittest", "discover", "-s", ROOT / "tests",
                     "-p", pattern)
             for test in TESTS:

@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from integrations.remi_cloud.protocol import CloudSession, CloudError, api_url
 from integrations.remi_cloud.client import CloudProcess
+from realtime_fixture import websocket, changed
 
 TOKEN = "fixture_remi_blender_session_secret_12345"
 DEVICE = "fixture_remi_blender_device_secret_12345"
@@ -27,6 +28,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self): self.requested()
     def do_POST(self): self.requested()
     def requested(self):
+        if websocket(self): return
         server = self.server
         body = json.loads(self.rfile.read(int(self.headers.get("Content-Length",0))) or b"null")
         server.requests.append((self.path,dict(self.headers),body))
@@ -93,6 +95,33 @@ class CloudAuthTests(unittest.TestCase):
             self.assertEqual(headers.get("Origin"),self.server.base)
             if "/get-session" in path or "/sign-out" in path: self.assertEqual(headers["Authorization"],"Bearer "+TOKEN)
         self.assertIsNone(session.profile)
+
+    def test_quota_errors_explain_the_actual_limit_without_echoing_server_text(self):
+        session = CloudSession(self.api)
+        cases = {
+            "modal_test_limit_reached": ("test batch is exhausted", False),
+            "too_many_jobs": ("unfinished Cloud test jobs", True),
+            "job_quota_exceeded": ("open-job limit", True),
+            "rate_limited": ("request rate limit", True),
+            "storage_quota_exceeded": ("storage limit", False),
+            "upload_busy": ("upload capacity is busy", True),
+        }
+        for code, (message, retryable) in cases.items():
+            with self.subTest(code=code), patch.object(session._live(), "request", return_value=(429, {
+                "error": {"code": code, "message": TOKEN+DEVICE, "retryable": retryable}
+            })):
+                with self.assertRaises(CloudError) as caught:
+                    session.api("POST", "/jobs")
+                self.assertIn(message, str(caught.exception))
+                self.assertEqual(caught.exception.code, code)
+                self.assertEqual(caught.exception.status, 429)
+                self.assertEqual(caught.exception.retryable, retryable)
+                self.assertNotIn(TOKEN, str(caught.exception))
+        for body in ({"error": {"code": ["invalid"], "message": TOKEN}}, {"error":TOKEN}, None):
+            with patch.object(session._live(),"request",return_value=(429,body)):
+                with self.assertRaises(CloudError) as caught: session.api("POST","/jobs")
+                self.assertIn("a limit was reached", str(caught.exception))
+                self.assertNotIn(TOKEN,str(caught.exception))
     def test_revocation_prevents_reusing_the_profile(self):
         session = CloudSession(self.api); session.login(lambda value:None)
         self.server.revoked = True

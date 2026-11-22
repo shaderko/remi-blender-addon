@@ -166,7 +166,14 @@ class Runner:
                     asset.progress = _progress_fraction(asset.status)
                 context.window_manager.remi_generation.status = asset.status
                 context.window_manager.remi_generation.progress = asset.progress
-            if self.job.poll() is not None:
+            completed=self.job.poll()
+            if getattr(self.job,"backend",None)=="API":
+                from ...integrations.remi_cloud.client import runtime
+                value=runtime.workspace_status();job_id=getattr(self.job,"last",{}).get("job_id")
+                if job_id and value.get("user_id") and value.get("project_id"):
+                    from ..cloud.board_sync import scope
+                    asset.settings["cloud"]={**asset.settings.get("cloud",{}),"scope":scope(value),"card_id":job_id,"job":True,"input":False}
+            if completed is not None:
                 try:
                     artifact = self.job.result()
                     asset.artifact = str(artifact)

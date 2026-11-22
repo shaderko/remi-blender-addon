@@ -46,11 +46,14 @@ def wait(predicate):
 
 class Layout:
     """Record the actual native draw functions without requiring GPU rendering."""
-    def __init__(self): self.actions = []; self.labels = []; self.panels = []
+    def __init__(self): self.actions = []; self.labels = []; self.panels = []; self.operators = {}
     def row(self, **_kwargs): return self
     def column(self, **_kwargs): return self
     def label(self, **kwargs): self.labels.append(kwargs.get("text", ""))
-    def operator(self, name, **_kwargs): self.actions.append(name)
+    def operator(self, name, **_kwargs):
+        self.actions.append(name)
+        self.operators[name] = SimpleNamespace()
+        return self.operators[name]
     def popover(self, **kwargs): self.panels.append(kwargs)
     def prop(self, *_args, **_kwargs): pass
     def separator(self): pass
@@ -63,7 +66,8 @@ try:
     layout = Layout()
     with patch.object(canvas, "BOARD", SimpleNamespace()), patch.object(canvas, "board_area", return_value=bpy.context.area):
         canvas.draw_board_header(SimpleNamespace(layout=layout), bpy.context)
-    assert any(p["panel"] == "Remi_PT_BoardCloud" and p["text"] == "Sign In" for p in layout.panels)
+    assert "remi.cloud_account" in layout.actions
+    assert layout.operators["remi_board.settings"].section == "general"
     cloud.Remi_PT_BoardCloud.draw(SimpleNamespace(layout=layout), bpy.context)
     assert "remi.cloud_login" in layout.actions and "remi.cloud_generate" not in layout.actions
     assert bpy.ops.remi.cloud_login() == {"FINISHED"}
@@ -85,7 +89,7 @@ try:
         assert "could not be checked" in state.message
     layout = Layout()
     cloud.Remi_PT_BoardCloud.draw(SimpleNamespace(layout=layout), bpy.context)
-    assert {"remi.cloud_refresh", "remi.cloud_logout"} <= set(layout.actions)
+    assert "remi.cloud_logout" in layout.actions
     assert not any("generate" in action for action in layout.actions)
     fixture.server.capabilities_enabled = True
     fixture.server.capabilities_fault = None
@@ -98,7 +102,14 @@ try:
     layout = Layout()
     with patch.object(canvas, "BOARD", SimpleNamespace()), patch.object(canvas, "board_area", return_value=bpy.context.area):
         canvas.draw_board_header(SimpleNamespace(layout=layout), bpy.context)
-    assert any(p["panel"] == "Remi_PT_BoardCloud" and p["text"] == "Account" for p in layout.panels)
+    assert "remi.cloud_account" in layout.actions
+    assert "remi.cloud_logout" in layout.actions
+    assert not {"remi.add_image", "remi_board.add_object"} & set(layout.actions)
+    settings = bpy.context.scene.remi_generation
+    settings.use_cloud = True
+    assert settings.backend == "API"
+    settings.backend = "LOCAL"
+    assert not settings.use_cloud
     fixture.server.revoked = True
     assert bpy.ops.remi.cloud_refresh() == {"FINISHED"}
     wait(lambda: not state.busy)

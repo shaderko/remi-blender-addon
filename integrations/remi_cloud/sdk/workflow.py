@@ -1,6 +1,6 @@
-"""Durable local Cloud requests. Only Remi HTTP; no provider/payment credentials.
+"""Durable local Cloud requests. Only Remi; no provider/payment credentials.
 
-New submission is explicit. Polling never uploads or creates a job. After an
+New submission is explicit. Watching never uploads or creates a job. After an
 uncertain POST, explicit resume reuses the frozen bytes and original keys.
 """
 import hashlib
@@ -142,10 +142,11 @@ class CloudRequest:
         self.intent=get_json(self.path)
         try:
             x=self.intent
-            if (set(x)!={"version","id","base_url","user_id","operation","prompt","options","max_cost_micros","source"}
+            if (set(x)-{"project_id"}!={"version","id","base_url","user_id","operation","prompt","options","max_cost_micros","source"}
                     or x["version"]!=1 or self.directory.name!="remi-cloud-"+identifier(x["id"])
                     or api_url(x["base_url"])!=session.base_url
-                    or not session.profile or x["user_id"]!=session.profile["user_id"]):
+                    or not session.profile or x["user_id"]!=session.profile["user_id"]
+                    or x.get("project_id")!=getattr(session,"project_id",None)):
                 raise ValueError
             if checked_spec(x["operation"],x["prompt"],x["options"],x["max_cost_micros"])!=x["prompt"]:
                 raise ValueError
@@ -183,7 +184,7 @@ class CloudRequest:
         request_id=str(uuid4());directory=root/("remi-cloud-"+request_id)
         directory.mkdir(mode=0o700);sync_directory(root)
         if source: put_once(directory/source["filename"],body)
-        put_json(directory/"request.json",{"version":1,"id":request_id,"base_url":session.base_url,"user_id":session.profile["user_id"],"operation":operation,"prompt":prompt,"options":options,"max_cost_micros":cap,"source":source})
+        put_json(directory/"request.json",{"version":1,"id":request_id,"base_url":session.base_url,"user_id":session.profile["user_id"],**({"project_id":session.project_id} if getattr(session,"project_id",None) else {}),"operation":operation,"prompt":prompt,"options":options,"max_cost_micros":cap,"source":source})
         return cls(directory/"request.json",session)
 
     def input_bytes(self):
@@ -241,12 +242,23 @@ class CloudRequest:
         return self.finish(job)
 
     def poll(self):
+        job_id=self.receipt_id()
+        return self.finish(self.checked_job(self.session.api("GET","/jobs/"+job_id).get("job"),job_id))
+
+    def receipt_id(self):
         receipt=get_json(self.directory/"job.json")
         if (set(receipt)!={"id","payload_sha256"} or receipt["payload_sha256"]!=sha(canonical(self.payload()))
                 or get_json(self.directory/"payload.json")!=self.payload()):
             raise CloudError("The saved Cloud job no longer matches its exact submitted request.")
-        job_id=identifier(receipt["id"])
-        return self.finish(self.checked_job(self.session.api("GET","/jobs/"+job_id).get("job"),job_id))
+        return identifier(receipt["id"])
+
+    def watch(self, *, timeout=1800, cancelled=lambda: False):
+        """Receive pushed state; completion still requires verified result bytes."""
+        job_id=self.receipt_id()
+        for value in self.session.watch_job(job_id,timeout=timeout,cancelled=cancelled):
+            job=self.checked_job(value,job_id)
+            yield self.finish(job)
+            if job.terminal: return
 
     def finish(self,job):
         value={"request_path":str(self.path),"operation":job.operation,"job_id":job.id,"progress":job.progress,

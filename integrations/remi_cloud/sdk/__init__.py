@@ -1,7 +1,7 @@
 """Shared Remi Cloud API and embedded-client SDK. Production admission is gated."""
 
 from ._version import __version__
-# Embedded applications can import the shared standard-library core without
+# Embedded applications can import the shared core and bundled transport without
 # installing the CLI's httpx/keyring dependencies into their host interpreter.
 from .embedded import CloudSession, CloudError
 from .workflow import CloudRequest

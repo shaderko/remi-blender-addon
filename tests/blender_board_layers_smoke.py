@@ -144,7 +144,7 @@ def advance():
     elif step == 3:
         assert layers.thumbnail_icon(board.catalog.assets[ocean]) > 0
         assert layers.thumbnail_icon(board.catalog.assets["mesh"]) > 0
-        assert board.region == canvas.board_view_size(canvas.board_area(board))
+        assert board.region == canvas.board_logical_size(canvas.board_area(board))
         bpy.ops.screen.screenshot(filepath=str(OUTPUT / "layers-tree.png"))
         view = (board.zoom, list(board.pan))
         layer_click(0, arrow=True)

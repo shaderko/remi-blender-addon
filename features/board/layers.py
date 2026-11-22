@@ -130,7 +130,7 @@ class REMI_BOARD_OT_reveal_layer(Operator):
         from . import canvas
         board = _context_board(context)
         area = context.area
-        board.region = canvas.board_view_size(area)
+        board.region = canvas.board_logical_size(area)
         try:
             reveal(board, self.target, extend=self.extend)
         except ValueError as exc:

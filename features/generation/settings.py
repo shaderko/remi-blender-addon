@@ -61,6 +61,12 @@ class RemiGenerationSettings(PropertyGroup):
         ("LOCAL", "Local", "Run the selected model on this computer"),
         ("API", "API", "Run the same model through your signed-in Remi Cloud account"),
     ], default="LOCAL")
+    use_cloud: BoolProperty(
+        name="Use Remi Cloud",
+        description="Generate with your Remi Cloud account; uncheck to run on this computer",
+        get=lambda self: self.backend == "API",
+        set=lambda self, value: setattr(self, "backend", "API" if value else "LOCAL"),
+    )
     image: StringProperty(name="Image", subtype="FILE_PATH")
     python: StringProperty(
         name="Python", subtype="FILE_PATH", default=default_python(),

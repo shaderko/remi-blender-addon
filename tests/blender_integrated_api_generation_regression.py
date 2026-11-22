@@ -59,7 +59,7 @@ try:
     assert ('operator','remi.generate_image') in layout.log
     assert ('operator','remi.download_iris') not in layout.log
     layout=Layout();Remi_PT_ImageSettings.draw(SimpleNamespace(layout=layout),context)
-    assert layout.log.count(('prop','backend'))==1
+    assert layout.log.count(('prop','use_cloud'))==1
     assert ('prop','count') in layout.log and ('prop','seed') in layout.log
     assert ('prop','python') not in layout.log and ('prop','models') not in layout.log
     account=Layout();Remi_PT_BoardCloud.draw(SimpleNamespace(layout=account),context)

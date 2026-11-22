@@ -38,7 +38,8 @@ class Remi_OT_CloudGenerate(Operator):
             runtime.command("generate",state.base_url,operation=operation,
                 prompt=state.prompt if operation=="generate_image" else None,
                 image=bpy.path.abspath(state.image) if operation=="generate" else None,
-                output=bpy.path.abspath(state.output),options=options,max_cost_eur=state.max_cost_eur)
+                output=bpy.path.abspath(state.output),options=options,max_cost_eur=state.max_cost_eur,
+                project_id=runtime.workspace_status().get("project_id") if runtime.workspace_status().get("project_id")!="default" else None)
             state.output_path=""
             state.result_operation=""
             runtime.following=True
@@ -60,7 +61,8 @@ class Remi_OT_CloudResume(Operator):
     def execute(self,context):
         state=context.window_manager.remi_cloud
         try:
-            runtime.command("resume",state.base_url,request_path=bpy.path.abspath(state.request_path))
+            runtime.command("resume",state.base_url,request_path=bpy.path.abspath(state.request_path),
+                project_id=runtime.workspace_status().get("project_id") if runtime.workspace_status().get("project_id")!="default" else None)
             state.output_path="";state.result_operation=""
             runtime.following=True
         except (CloudError,RuntimeError,OSError) as error:

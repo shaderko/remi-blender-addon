@@ -34,12 +34,14 @@ bpy.context.scene.remi_image.output = str(OUTPUT / "images")
 bpy.context.scene.remi_generation.output = str(OUTPUT / "models")
 objects = set(bpy.context.scene.objects.keys())
 step = 0
+maximized = False
 pairing = None
 
 
 def mouse(kind, value, x, y, **modifiers):
     region = canvas.window_region(canvas.board_area(canvas.BOARD))
-    bpy.context.window.event_simulate(type=kind, value=value, x=int(region.x+x), y=int(region.y+y), **modifiers)
+    scale = canvas.ui_scale()
+    bpy.context.window.event_simulate(type=kind, value=value, x=int(region.x+x*scale), y=int(region.y+y*scale), **modifiers)
 
 
 def click(x, y, **modifiers):
@@ -54,7 +56,7 @@ def centre(identifier):
 
 
 def advance():
-    global step, pairing
+    global step, pairing, maximized
     try:
         board = canvas.BOARD
         if step == 0:
@@ -62,6 +64,12 @@ def advance():
         elif step == 1:
             if board is None:
                 return 0.1
+            if not maximized:
+                area = canvas.board_area(board)
+                with bpy.context.temp_override(area=area,region=canvas.window_region(area)):
+                    bpy.ops.screen.screen_full_area()
+                maximized = True
+                return .5
             for index, identifier in enumerate(("a", "b", "c")):
                 board.catalog.assets[identifier] = Asset(identifier, "IMAGE", artifact=str(OUTPUT / "card.png"))
                 board.order.append(identifier)
@@ -71,8 +79,8 @@ def advance():
             board.selected = {"c"}
             canvas.board_area(board).tag_redraw()
         elif step == 2:
-            mouse("MOUSEMOVE", "NOTHING", 40, 330)
-            mouse("LEFTMOUSE", "PRESS", 40, 330)
+            mouse("MOUSEMOVE", "NOTHING", 55, 330)
+            mouse("LEFTMOUSE", "PRESS", 55, 330)
             mouse("MOUSEMOVE", "NOTHING", 430, 530)
         elif step == 3:
             assert board.box_drag is not None and board.selected == {"a", "b"}, board.selected
@@ -199,11 +207,13 @@ def advance():
             remi.unregister()
             assert canvas.before_save not in bpy.app.handlers.save_pre
             print(f"REMI_BOARD_INPUT_SMOKE_OK: {OUTPUT}", flush=True)
+            (OUTPUT / "passed.txt").write_text("Mouse selection, movement, panning and graph links at display DPI.")
             bpy.ops.wm.quit_blender()
             return None
         step += 1
         return 0.15
     except Exception:
+        (OUTPUT / "error.txt").write_text(traceback.format_exc())
         traceback.print_exc()
         print(f"REMI_BOARD_INPUT_SMOKE_FAILED step {step}: {OUTPUT}", flush=True)
         os._exit(1)

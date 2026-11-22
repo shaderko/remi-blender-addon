@@ -23,6 +23,7 @@ sys.path.insert(0,str(ROOT))
 from integrations.remi_cloud.protocol import CloudSession,CloudError
 from integrations.remi_cloud.jobs import CloudRequest,get_json,put_json,canonical,sha,cost_micros
 from integrations.remi_cloud.client import CloudProcess
+from realtime_fixture import websocket, changed
 from integrations.remi_cloud.contract.errors import ProtocolError
 
 TOKEN="fixture_cloud_session_secret_123456789"
@@ -41,6 +42,9 @@ def native_gaussians(count=32768):
 
 
 class FixtureServer(ThreadingHTTPServer):
+    def __setattr__(self,name,value):
+        super().__setattr__(name,value)
+        if name in ("result_state", "job_override"): changed(self)
     daemon_threads=True
     def __init__(self):
         super().__init__(("127.0.0.1",0),Handler)
@@ -60,6 +64,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):self.requested()
     def do_POST(self):self.requested()
     def requested(self):
+        if websocket(self): return
         s=self.server;raw=self.rfile.read(int(self.headers.get("Content-Length",0)))
         path=urlsplit(self.path).path
         s.requests.append({"method":self.command,"path":path,"headers":dict(self.headers),"body":raw})
@@ -88,6 +93,8 @@ class Handler(BaseHTTPRequestHandler):
         elif not path.startswith("/api/v1/"):status,value=404,{}
         elif s.revoked or self.headers.get("Authorization")!="Bearer "+TOKEN:status,value=401,{"error":{"message":TOKEN}}
         elif s.fault in ("402","403"):status,value=int(s.fault),{"error":{"message":TOKEN+SIGNATURE}}
+        elif s.fault == "modal_test_limit_reached":
+            status,value=429,{"error":{"code":s.fault,"message":TOKEN+SIGNATURE,"retryable":False}}
         elif path=="/api/v1/files":
             key=self.headers.get("Idempotency-Key")
             if key in s.uploads:
@@ -149,6 +156,31 @@ class CloudGenerationTests(unittest.TestCase):
         self.assertIs(CloudRequest, SdkRequest)
         self.assertIsInstance(self.session, SdkSession)
         self.assertEqual(self.session.client_id, "remi-blender")
+
+    def test_worker_reports_exhausted_test_batch_and_resumes_original_request(self):
+        process=CloudProcess()
+        try:
+            process.command("login",self.server.api)
+            self.wait(lambda:process.status().get("state")=="signed_in")
+            self.server.fault="modal_test_limit_reached"
+            process.command("generate",self.server.api,output=str(self.root),operation="generate_image",
+                            prompt="A teapot",options={"width":256,"height":256,"seed":7},max_cost_eur="0.001")
+            result=self.wait(lambda:process.status() if process.status().get("state")=="error" else None)
+            self.assertEqual(result["error_code"],"modal_test_limit_reached")
+            self.assertIs(result["retryable"],False)
+            self.assertIn("test batch is exhausted",result["message"])
+            self.assertNotIn(TOKEN,json.dumps(result));self.assertNotIn(SIGNATURE,json.dumps(result))
+            path=result["request_path"]
+            self.assertTrue(Path(path).is_file());self.assertFalse(self.server.jobs)
+            self.server.fault=None
+            process.command("resume",self.server.api,request_path=path)
+            self.wait(lambda:process.status().get("state")=="job_ready")
+            attempts=[r for r in self.server.requests if r["path"]=="/api/v1/jobs" and r["method"]=="POST"]
+            self.assertEqual(len(attempts),2)
+            self.assertEqual(attempts[0]["body"],attempts[1]["body"])
+            self.assertEqual(attempts[0]["headers"]["Idempotency-Key"],attempts[1]["headers"]["Idempotency-Key"])
+            self.assertEqual(len(self.server.jobs),1)
+        finally:process.cleanup()
     def test_image_request_download_and_pending_bill_use_only_authenticated_remi_api(self):
         work=self.create();self.assertEqual(work.submit()["state"],"job_running")
         result=work.poll();self.assertEqual(result["state"],"job_ready");self.assertIsNone(result["billing"]["actual_cost_micros"])
@@ -329,8 +361,8 @@ class CloudGenerationTests(unittest.TestCase):
             process.process.kill();process.process.wait(timeout=3)
             self.server.release.set();self.server.fault=None
             process.command("login",self.server.api);self.wait(lambda:process.status().get("state")=="signed_in")
-            process.command("resume",self.server.api,request_path=str(path));self.wait(lambda:process.status().get("state")=="job_running")
-            process.command("poll",self.server.api,request_path=str(path));result=self.wait(lambda:process.status() if process.status().get("state")=="job_ready" else None)
+            process.command("resume",self.server.api,request_path=str(path));self.wait(lambda:process.status().get("state")=="job_ready")
+            result=self.wait(lambda:process.status() if process.status().get("state")=="job_ready" else None)
             self.assertIsNone(result["billing"]["actual_cost_micros"]);self.assertEqual(len(self.server.jobs),1)
             for item in (*path.parent.iterdir(),*process.directory.iterdir()):
                 self.assertNotIn(TOKEN.encode(),item.read_bytes());self.assertNotIn(SIGNATURE.encode(),item.read_bytes())

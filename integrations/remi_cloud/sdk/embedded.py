@@ -1,4 +1,4 @@
-"""Dependency-free SDK session for embedded clients. Tokens stay in memory.
+"""Self-contained SDK session for embedded clients. Tokens stay in memory.
 
 No bpy, provider/payment SDK, proxy discovery, environment token, or disk token
 store. The host supplies its registered first-party device client identity.
@@ -9,6 +9,7 @@ import json
 import re
 import ssl
 import sys
+import threading
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlsplit, urlencode
@@ -18,9 +19,9 @@ DEFAULT_API = "https://remi3d.app/api/v1"
 
 
 class CloudError(RuntimeError):
-    def __init__(self, message, *, code="cloud_error", status=None):
+    def __init__(self, message, *, code="cloud_error", status=None, retryable=False):
         super().__init__(message)
-        self.code, self.status = code, status
+        self.code, self.status, self.retryable = code, status, retryable
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -72,7 +73,7 @@ def origin(value):
 
 
 class CloudSession:
-    def __init__(self, base_url=DEFAULT_API, *, client_id="remi-cli"):
+    def __init__(self, base_url=DEFAULT_API, *, client_id="remi-cli", realtime=True):
         if client_id not in ("remi-cli", "remi-blender"):
             raise CloudError("Use a registered first-party Remi device client.")
         self.client_id = client_id
@@ -87,12 +88,34 @@ class CloudSession:
         self._token = None
         self._expiry = None
         self.profile = None
+        self._realtime_enabled = realtime
+        self._socket = None
+        self._socket_lock = threading.RLock()
+        self.project_id = None
+
+    def select_project(self, project_id=None):
+        from .models import identifier
+        project_id=identifier(project_id).lower() if project_id is not None else None
+        if project_id!=self.project_id:
+            if self._socket is not None:self._socket.close()
+            self._socket=None
+            self.project_id=project_id
+
+    def _live(self):
+        with self._socket_lock:
+            if self._socket is None:
+                from .realtime import RealtimeSession
+                self._socket = RealtimeSession(self.base_url, lambda: self._token,
+                    ssl_context=verified_https_context(), project_id=self.project_id)
+            return self._socket
 
     def _request(self, method, path, *, auth=False, payload=None, api=False, body=None, headers=None):
         extra = headers or {}
         headers = {"Accept": "application/json", "Origin": self._origin,
                    "User-Agent": "remi-cloud-embedded/0.1"}
         headers.update(extra)
+        if auth and api and self.project_id:
+            headers.setdefault("X-Remi-Project",self.project_id)
         if auth:
             if not self._token:
                 raise CloudError("Sign in to Remi Cloud first.")
@@ -111,15 +134,16 @@ class CloudSession:
                 status = response.status
                 if 300 <= status < 400:
                     raise CloudError("Remi Cloud returned a redirect. Check the API URL.")
-                raw = response.read(262145)
-                if len(raw) > 262144:
+                limit=2*1024*1024 if api and path.startswith("/board") else 262144
+                raw = response.read(limit+1)
+                if len(raw) > limit:
                     raise CloudError("Remi Cloud response exceeded its limit.")
             return status, json.loads(raw)
         except CloudError:
             raise
         except (URLError, OSError, ValueError, TimeoutError, HTTPException):
             # Do not copy server bodies, URLs with secrets or transport exceptions.
-            raise CloudError("Could not verify the Remi Cloud response. Check the connection and API URL.") from None
+            raise CloudError("Could not verify the Remi Cloud response. Check the connection and API URL.", retryable=True) from None
 
     def status(self):
         status, value = self._request("GET", "/get-session?disableCookieCache=true&disableRefresh=true", auth=True)
@@ -204,7 +228,10 @@ class CloudSession:
             raise CloudError("Remi Cloud returned an invalid sign-in response.") from None
 
     def capabilities(self):
-        status, value = self._request("GET", "/capabilities", api=True)
+        if self._token and self._realtime_enabled:
+            status, value = 200, self.api("GET", "/capabilities")
+        else:
+            status, value = self._request("GET", "/capabilities", api=True)
         from .models import Capabilities
         from .errors import ProtocolError
         try:
@@ -215,7 +242,19 @@ class CloudSession:
         return {"enabled":parsed.enabled,"operations":parsed.operations,"inputModes":parsed.input_modes}
 
     def api(self, method, path, *, payload=None, body=None, headers=None):
-        status, value = self._request(method,path,auth=True,api=True,payload=payload,body=body,headers=headers)
+        control=(method=="GET" and (path=="/capabilities" or path.startswith("/jobs"))) or (method=="POST" and (path=="/jobs" or path.endswith("/cancel") or path.endswith("/download")))
+        if self._realtime_enabled and control:
+            from .errors import APIError, RemiError
+            try:
+                content = payload if body is None else json.loads(body)
+                status, value = self._live().request(method,path,body=content,key=(headers or {}).get("Idempotency-Key"))
+            except APIError as error:
+                if error.status == 401: self.clear()
+                raise CloudError("The live Cloud connection was rejected. Sign in again or check access.",code=error.code,status=error.status) from None
+            except RemiError:
+                raise CloudError("The live Cloud connection was interrupted. Resume the same saved request; no work was resubmitted.", code="realtime_unavailable", retryable=True) from None
+        else:
+            status, value = self._request(method,path,auth=True,api=True,payload=payload,body=body,headers=headers)
         if status not in (200,201):
             messages = {401:"Your Cloud session expired or was revoked. Sign in again.",
                         402:"Cloud spending or payment access does not cover this request.",
@@ -224,14 +263,53 @@ class CloudSession:
                         409:"The Cloud request conflicts with its original request or state.",
                         413:"The Cloud input exceeds its size limit.",
                         415:"The Cloud input format is not supported.",
-                        429:"Cloud capacity is busy. Resume this same request later."}
+                        429:"Cloud rejected this request because a limit was reached. Resume the same saved request after the limit is cleared."}
             if status == 401: self.clear()
-            raise CloudError(messages.get(status,"Cloud could not confirm this request. Resume the same saved request."),status=status)
+            # Use known codes and our own text, never arbitrary response messages
+            # that could reflect credentials, signed URLs or sensitive input.
+            limits = {
+                "modal_test_limit_reached": ("The Cloud promotional test batch is exhausted. No new generation was started. An administrator must extend the test allocation before you can resume this request.", False),
+                "too_many_jobs": ("Your account has unfinished Cloud test jobs. Wait for one to finish, then resume this same request.", True),
+                "job_quota_exceeded": ("Your Cloud account has reached its open-job limit. Wait for a job to finish, then resume this same request.", True),
+                "rate_limited": ("Your Cloud account has reached its request rate limit. Wait briefly, then resume this same request.", True),
+                "storage_quota_exceeded": ("Your Cloud account has reached its storage limit. Resume this same request after storage is available.", False),
+                "upload_busy": ("Cloud upload capacity is busy. Resume this same request shortly.", True),
+            }
+            error = value.get("error") if isinstance(value, dict) else None
+            code = error.get("code") if isinstance(error, dict) else None
+            if not isinstance(code,str):code=None
+            if status == 429 and isinstance(code, str) and code in limits:
+                message, retryable = limits[code]
+                raise CloudError(message, code=code, status=status, retryable=retryable)
+            message={"revision_conflict":"This card changed on another device. Your local revision is kept; refresh the project before applying again.","source_deleted":"This shared asset was deleted on another device.","not_found":"The project or shared asset is unavailable, or access was removed."}.get(code,messages.get(status,"Cloud could not confirm this request."))
+            raise CloudError(message,code=code,status=status,retryable=status in (429,500,502,503,504))
         if not isinstance(value,dict): raise CloudError("Cloud returned an invalid API response.")
         return value
 
+    def watch_board(self, *, timeout=86400, cancelled=lambda:False):
+        from .errors import APIError, RemiError
+        try:yield from self._live().watch_board(timeout=timeout,cancelled=cancelled)
+        except APIError as error:
+            if error.status==401:self.clear()
+            raise CloudError("Shared project access changed. Choose another project or sign in again.",code=error.code,status=error.status) from None
+        except (RemiError,TimeoutError):
+            raise CloudError("Project live updates were interrupted.",code="realtime_unavailable",retryable=True) from None
+
+    def watch_job(self, job_id, *, timeout=1800, cancelled=lambda: False):
+        from .errors import APIError, RemiError
+        try:
+            yield from self._live().watch_job(job_id,timeout=timeout,cancelled=cancelled)
+        except APIError as error:
+            if error.status == 401: self.clear()
+            raise CloudError("The live Cloud subscription was rejected. Sign in again or check access.",code=error.code,status=error.status) from None
+        except (RemiError, TimeoutError):
+            raise CloudError("Live updates stopped. Resume the saved request; the Cloud job was not canceled.",code="realtime_unavailable",retryable=True) from None
+
     def clear(self):
+        if self._socket is not None: self._socket.close()
+        self._socket = None
         self._token = self._expiry = self.profile = None
+        self.project_id = None
 
     def logout(self):
         if not self._token: return True

@@ -43,6 +43,15 @@ def save(path, arrays):
         np.savez(stream, schema=np.array(SCHEMA, dtype=np.int32), **arrays)
 
 
+def save_native(path, arrays):
+    """Lossless portable Cloud representation of the same activated arrays."""
+    arrays=validate(arrays);count=len(arrays["positions"])
+    values=np.column_stack((arrays["positions"],arrays["scales"],arrays["rotations"],arrays["opacities"],arrays["sh_dc"]))
+    with Path(path).open("wb") as stream:
+        stream.write(b"REMIGAUS"+struct.pack("<II",SCHEMA,count))
+        stream.write(values.astype("<f4",copy=False).tobytes())
+
+
 def load(path):
     path = Path(path)
     with path.open("rb") as stream:

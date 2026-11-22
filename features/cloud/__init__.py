@@ -1,6 +1,5 @@
 """Remi Cloud browser approval UI. Credentials never enter Blender data blocks."""
 import webbrowser
-import time
 from pathlib import Path
 
 import bpy
@@ -11,11 +10,14 @@ from bpy.app.handlers import persistent
 from ...integrations.remi_cloud.client import runtime
 from ...integrations.remi_cloud.protocol import DEFAULT_API, CloudError
 from .jobs import CLASSES as JOB_CLASSES
+from . import projects,board_sync
+from .sign_in import Remi_OT_CloudSignIn, close_dialog
 
 needs_reset = False
 
 
 class RemiCloudState(PropertyGroup):
+    project:EnumProperty(name="Project",items=projects.project_items,update=projects.changed,options={"SKIP_SAVE"})
     base_url: StringProperty(name="Cloud API",default=DEFAULT_API,options={"SKIP_SAVE"})
     busy: BoolProperty(default=False,options={"SKIP_SAVE"})
     signed_in: BoolProperty(default=False,options={"SKIP_SAVE"})
@@ -48,6 +50,7 @@ def tick():
         needs_reset=False
     state = getattr(bpy.context.window_manager,"remi_cloud",None)
     if state is None: return None
+    board_sync.configure_cache()
     value = runtime.status()
     state.busy = runtime.pending
     state.signed_in = value.get("signed_in",value.get("state")=="signed_in")
@@ -69,13 +72,9 @@ def tick():
         whole,fraction=divmod(int(billing["actual_cost_micros"]),1000000)
         amount=f"{whole}.{fraction:06d}".rstrip("0").rstrip(".")
         state.billing_message="Final usage cost: EUR "+amount
-    if runtime.following and not runtime.pending and value.get("state")=="job_running" and time.monotonic()>=runtime.next_poll:
-        try:
-            runtime.command("poll",state.base_url,request_path=value["request_path"])
-            runtime.next_poll=time.monotonic()+2
-        except (CloudError,RuntimeError,OSError):
-            runtime.following=False
-            state.message="Cloud polling stopped. Resume the saved request."
+    if state.signed_in:
+        projects.tick(bpy.context)
+    board_sync.tick(bpy.context)
     if bpy.context.screen:
         for area in bpy.context.screen.areas:
             if area.type in {"VIEW_3D", "IMAGE_EDITOR"}: area.tag_redraw()
@@ -88,6 +87,10 @@ class Remi_OT_CloudLogin(Operator):
     bl_description = "Approve this Blender device in your browser using the same Remi Cloud account"
 
     def execute(self,context):
+        board_sync.configure_cache()
+        state = context.window_manager.remi_cloud
+        state.user_code = ""
+        state.verification_url = ""
         try: runtime.command("login",context.window_manager.remi_cloud.base_url)
         except (CloudError,RuntimeError,OSError) as error:
             self.report({"ERROR"},str(error))
@@ -148,11 +151,14 @@ class Remi_PT_Cloud(Panel):
         import textwrap
         state = context.window_manager.remi_cloud
         layout = self.layout
-        if state.signed_in: layout.label(text=state.email,icon="USER")
-        for line in textwrap.wrap(state.message,width=44): layout.label(text=line)
+        failed = runtime.status().get("state") == "error"
+        if failed:
+            for line in textwrap.wrap(state.message,width=32): layout.label(text=line)
         if state.user_code:
             layout.label(text=f"Code: {state.user_code[:4]}-{state.user_code[4:]}")
             layout.operator("remi.cloud_open_approval",icon="URL")
+        elif state.busy and not state.signed_in and not runtime.following:
+            layout.label(text="Connecting…",icon="TIME")
         row = layout.row(align=True)
         generation_active = context.window_manager.remi_generation.busy or context.window_manager.remi_image.busy
         row.enabled = not generation_active
@@ -162,24 +168,18 @@ class Remi_PT_Cloud(Panel):
         elif runtime.following:
             row.operator("remi.cloud_stop_waiting")
         elif state.signed_in:
-            row.operator("remi.cloud_refresh",text="Refresh",icon="FILE_REFRESH")
-            row.operator("remi.cloud_logout")
-        else: row.operator("remi.cloud_login",icon="URL")
-        settings = layout.column()
-        settings.enabled = not state.busy and not state.signed_in
-        settings.prop(state,"base_url")
-        layout.label(text="Sign-in lasts for this Blender session.",icon="INFO")
+            row.label(text=state.email,icon="USER")
+            row.operator("remi.cloud_logout",text="",icon="QUIT")
+        else: row.operator("remi.cloud_login",text="Sign In",icon="USER")
+        if failed and state.signed_in:
+            layout.operator("remi.cloud_refresh",text="Retry",icon="FILE_REFRESH")
 
     def draw(self,context):
         Remi_PT_Cloud.draw_account(self,context)
         state = context.window_manager.remi_cloud
         generation_active = context.window_manager.remi_generation.busy or context.window_manager.remi_image.busy
-        if state.signed_in and not generation_active:
-            self.layout.prop(state, "request_path", text="Saved API Request")
         if not generation_active and state.request_path and state.request_path != runtime.completed_request:
-            self.layout.operator("remi.cloud_resume", text="Resume API Request", icon="FILE_REFRESH")
-        if state.job_id and state.billing_message:
-            self.layout.label(text=state.billing_message, icon="INFO")
+            self.layout.operator("remi.cloud_resume", text="Resume Generation", icon="FILE_REFRESH")
 
 
 class Remi_PT_BoardCloud(Panel):
@@ -187,17 +187,35 @@ class Remi_PT_BoardCloud(Panel):
     bl_idname = "Remi_PT_BoardCloud"
     bl_space_type = "IMAGE_EDITOR"
     bl_region_type = "HEADER"
-    bl_ui_units_x = 26
+    bl_ui_units_x = 14
 
     def draw(self, context):
         Remi_PT_Cloud.draw(self, context)
 
 
-CLASSES = (RemiCloudState,Remi_OT_CloudLogin,Remi_OT_CloudRefresh,Remi_OT_CloudLogout,Remi_OT_CloudOpenApproval,*JOB_CLASSES,Remi_PT_Cloud,Remi_PT_BoardCloud)
+class Remi_OT_CloudAccount(Operator):
+    bl_idname = "remi.cloud_account"
+    bl_label = "Remi Account"
+    bl_description = "Sign in or open your Remi Cloud account in your browser"
+
+    def invoke(self, context, event):
+        state = context.window_manager.remi_cloud
+        if not state.signed_in:
+            result = bpy.ops.remi.cloud_sign_in("INVOKE_DEFAULT")
+            return {"CANCELLED"} if result == {"CANCELLED"} else {"FINISHED"}
+        return self.execute(context)
+
+    def execute(self, context):
+        webbrowser.open("https://remi3d.app/app/profile", new=2)
+        return {"FINISHED"}
+
+
+CLASSES = (RemiCloudState,Remi_OT_CloudLogin,Remi_OT_CloudRefresh,Remi_OT_CloudLogout,Remi_OT_CloudOpenApproval,Remi_OT_CloudSignIn,Remi_OT_CloudAccount,*JOB_CLASSES,Remi_PT_Cloud,Remi_PT_BoardCloud,*projects.CLASSES)
 
 
 @persistent
 def before_load(_unused):
+    close_dialog()
     runtime.stop()
     reset_connection()
 
@@ -210,7 +228,7 @@ def reset_connection():
     for manager in managers:
         state=getattr(manager,"remi_cloud",None)
         if state is None: continue
-        for name in ("busy","signed_in","email","user_code","verification_url","output_path","result_operation","job_id","billing_message","progress","generation_enabled","message"):
+        for name in ("busy","signed_in","email","user_code","verification_url","output_path","result_operation","job_id","billing_message","progress","generation_enabled","message","project"):
             state.property_unset(name)
     return True
 
@@ -225,6 +243,7 @@ def register():
 
 
 def unregister():
+    close_dialog()
     if bpy.app.timers.is_registered(tick): bpy.app.timers.unregister(tick)
     if before_load in bpy.app.handlers.load_pre: bpy.app.handlers.load_pre.remove(before_load)
     runtime.cleanup()

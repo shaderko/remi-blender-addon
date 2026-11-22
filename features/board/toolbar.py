@@ -114,7 +114,7 @@ def enabled(board, tool, context=None, identifier=""):
 def buttons(board):
     """Geometry depends on editor size only, never on selection or job state."""
     height = board.region[1]
-    scale = min(1.6, max(0.8, bpy.context.preferences.system.ui_scale))
+    scale = 1.0  # The board's logical drawing transform applies DPI once.
     pitch = min(44*scale, max(18, (height-52)/len(TOOLS)))
     size = min(36*scale, pitch-5)
     x, top = 14*scale, height-26*scale
@@ -321,47 +321,8 @@ class REMI_BOARD_OT_tool_settings(Operator):
     def invoke(self, context, _event):
         if self.tool not in BY_ID or not BY_ID[self.tool].settings:
             return {"CANCELLED"}
-        return context.window_manager.invoke_popup(self, width=400)
-
-    def draw(self, context):
-        layout = self.layout
-        layout.label(text=BY_ID[self.tool].title + " · Settings", icon="PREFERENCES")
-        layout.use_property_split = True
-        layout.use_property_decorate = False
-        if self.tool == "flow":
-            from ...app.ui.flow_controls import draw_flow_controls
-            draw_flow_controls(layout, context, include_run=False)
-        elif self.tool == "texture":
-            settings = context.scene.remi_texture
-            for name in ("texture_size", "match_distance", "layer_width", "normal_smoothing"):
-                layout.prop(settings, name)
-        elif self.tool == "lods":
-            from ..remesh.lods import draw_settings
-            draw_settings(layout, context.scene.remi_settings)
-        else:
-            settings = context.scene.remi_generation
-            state = context.window_manager.remi_generation
-            controls = layout.column()
-            controls.enabled = not (state.busy or state.mesh_busy)
-            from ..cloud.generation import draw_backend, is_api
-            if self.tool == "generate3d":
-                draw_backend(controls, context)
-            fields = (("mesh_quality", "mesh_output", "python") if self.tool == "mesh" else
-                      ("model", "gaussians", "seed", "output"))
-            for name in fields:
-                controls.prop(settings, name)
-            if self.tool == "generate3d" and settings.model == "triposplat":
-                controls.prop(settings, "triposplat_steps")
-                controls.prop(settings, "triposplat_guidance")
-                controls.prop(settings, "triposplat_shift")
-            if self.tool == "generate3d" and not is_api(context):
-                for name in ("model_cache_minutes", "python", "models"):
-                    controls.prop(settings, name)
-                controls.operator("remi.download_models", text="Download 3D Model", icon="IMPORT")
-            if state.busy or state.mesh_busy:
-                layout.label(text="Settings unlock when the active generation finishes", icon="TIME")
-        layout.separator()
-        layout.label(text="Saved for the next left-click. No job starts here.", icon="INFO")
+        result = bpy.ops.remi_board.settings("INVOKE_DEFAULT", section=self.tool)
+        return {"CANCELLED"} if result == {"CANCELLED"} else {"FINISHED"}
 
     def execute(self, _context):
         return {"FINISHED"}

@@ -1,4 +1,4 @@
-"""Isolated stdlib network process. Never writes a session/device secret to disk."""
+"""Isolated shared-SDK network process. Never writes a session/device secret to disk."""
 import json
 from pathlib import Path
 import signal
@@ -25,8 +25,9 @@ def main(directory):
     request_id = 0
     request_path = None
     caps = None
+    workspace = None
     def connected(profile):
-        nonlocal caps
+        nonlocal caps,workspace
         # Account authentication does not depend on the generation API being
         # deployed. Forget stale admission flags before every discovery attempt.
         caps = None
@@ -37,6 +38,10 @@ def main(directory):
         else:
             message = "Cloud connected." if caps["enabled"] else "Signed in. Cloud generation is not enabled on this server yet."
         publish({"state":"signed_in", **profile, "message":message})
+        cache=command.get("workspace_cache")
+        if cache and workspace is None:
+            from workspace_worker import WorkspaceWorker
+            workspace=WorkspaceWorker(session,root,cache);workspace.start()
 
     def publish(value):
         # This file may contain public profile/code metadata, never a bearer,
@@ -44,7 +49,7 @@ def main(directory):
         value = {**({"signed_in":True,**session.profile} if session is not None and session.profile else {"signed_in":False}),
                  **({"request_path":request_path} if request_path else {}),
                  **({"capabilities":caps} if caps else {}),**value,"request_id":request_id}
-        allowed = {key:value[key] for key in ("request_id","state","message","user_code","verification_url","email","user_id","capabilities","signed_in","request_path","operation","job_id","progress","billing","output_path") if key in value}
+        allowed = {key:value[key] for key in ("request_id","state","message","user_code","verification_url","email","user_id","capabilities","signed_in","request_path","operation","job_id","progress","billing","output_path","error_code","retryable") if key in value}
         temporary = root / "status.partial.json"
         temporary.write_text(json.dumps(allowed),encoding="utf-8")
         temporary.replace(root / "status.json")
@@ -60,6 +65,7 @@ def main(directory):
                 if action == "close": break
                 if action == "login":
                     if session is not None and session.base_url != command["base_url"]:
+                        if workspace:workspace.close();workspace=None
                         if not session.logout(): raise CloudError("Previous session revocation was not confirmed. Review your Remi Cloud sessions.")
                         session = None
                         caps = None
@@ -72,14 +78,17 @@ def main(directory):
                     profile = session.status()
                     connected(profile)
                 elif action == "logout":
+                    if workspace:workspace.close();workspace=None
                     revoked = session.logout() if session is not None else True
                     session = None
                     caps = None
                     publish({"state":"signed_out","message":"Signed out." if revoked else "Local login cleared; server revocation was not confirmed. Review your Remi Cloud sessions."})
-                elif action in ("generate","resume","poll"):
+                elif action in ("generate","resume"):
                     if session is None or session.base_url != command["base_url"]:
                         raise CloudError("Sign in to the original Remi Cloud server first.")
                     session.status()
+                    wanted=command.get("project_id")
+                    if wanted!=session.project_id:raise CloudError("Choose the original project and wait for its board to connect before generating or resuming.",code="project_changed")
                     if action == "generate":
                         caps = session.capabilities()
                         operation=command.get("operation")
@@ -91,14 +100,20 @@ def main(directory):
                         work=CloudRequest(command["request_path"],session)
                     request_path=str(work.path)
                     publish({"state":"working","message":"Checking the saved Cloud request."})
-                    result=work.poll() if action=="poll" else work.submit()
-                    publish(result)
+                    if not (work.directory/"job.json").exists():
+                        result=work.submit()
+                        publish(result)
+                        if result.get("state") in ("job_ready","job_failed"):
+                            continue
+                    for result in work.watch(cancelled=lambda:stopping):
+                        publish(result)
                 else: raise CloudError("Unsupported Cloud command.")
             except CloudError as error:
-                publish({"state":"error","message":str(error)})
+                publish({"state":"error","message":str(error),"error_code":error.code,"retryable":error.retryable})
             except (OSError,ValueError,KeyError,TypeError,ProtocolError):
                 publish({"state":"error","message":"The Cloud request failed. No result was imported."})
     finally:
+        if workspace:workspace.close()
         if session is not None: session.logout()
 
 

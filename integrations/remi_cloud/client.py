@@ -7,6 +7,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import hashlib
+import time
+import uuid
 
 from .protocol import DEFAULT_API, api_url
 
@@ -29,9 +32,9 @@ class CloudProcess:
         self.retired = []
         self.following = False
         self.latest = {}
-        self.next_poll = 0.0
         self.completed_request = None
         self.paused = False
+        self.workspace_cache = None
 
     def reap(self):
         for process,directory in list(self.retired):
@@ -62,6 +65,7 @@ class CloudProcess:
 
     def command(self, action, base_url=DEFAULT_API, **payload):
         url = api_url(base_url)
+        if self.workspace_cache:payload.setdefault("workspace_cache",str(self.workspace_cache))
         self.start()
         if self.pending: raise RuntimeError("Wait for the current Cloud request or cancel sign-in.")
         self.paused=False
@@ -91,7 +95,7 @@ class CloudProcess:
             return {"state":"connecting","message":"Connecting to Remi Cloud…"}
         if value.get("request_id") != self.sequence:
             return {**self.latest,"state":"connecting","message":"Connecting to Remi Cloud…"}
-        if value.get("state") in ("signed_in","signed_out","error","job_running","job_ready","job_failed"):
+        if value.get("state") in ("signed_in","signed_out","error","job_ready","job_failed"):
             self.pending = False
         self.latest = value
         if value.get("state") in ("job_ready","job_failed","error"):
@@ -99,6 +103,28 @@ class CloudProcess:
         if value.get("state") in ("job_ready","job_failed"):
             self.completed_request=value.get("request_path")
         return {**value,"message":"Stopped waiting locally. Cloud work may continue; resume the saved request."} if self.paused else value
+
+    def workspace_status(self):
+        if self.directory is None:return {}
+        try:
+            path=self.directory/"workspace.json"
+            if path.stat().st_size>8*1024*1024:return {}
+            value=json.loads(path.read_text(encoding="utf-8"))
+            return value if isinstance(value,dict) else {}
+        except (OSError,ValueError):return {}
+
+    def workspace_command(self,action,base_url=DEFAULT_API,**payload):
+        profile=self.status()
+        if not self.workspace_cache or profile.get("signed_in") is not True or not profile.get("user_id"):
+            raise RuntimeError("Sign in to Remi Cloud before sharing board edits.")
+        base_url=api_url(base_url)
+        key=hashlib.sha256((base_url+"\n"+profile["user_id"]).encode()).hexdigest()
+        root=Path(self.workspace_cache)/key/"outbox";root.mkdir(parents=True,exist_ok=True)
+        command_id=f"{time.time_ns():020d}-{uuid.uuid4().hex}"
+        value={**payload,"action":action,"base_url":base_url,"user_id":profile["user_id"],"id":command_id}
+        path=root/(command_id+".json");temporary=path.with_suffix(".partial")
+        temporary.write_text(json.dumps(value,allow_nan=False),encoding="utf-8");temporary.replace(path)
+        return command_id
 
     def stop(self):
         if self.process is not None and self.process.poll() is None:

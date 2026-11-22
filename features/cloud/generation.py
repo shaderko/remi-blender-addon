@@ -5,7 +5,6 @@ No provider credentials or duplicate model settings live here.
 """
 from pathlib import Path
 import json
-import time
 import uuid
 
 import bpy
@@ -22,6 +21,10 @@ def available(context, operation=None):
     state = getattr(context.window_manager, "remi_cloud", None)
     value = runtime.status()
     if not state or not state.signed_in or value.get("signed_in") is not True or runtime.pending or runtime.following:
+        return False
+    workspace=runtime.workspace_status()
+    if workspace and (workspace.get("project_id")!=getattr(state,"project","default") or
+            (workspace.get("catalog",{}).get("projects") and not workspace.get("ready"))):
         return False
     caps = value.get("capabilities", {})
     return bool(caps.get("enabled") and (operation is None or caps.get("operations", {}).get(operation)))
@@ -64,7 +67,6 @@ class ApiGenerationJob:
         self.output_path = None
         self.finished = self.stopped = False
         self.error = None
-        self.next_poll = 0.0
         self.last = {}
         self._start()
 
@@ -74,8 +76,9 @@ class ApiGenerationJob:
             options["seed"] = (options.get("seed", 0) + self.index) % 2147483648
         runtime.command("generate", self.base_url, operation=self.operation,
             prompt=self.prompt, image=self.image, output=str(self.directory),
-            options=options, max_cost_eur=self.max_cost)
-        # This adapter owns polling; the account timer only displays status.
+            options=options, max_cost_eur=self.max_cost,project_id=(runtime.workspace_status().get("project_id") if runtime.workspace_status().get("project_id")!="default" else None))
+        # The isolated SDK worker receives pushed events. Blender only reads
+        # its local status file; no timer sends network status requests.
         runtime.following = False
 
     def _consume(self, value):
@@ -125,9 +128,6 @@ class ApiGenerationJob:
                 self._consume(value)
             elif state in {"error", "job_failed", "signed_out"} and not runtime.pending:
                 raise CloudError(value.get("message") or "The API request could not complete.")
-            elif state == "job_running" and not runtime.pending and time.monotonic() >= self.next_poll:
-                runtime.command("poll", self.base_url, request_path=value["request_path"])
-                self.next_poll = time.monotonic() + 2
         except (CloudError, OSError, ValueError, KeyError) as error:
             self.error = str(error)
             self.finished = True
@@ -178,11 +178,4 @@ def start_image(context):
 
 def draw_backend(layout, context):
     settings = context.scene.remi_generation
-    layout.prop(settings, "backend", expand=True)
-    if is_api(context):
-        state = context.window_manager.remi_cloud
-        if not state.signed_in:
-            layout.operator("remi.cloud_login", text="Sign in to Remi Cloud", icon="URL")
-        else:
-            layout.label(text=state.email or "Connected to Remi Cloud", icon="USER")
-        layout.prop(state, "max_cost_eur", text="Maximum per job (EUR)")
+    layout.prop(settings, "use_cloud")

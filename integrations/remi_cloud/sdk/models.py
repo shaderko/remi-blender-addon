@@ -57,6 +57,7 @@ class Capabilities:
     enabled: bool
     operations: dict[str, bool]
     input_modes: dict[str, bool]
+    image_generation: dict[str, Any] | None = None
 
     @classmethod
     def parse(cls, value: Any) -> Capabilities:
@@ -74,7 +75,15 @@ class Capabilities:
         for name in ("single", "batch", "multiview"):
             if type(modes.get(name)) is not bool:
                 raise ProtocolError("Invalid input-mode capabilities.")
-        return cls(value["enabled"], dict(operations), dict(modes))
+        image = value.get("imageGeneration")
+        if image is not None:
+            image = object_value(image)
+            text(image.get("model"))
+            if (type(image.get("maxReferenceImages")) is not int or not 1 <= image["maxReferenceImages"] <= 16
+                    or type(image.get("maxReferenceBytes")) is not int or not 1 <= image["maxReferenceBytes"] <= 20 * 1024 * 1024
+                    or type(image.get("editing")) is not bool):
+                raise ProtocolError("Invalid image context capabilities.")
+        return cls(value["enabled"], dict(operations), dict(modes), dict(image) if image else None)
 
 
 @dataclass(frozen=True)
@@ -163,7 +172,7 @@ class Job:
         if value["status"] == "succeeded" and not outputs:
             raise ProtocolError("A succeeded job must have output artifacts.")
         inputs = identifiers(value.get("inputFileIds"))
-        if (value["operation"] == "generate_image" and (inputs or value["inputMode"] != "single")) or (value["operation"] != "generate_image" and not inputs):
+        if (value["operation"] == "generate_image" and (len(inputs) > 16 or value["inputMode"] != "single")) or (value["operation"] != "generate_image" and not inputs):
             raise ProtocolError("A job must identify its input files.")
         return cls(identifier(value.get("id")), value["operation"], value["inputMode"], inputs,
                    value["status"], text(value.get("stage")), float(progress), outputs, error,

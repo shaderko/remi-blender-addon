@@ -17,7 +17,6 @@ concurrency:
 
 env:
   BLENDER_VERSION: "5.3.0"
-  BLENDER_REVISION: "02f0899d78e3"
 
 jobs:
   blender:
@@ -51,17 +50,17 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/blender-${{ env.BLENDER_VERSION }}-macos-arm64.dmg
-          key: blender-${{ env.BLENDER_VERSION }}-${{ env.BLENDER_REVISION }}-9e9c56429e04-macos-arm64
+          key: blender-${{ env.BLENDER_VERSION }}-official-2d802b547667-macos-arm64
 
       - name: Download Blender
         run: |
           blender_dmg="$RUNNER_TEMP/blender-${{ env.BLENDER_VERSION }}-macos-arm64.dmg"
           if [[ ! -f "$blender_dmg" ]]; then
             curl --fail --location --retry 3 \
-              "https://cdn.builder.blender.org/download/daily/blender-5.3.0-stable+v53.02f0899d78e3-darwin.arm64-release.dmg" \
+              "https://download.blender.org/release/Blender5.3/blender-5.3.0-macos-arm64.dmg" \
               --output "$blender_dmg"
           fi
-          echo "9e9c56429e045cfb98f556378cda144c8085517b2accc1954c279c2cc7ffd331  $blender_dmg" | shasum -a 256 -c -
+          echo "2d802b54766741e612cead50b03ebbc8eb64dadc71eda932573d256b8a784720  $blender_dmg" | shasum -a 256 -c -
 
       - name: Mount Blender
         run: |
@@ -116,17 +115,17 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/blender-${{ env.BLENDER_VERSION }}-windows-x64.zip
-          key: blender-${{ env.BLENDER_VERSION }}-${{ env.BLENDER_REVISION }}-f06bc85afb22-windows-x64
+          key: blender-${{ env.BLENDER_VERSION }}-official-3ac567a63d59-windows-x64
 
       - name: Download and extract Blender
         shell: pwsh
         run: |
           $archive = "$env:RUNNER_TEMP/blender-${{ env.BLENDER_VERSION }}-windows-x64.zip"
           if (!(Test-Path $archive)) {
-            curl.exe --fail --location --retry 3 "https://cdn.builder.blender.org/download/daily/blender-5.3.0-stable+v53.02f0899d78e3-windows.amd64-release.zip" --output $archive
+            curl.exe --fail --location --retry 3 "https://download.blender.org/release/Blender5.3/blender-5.3.0-windows-x64.zip" --output $archive
             if ($LASTEXITCODE -ne 0) { throw "Blender download failed" }
           }
-          if ((Get-FileHash -Algorithm SHA256 $archive).Hash.ToLower() -ne "f06bc85afb22df30f4a828f1074f668de4936fb3a3cbc876b1144948d6e2e6ed") {
+          if ((Get-FileHash -Algorithm SHA256 $archive).Hash.ToLower() -ne "3ac567a63d59d9934f7b9213bfb27ba05760e1fb366f8f55c381573ec3eabfa8") {
             throw "Pinned Blender archive checksum mismatch"
           }
           Expand-Archive -Path $archive -DestinationPath "$env:RUNNER_TEMP/blender"

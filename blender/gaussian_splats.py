@@ -66,6 +66,65 @@ def write_splat_archive(obj, path):
     return Path(path)
 
 
+def world_splat_arrays(obj):
+    """Bake scene transforms into Gaussian centres and covariance, without pickle."""
+    arrays = splat_arrays(obj)
+    matrix = np.asarray(obj.matrix_world, dtype=np.float64)
+    linear = matrix[:3, :3]
+    if not np.isfinite(matrix).all() or abs(np.linalg.det(linear)) < 1e-12:
+        raise ValueError("Gaussian object transform must be finite and have non-zero scale")
+    q = arrays["rotations"].astype(np.float64)
+    q /= np.maximum(np.linalg.norm(q, axis=1, keepdims=True), 1e-12)
+    w, x, y, z = q.T
+    rotation = np.stack((
+        1-2*(y*y+z*z), 2*(x*y-w*z), 2*(x*z+w*y),
+        2*(x*y+w*z), 1-2*(x*x+z*z), 2*(y*z-w*x),
+        2*(x*z-w*y), 2*(y*z+w*x), 1-2*(x*x+y*y),
+    ), axis=1).reshape(-1, 3, 3)
+    axes = np.einsum("ij,njk->nik", linear, rotation) * arrays["scales"][:, None, :]
+    # Full affine transforms (including non-uniform scale/shear) change each
+    # covariance. SVD recovers its principal axes without approximating scale.
+    basis, scales, _ = np.linalg.svd(axes)
+    reflected = np.linalg.det(basis) < 0
+    basis[reflected, :, 2] *= -1
+    candidates = np.maximum(0, np.stack((
+        1+basis[:,0,0]+basis[:,1,1]+basis[:,2,2],
+        1+basis[:,0,0]-basis[:,1,1]-basis[:,2,2],
+        1-basis[:,0,0]+basis[:,1,1]-basis[:,2,2],
+        1-basis[:,0,0]-basis[:,1,1]+basis[:,2,2],
+    ), axis=1))
+    largest = np.argmax(candidates, axis=1)
+    quaternions = np.empty((len(basis), 4), np.float64)
+    for axis in range(4):
+        mask = largest == axis
+        r = basis[mask]
+        v = .5 * np.sqrt(candidates[mask, axis])
+        d = 4*v
+        if axis == 0:
+            values = (v, (r[:,2,1]-r[:,1,2])/d, (r[:,0,2]-r[:,2,0])/d, (r[:,1,0]-r[:,0,1])/d)
+        elif axis == 1:
+            values = ((r[:,2,1]-r[:,1,2])/d, v, (r[:,0,1]+r[:,1,0])/d, (r[:,0,2]+r[:,2,0])/d)
+        elif axis == 2:
+            values = ((r[:,0,2]-r[:,2,0])/d, (r[:,0,1]+r[:,1,0])/d, v, (r[:,1,2]+r[:,2,1])/d)
+        else:
+            values = ((r[:,1,0]-r[:,0,1])/d, (r[:,0,2]+r[:,2,0])/d, (r[:,1,2]+r[:,2,1])/d, v)
+        quaternions[mask] = np.column_stack(values)
+    return {**arrays,
+            "positions": (arrays["positions"].astype(np.float64) @ linear.T + matrix[:3,3]).astype(np.float32),
+            "scales": scales.astype(np.float32), "rotations": quaternions.astype(np.float32)}
+
+
+def write_scene_splat_archive(context, objects, path):
+    """Save all edited splat parts with evaluated data and world transforms."""
+    context.view_layer.update()
+    depsgraph = context.evaluated_depsgraph_get()
+    parts = [world_splat_arrays(obj.evaluated_get(depsgraph)) for obj in objects]
+    if not parts:
+        raise ValueError("The editing scene contains no Gaussian splats")
+    save(path, {key: np.concatenate([part[key] for part in parts]) for key in parts[0]})
+    return Path(path)
+
+
 def covariance_normals(arrays, view_matrix=None, object_matrix=None):
     """Estimate one normal per Gaussian from its flattest covariance axis.
 

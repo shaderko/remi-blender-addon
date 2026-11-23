@@ -227,6 +227,28 @@ class ModelDownloadTests(unittest.TestCase):
             download.HTTPSRedirectHandler().redirect_request(
                 urllib.request.Request(BASE), None, 302, "Found", {}, "http://models.example/weights")
 
+    def test_signed_https_cdn_redirect_is_allowed_without_downgrade(self):
+        request = urllib.request.Request(BASE)
+        signed = "https://cdn.example/model?Expires=123&Signature=fixture&Key-Pair-Id=test"
+        redirected = download.HTTPSRedirectHandler().redirect_request(request, None, 302, "Found", {}, signed)
+        self.assertEqual(redirected.full_url, signed)
+        for invalid in ("http://cdn.example/model?Signature=x", "https://user:password@cdn.example/model",
+                        "file:///tmp/model", "https://cdn.example/model#fragment"):
+            with self.subTest(url=invalid), self.assertRaises(ValueError):
+                download.HTTPSRedirectHandler().redirect_request(request, None, 302, "Found", {}, invalid)
+        context = download.verified_https_context()
+        self.assertTrue(context.check_hostname)
+        self.assertEqual(context.verify_mode, download.ssl.CERT_REQUIRED)
+
+    def test_resume_preserves_existing_download_query(self):
+        first, tail = io.BytesIO(b"part"), io.BytesIO(b"tail")
+        first.headers = {"Content-Length": "8"}
+        tail.status = 206
+        tail.headers = {"Content-Range": "bytes 4-7/8"}
+        opener = mock.Mock(side_effect=[first, tail])
+        self.assertEqual(b"".join(download.download_chunks(BASE+"weights?download=true", 8, opener)), b"parttail")
+        self.assertEqual(opener.call_args.args[0].full_url, BASE+"weights?download=true&remiOffset=4")
+
     def test_path_resolution_cannot_escape_model_folder(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(ValueError):

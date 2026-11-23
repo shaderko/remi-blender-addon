@@ -2726,7 +2726,7 @@ class REMI_BOARD_OT_run(Operator):
                 asset = board.catalog.assets.get(drag["path"])
                 if asset is not None:
                     asset.yaw = (drag["yaw"] - (mx-drag["start"][0])*0.45) % 360
-                    asset.elevation = max(-75, min(75, drag["elevation"] + (my-drag["start"][1])*0.45))
+                    asset.elevation = max(-75, min(75, drag["elevation"] - (my-drag["start"][1])*0.45))
                     board.invalidate_preview(asset.id)
                 self._redraw(context)
                 return {"RUNNING_MODAL"}
@@ -3638,7 +3638,7 @@ class REMI_BOARD_MT_image(Menu):
                 for action, title, icon in (("copy", "Copy Prompt", "COPYDOWN"), ("use", "Use Prompt", "TEXT")):
                     op = layout.operator("remi_board.tool_action", text=title, icon=icon)
                     op.action, op.asset_id = action, identifier
-            if asset.kind == "MESH":
+            if asset.kind in {"MESH", "SPLAT"}:
                 layout.operator("remi_board.edit_mesh", icon="EDITMODE_HLT").asset_id = identifier
             if asset.kind != "IMAGE":
                 layout.operator("remi_board.add_asset", icon="IMPORT").asset_id = identifier

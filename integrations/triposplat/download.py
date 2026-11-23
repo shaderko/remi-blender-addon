@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import ssl
 import sys
 import urllib.parse
 import urllib.request
@@ -39,12 +40,39 @@ def model_base(value):
 
 class HTTPSRedirectHandler(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, request, fp, code, message, headers, new_url):
-        model_base(new_url)  # Do not downgrade HTTPS or forward to credentialed URLs.
+        validate_download_url(new_url)  # Signed HTTPS CDN queries are valid.
         return super().redirect_request(request, fp, code, message, headers, new_url)
 
 
+def validate_download_url(value):
+    url = urllib.parse.urlsplit(value)
+    if (url.scheme != "https" or not url.hostname or url.username or url.password
+            or url.fragment or "\\" in value):
+        raise ValueError("Model downloads require HTTPS URLs without embedded credentials")
+    return value
+
+
+def verified_https_context():
+    context = ssl.create_default_context()
+    if not context.cert_store_stats().get("x509_ca"):
+        try:
+            import certifi
+        except ImportError:
+            certifi = None
+        if certifi is not None:
+            context.load_verify_locations(cafile=certifi.where())
+        elif sys.platform == "darwin":
+            context.load_verify_locations(cafile="/etc/ssl/cert.pem")
+        if not context.cert_store_stats().get("x509_ca"):
+            raise RuntimeError("No trusted HTTPS certificates are available; repair the Python certificate bundle")
+    return context
+
+
 def open_url(url):
-    return urllib.request.build_opener(HTTPSRedirectHandler()).open(url, timeout=60)
+    validate_download_url(url.full_url if isinstance(url, urllib.request.Request) else url)
+    return urllib.request.build_opener(
+        HTTPSRedirectHandler(), urllib.request.HTTPSHandler(context=verified_https_context()),
+    ).open(url, timeout=60)
 
 
 def _valid_name(name):
@@ -154,7 +182,7 @@ def download_chunks(url, expected_bytes, opener):
     received = 0
     for attempt in range(3):
         request = url if not received else urllib.request.Request(
-            f"{url}?remiOffset={received}", headers={"Range": f"bytes={received}-"},
+            f"{url}{'&' if urllib.parse.urlsplit(url).query else '?'}remiOffset={received}", headers={"Range": f"bytes={received}-"},
         )
         try:
             with opener(request) as response:

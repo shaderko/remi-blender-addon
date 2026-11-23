@@ -1,4 +1,4 @@
-"""Edit a board mesh in its own ordinary Blender scene; apply to the same card."""
+"""Edit a board mesh or Gaussian in an isolated scene; apply to the same card."""
 
 from copy import deepcopy
 import json
@@ -14,6 +14,7 @@ from mathutils import Vector
 from . import canvas, workspace
 from .assets import Catalog, OBJECT_ASSET_KEY, SCENE_ASSETS_KEY
 from .jobs import busy_elsewhere
+from ...blender import gaussian_splats
 
 
 EDIT_ASSET = "remi_board_edit_asset"
@@ -57,6 +58,10 @@ def _discard_import(before):
     for item in set(bpy.data.objects)-before["objects"]:
         bpy.data.objects.remove(item, do_unlink=True)
     SessionObjectStore.remove_new_orphans(before)
+    if "pointclouds" in before:
+        for cloud in set(bpy.data.pointclouds)-before["pointclouds"]:
+            if cloud.users == 0:
+                bpy.data.pointclouds.remove(cloud)
 
 
 def import_working_mesh(context, path):
@@ -95,17 +100,19 @@ def open_edit_scene(context, identifier):
     owner = source_scene(context.scene)
     catalog = catalog_for(context)
     asset = catalog.assets.get(identifier)
-    if asset is None or asset.kind != "MESH" or asset.state != "READY" or asset.hidden:
-        raise ValueError("Choose a completed mesh card")
+    if asset is None or asset.kind not in {"MESH", "SPLAT"} or asset.state != "READY" or asset.hidden:
+        raise ValueError("Choose a completed mesh or Gaussian card")
     scene = next((item for item in bpy.data.scenes
                   if item.get(EDIT_OWNER) == owner and item.get(EDIT_ASSET) == identifier), None)
     if scene is not None:
         context.window.scene = scene
         return scene
-    if not Path(asset.mesh_source()).is_file():
-        raise ValueError("The source mesh file is missing")
+    path = asset.artifact if asset.kind == "SPLAT" else asset.mesh_source()
+    if not Path(path).is_file():
+        raise ValueError("The source asset file is missing")
     from ...blender.session_objects import SessionObjectStore
     before = SessionObjectStore.dependency_snapshot()
+    before["pointclouds"] = set(bpy.data.pointclouds)
     scene = bpy.data.scenes.new("Edit · " + (asset.label or asset.title or "Mesh"))
     scene.use_fake_user = True
     scene[EDIT_OWNER], scene[EDIT_ASSET], scene[EDIT_BASE] = owner, identifier, asset.artifact
@@ -113,11 +120,14 @@ def open_edit_scene(context, identifier):
     try:
         context.window.scene = scene
         with context.temp_override(scene=scene, view_layer=scene.view_layers[0], collection=scene.collection):
-            meshes = import_working_mesh(bpy.context, asset.mesh_source())
-            source = appearance_source(catalog, asset)
-            for obj in meshes:
-                if source is not None:
-                    obj["remi_mesh_source_archive"] = source.artifact
+            if asset.kind == "SPLAT":
+                gaussian_splats.import_splats(bpy.context, path)
+            else:
+                meshes = import_working_mesh(bpy.context, path)
+                source = appearance_source(catalog, asset)
+                for obj in meshes:
+                    if source is not None:
+                        obj["remi_mesh_source_archive"] = source.artifact
             # Native Remi tools remain optional, with the user's interpreter and
             # settings available. No session, flow, or modal controller starts.
             for name in ("remi_settings", "remi_generation", "remi_texture"):
@@ -133,11 +143,21 @@ def open_edit_scene(context, identifier):
         raise
 
 
+def editable_objects(context):
+    scene = editing_scene(context)
+    asset = catalog_for(context).assets.get(scene[EDIT_ASSET]) if scene else None
+    if asset is None:
+        return []
+    if asset.kind == "SPLAT":
+        return [obj for obj in context.view_layer.objects if gaussian_splats.is_splat_object(obj)]
+    return [obj for obj in context.view_layer.objects if obj.type == "MESH"]
+
+
 def can_apply(context):
     return bool(editing_scene(context) is not None
-                and context.mode in {"OBJECT", "EDIT_MESH", "SCULPT", "PAINT_TEXTURE", "PAINT_VERTEX", "PAINT_WEIGHT"}
+                and context.mode in {"OBJECT", "EDIT_MESH", "EDIT_POINTCLOUD", "SCULPT", "PAINT_TEXTURE", "PAINT_VERTEX", "PAINT_WEIGHT"}
                 and not busy_elsewhere(context)
-                and any(obj.type == "MESH" for obj in context.view_layer.objects))
+                and editable_objects(context))
 
 
 def _export_glb(artifact):
@@ -149,7 +169,7 @@ def _export_glb(artifact):
 
 def apply_to_card(context):
     if not can_apply(context):
-        raise ValueError("Finish the active tool before applying this mesh")
+        raise ValueError("Finish the active tool before applying this asset")
     if context.mode != "OBJECT":
         bpy.ops.object.mode_set(mode="OBJECT")
     scene = context.scene
@@ -157,16 +177,16 @@ def apply_to_card(context):
     catalog = catalog_for(context)
     asset = catalog.assets.get(scene[EDIT_ASSET])
     if asset is None or asset.hidden or asset.state != "READY":
-        raise ValueError("The mesh card is no longer available")
+        raise ValueError("The card is no longer available")
     if asset.artifact != scene[EDIT_BASE]:
         raise ValueError("This card changed since the edit was opened; its newer file has been kept")
     with context.temp_override(scene=owner):
         directory = Path(canvas.layout_key(context)) / ".remi-board" / ("edit_" + uuid.uuid4().hex)
     directory.mkdir(parents=True)
-    artifact = directory / "asset.glb"
+    artifact = directory / ("splats.npz" if asset.kind == "SPLAT" else "asset.glb")
     native_artifact = directory / "asset.blend"
     selected, active = list(context.selected_objects), context.view_layer.objects.active
-    meshes = [obj for obj in context.view_layer.objects if obj.type == "MESH"]
+    meshes = editable_objects(context)
     visibility = [(obj, obj.hide_get(), obj.hide_viewport, obj.hide_select) for obj in meshes]
     try:
         for obj in selected:
@@ -176,11 +196,14 @@ def apply_to_card(context):
             obj.hide_set(False)
             obj.select_set(True)
         context.view_layer.objects.active = meshes[0]
-        result = _export_glb(artifact)
-        if result != {"FINISHED"} or not artifact.is_file() or artifact.stat().st_size < 20:
-            raise RuntimeError("Could not export the mesh; your edit is still open")
-        from . import native_assets
-        native_assets.write(context, meshes, native_artifact)
+        if asset.kind == "SPLAT":
+            gaussian_splats.write_scene_splat_archive(context, meshes, artifact)
+        else:
+            result = _export_glb(artifact)
+            if result != {"FINISHED"} or not artifact.is_file() or artifact.stat().st_size < 20:
+                raise RuntimeError("Could not export the mesh; your edit is still open")
+            from . import native_assets
+            native_assets.write(context, meshes, native_artifact)
     except Exception:
         artifact.unlink(missing_ok=True)
         native_artifact.unlink(missing_ok=True)
@@ -198,7 +221,7 @@ def apply_to_card(context):
     asset.revisions.append({key: deepcopy(previous[key]) for key in
                              ("artifact", "native_artifact", "package_artifact", "directory", "preview", "preview_view", "settings")})
     asset.artifact, asset.directory, asset.preview, asset.preview_view = str(artifact), str(directory), "", []
-    asset.native_artifact = str(native_artifact)
+    asset.native_artifact = str(native_artifact) if asset.kind == "MESH" else ""
     asset.package_artifact = ""  # An edited single LOD is no longer the complete pack.
     asset.status = "Ready"
     asset.settings["blender_edit"] = {"scene": scene.name, "objects": [obj.name for obj in meshes]}
@@ -266,14 +289,14 @@ def _resume():
                     base = bpy.data.workspaces.get("Layout") or next((item for item in bpy.data.workspaces
                         if not item.get(workspace.WORKSPACE_KEY)), None)
                     if base is None:
-                        raise RuntimeError("A normal Blender workspace is needed for mesh editing")
+                        raise RuntimeError("A normal Blender workspace is needed for asset editing")
                     window.workspace = base
                     _request = (window_id, "CREATE", owner_name, identifier)
             elif phase == "CREATE":
                 before = set(bpy.data.workspaces)
                 bpy.ops.workspace.duplicate()
                 editor = next(item for item in bpy.data.workspaces if item not in before)
-                editor.name = "Mesh Editor"
+                editor.name = "Asset Editor"
                 editor[EDIT_WORKSPACE] = True
                 editor.pop(workspace.WORKSPACE_KEY, None)
                 window.workspace = editor
@@ -288,7 +311,7 @@ def _resume():
                         with context.temp_override(area=area, region=canvas.window_region(area)):
                             context.view_layer.update()
                             points = [obj.matrix_world @ Vector(corner) for obj in context.scene.objects
-                                      if obj.type == "MESH" for corner in obj.bound_box]
+                                      if (obj.type == "MESH" or gaussian_splats.is_splat_object(obj)) for corner in obj.bound_box]
                             if points:
                                 lower = Vector([min(point[axis] for point in points) for axis in range(3)])
                                 upper = Vector([max(point[axis] for point in points) for axis in range(3)])
@@ -296,27 +319,27 @@ def _resume():
                                 view.view_location = (lower + upper) * 0.5
                                 view.view_distance = max((upper-lower).length * 1.75, 0.1)
                                 view.view_perspective = "PERSP"
-                            bpy.ops.ed.undo_push(message="Open mesh editing scene")
+                            bpy.ops.ed.undo_push(message="Open asset editing scene")
                         break
     except Exception as exc:
         _request = None
         message = str(exc)
         bpy.context.window_manager.popup_menu(lambda menu, _context: menu.layout.label(text=message),
-                                              title="Mesh editing", icon="ERROR")
+                                              title="Asset editing", icon="ERROR")
     return 0.1 if _request is not None else None
 
 
 class REMI_BOARD_OT_edit_mesh(Operator):
     bl_idname = "remi_board.edit_mesh"
     bl_label = "Edit in Blender"
-    bl_description = "Open this mesh in its own Blender scene, without starting a Remi flow"
+    bl_description = "Open this mesh or Gaussian in its own Blender scene, without starting a Remi flow"
     asset_id: StringProperty()
 
     def execute(self, context):
         try:
             asset = catalog_for(context).assets.get(self.asset_id)
-            if asset is None or asset.kind != "MESH" or asset.state != "READY" or asset.hidden:
-                raise ValueError("Choose a completed mesh card")
+            if asset is None or asset.kind not in {"MESH", "SPLAT"} or asset.state != "READY" or asset.hidden:
+                raise ValueError("Choose a completed mesh or Gaussian card")
             if context.mode != "OBJECT" or busy_elsewhere(context):
                 raise ValueError("Finish the active tool and switch to Object Mode first")
             owner = source_scene(context.scene)
@@ -333,7 +356,7 @@ class REMI_BOARD_OT_edit_mesh(Operator):
 class REMI_BOARD_OT_apply_edit(Operator):
     bl_idname = "remi_board.apply_edit"
     bl_label = "Apply to Card"
-    bl_description = "Update this same mesh card; keep earlier files and leave your main scene untouched"
+    bl_description = "Update this same asset card; keep earlier files and leave your main scene untouched"
     return_to_board: BoolProperty(name="Return to Board", default=True)
 
     @classmethod
@@ -376,7 +399,7 @@ def draw_edit_header(self, context):
         self.layout.operator("remi_board.open", text="Remi Board", icon="WORKSPACE")
         return
     row = self.layout.row(align=True)
-    row.label(text="Mesh card", icon="SCENE_DATA")
+    row.label(text="Asset card", icon="SCENE_DATA")
     apply = row.row(align=True)
     apply.enabled = can_apply(context)
     apply.operator("remi_board.apply_edit", icon="CHECKMARK")

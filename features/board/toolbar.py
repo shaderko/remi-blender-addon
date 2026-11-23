@@ -23,7 +23,7 @@ TOOLS = (
     Tool("flow", "Run Remi Flow", ("MESH",), True),
     Tool("texture", "Texture Mesh", ("MESH",), True),
     Tool("lods", "Create LODs", ("MESH",), True),
-    Tool("editmesh", "Edit in Blender", ("MESH",)),
+    Tool("editmesh", "Edit in Blender", ("MESH", "SPLAT")),
     Tool("add3d", "Add to Scene", ("SPLAT", "MESH")),
     Tool("import", "Add Images"),
     Tool("addobject", "Add Selected Object"),
@@ -93,7 +93,7 @@ def enabled(board, tool, context=None, identifier=""):
     if len({asset.kind for asset in assets}) > 1:
         return False, "Select cards of one type for a group action"
     if tool.id == "editmesh" and len(assets) != 1:
-        return False, "Select one mesh to edit in Blender"
+        return False, "Select one mesh or Gaussian to edit in Blender"
     if tool.id == "texture":
         missing = [asset for asset in assets if canvas.texture_source(board, asset) is None]
         if missing:

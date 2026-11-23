@@ -51,6 +51,7 @@ TESTS = (
     "blender_mesh_conversion_regression.py",
     "blender_workspace_ui_regression.py",
     "blender_board_assets_regression.py",
+    "blender_board_splat_edit_regression.py",
     "blender_board_add_object_regression.py",
     "blender_board_duplicate_regression.py",
     "blender_board_group_actions_regression.py",

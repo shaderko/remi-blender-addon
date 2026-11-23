@@ -1,0 +1,16 @@
+{
+  "source": "remi-cloud-app/services/gaussian-to-mesh/remi_adaptive",
+  "backendVersion": "1.0.0",
+  "nativeAbiVersion": 1,
+  "files": {
+    "__init__.py": "a7f088e4aa41cea99768eec2545d986bc0df19f8722ad4e1810ce95aa9f26d9e",
+    "__main__.py": "9fcbc2e99fd2e5ed10b6fc1292938495a042d2777b728d4712ec47c36e1ac134",
+    "backend.py": "12f3c8eaed25a07f459ea47be48196951106afddc5d923cb1a36aad7397387fd",
+    "support.py": "1970d020415e619cf57bce0c5d330e5f41db670141ccd985796cff9acdc9edbe",
+    "adaptive.cpp": "cdf0fdb7f2e6950c57bc562a175a7b41d4fa4f2b646c8884df1a58474cae9cc5",
+    "CMakeLists.txt": "e8a6ee1d1e03e1a248c9623cdbefc8b878d7ff55aa2c602db2931117a8d4c465",
+    "build_native.py": "d4f7c032348b785e443647caa1f4d6a0080a9c0ecefb26a64c7405e9e0d2c91f",
+    "LICENSE": "00e0f8f7d38bb19ce3a5bc13381262f30915151bb7671fdf6ad3ab21791138ad",
+    "README.md": "63c5ae67e0d5f8d200e3154709302b1084e0bda45222cc611119a67f28f0f12e"
+  }
+}

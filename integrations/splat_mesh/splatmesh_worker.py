@@ -1,4 +1,4 @@
-"""Splat-to-mesh worker backed by the remi-splat-mesh package.
+"""Splat-to-mesh worker using the shared adaptive CPU backend.
 
 Runs outside Blender, like worker.py, and emits the same schema-2 report so the
 existing client can consume it unchanged.
@@ -22,7 +22,7 @@ if str(ROOT) not in sys.path:
 
 from integrations.triposplat.splat_data import load as load_gaussian_archive
 
-BACKEND = "remi-splat-mesh"
+BACKEND = "remi-adaptive-cpu-v1"
 REPOSITORY = "https://github.com/shaderko/remi-splat-mesh"
 INSTALL_HINT = (
     'pip install "remi-splat-mesh @ '
@@ -66,10 +66,11 @@ def main():
         if not archive.is_file():
             raise ValueError(f"Gaussian archive not found: {archive}")
 
-        status(output, "Loading remi-splat-mesh")
+        status(output, "Loading mesh backend")
         try:
-            from splatmesh import (ExtractConfig, extract_mesh,
-                                   save_mesh_ply)
+            from splatmesh import ExtractConfig, save_mesh_ply
+            from splatmesh.topology import topology
+            from remi_adaptive import AdaptiveConfig, ThresholdConfig, reconstruct
         except ModuleNotFoundError as exc:
             missing = getattr(exc, "name", "splatmesh")
             if missing == "splatmesh":
@@ -100,21 +101,29 @@ def main():
             status(output, f"Extracting surface {fraction:.0%}",
                    gaussians=len(splats), progress=round(fraction, 3))
 
-        result = extract_mesh(splats, config, progress=progress)
-
+        mesh, metrics, _ = reconstruct(
+            splats,
+            AdaptiveConfig(resolution=config.resolution, size_normalize=config.size_normalize,
+                           min_component_faces=config.min_component_faces,
+                           taubin_iterations=config.taubin_iterations),
+            ThresholdConfig(level=config.level), progress=progress,
+        )
+        if not len(mesh.faces):
+            raise RuntimeError("Mesher produced no surface")
+        check_cancel(output)
+        report = topology(mesh)
         mesh_path = output / "mesh.ply"
-        save_mesh_ply(result.mesh, mesh_path)
+        save_mesh_ply(mesh, mesh_path)
         check_cancel(output)
 
-        report = result.report
         warnings = []
-        if report.components > 1:
-            warnings.append(f"{report.components:,} separate components; "
+        if report["components"] > 1:
+            warnings.append(f"{report['components']:,} separate components; "
                             "inspect fine structures and floaters")
-        if report.boundary_edges:
-            warnings.append(f"{report.boundary_edges:,} open boundary edges")
-        if report.nonmanifold_edges:
-            warnings.append(f"{report.nonmanifold_edges:,} non-manifold edges")
+        if report["boundary_edges"]:
+            warnings.append(f"{report['boundary_edges']:,} open boundary edges")
+        if report["nonmanifold_edges"]:
+            warnings.append(f"{report['nonmanifold_edges']:,} non-manifold edges")
 
         write_json(output / "report.json", {
             "schema": 2,
@@ -123,18 +132,19 @@ def main():
             "source_sha256": sha256(archive),
             "mesh": str(mesh_path),
             "mesh_sha256": sha256(mesh_path),
-            "gaussians": report.splats,
-            "vertices": int(len(result.mesh.vertices)),
-            "triangles": report.triangles,
+            "gaussians": len(splats),
+            "vertices": int(len(mesh.vertices)),
+            "triangles": report["triangles"],
             "quality": quality,
-            "topology": {"vertices": int(len(result.mesh.vertices)),
-                         "triangles": report.triangles,
-                         "components": report.components,
-                         "boundary_edges": report.boundary_edges,
-                         "nonmanifold_edges": report.nonmanifold_edges},
+            "topology": {"vertices": int(len(mesh.vertices)),
+                         "triangles": report["triangles"],
+                         "components": report["components"],
+                         "boundary_edges": report["boundary_edges"],
+                         "nonmanifold_edges": report["nonmanifold_edges"]},
             "warnings": warnings,
             "elapsed_seconds": time.perf_counter() - started,
-            "mesher": f"{BACKEND} {getattr(sys.modules.get('splatmesh'), '__version__', '')}".strip(),
+            "mesher": BACKEND,
+            "adaptive": metrics,
             "config": {
                 "resolution": config.resolution,
                 "level": config.level,
@@ -153,8 +163,8 @@ def main():
             ],
         })
         write_json(output / "complete.json", {"schema": 1, "complete": True})
-        status(output, "Complete", complete=True, vertices=len(result.mesh.vertices),
-               triangles=report.triangles)
+        status(output, "Complete", complete=True, vertices=len(mesh.vertices),
+               triangles=report["triangles"])
         return 0
     except InterruptedError as exc:
         status(output, "Cancelled", error=str(exc), cancelled=True)

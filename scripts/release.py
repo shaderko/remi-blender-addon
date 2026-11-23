@@ -22,6 +22,8 @@ NATIVE_MODULES = {
     "features/retopology/instant_meshes": "_remi_instant_meshes",
     "features/uv/engine": "_remi_uv_packer",
 }
+ADAPTIVE_DIRECTORY = "integrations/splat_mesh/remi_adaptive"
+
 TESTS = (
     "blender_architecture_regression.py",
     "blender_release_regression.py",
@@ -151,6 +153,17 @@ def build_native(target):
                 run("codesign", "--force", "--sign", "-", replacement)
             replacement.replace(destination)
 
+    run(sys.executable, ROOT / ADAPTIVE_DIRECTORY / "build_native.py")
+
+
+def adaptive_library(root, target):
+    name = {"macos-arm64": "libremi_adaptive.dylib",
+            "windows-x64": "remi_adaptive.dll", "linux-x64": "libremi_adaptive.so"}[target]
+    path = root / ADAPTIVE_DIRECTORY / "_native" / name
+    if not path.is_file():
+        raise RuntimeError(f"Missing adaptive mesher library: {path}. Run the native command first.")
+    return path
+
 
 def native_file(root, directory, module, target):
     suffix = {"windows-x64": ".cp313-win_amd64.pyd",
@@ -165,9 +178,10 @@ def native_file(root, directory, module, target):
 def stage_extension(stage, target, wheel):
     native = [native_file(ROOT, directory, module, target)
               for directory, module in NATIVE_MODULES.items()]
+    native.append(adaptive_library(ROOT, target))
     # Never include another platform's binary, build caches, tests, or developer files.
     excluded = shutil.ignore_patterns(
-        ".*", "__pycache__", "*.pyc", "*.so", "*.pyd", "*.whl", "*.zip",
+        ".*", "__pycache__", "*.pyc", "*.so", "*.pyd", "*.dll", "*.dylib", "*.whl", "*.zip",
         "dist", "scripts", "tests", "native", "weppy-project-sync", "models", "generations")
     def ignored(directory, names):
         result = set(excluded(directory, names))
@@ -190,12 +204,13 @@ def verify_archive(artifact, target):
         native_file(ROOT, directory, module, target).relative_to(ROOT).as_posix()
         for directory, module in NATIVE_MODULES.items()
     }
+    expected_native.add(adaptive_library(ROOT, target).relative_to(ROOT).as_posix())
     with zipfile.ZipFile(artifact) as archive:
         data = tomllib.loads(archive.read("blender_manifest.toml").decode("utf-8"))
         expected_wheel = "wheels/" + wheel_spec(target)["filename"]
         if data["platforms"] != [target] or data["wheels"] != ["./" + expected_wheel]:
             raise RuntimeError("Archive manifest does not match target platform")
-        native = {name for name in archive.namelist() if name.endswith((".so", ".pyd"))}
+        native = {name for name in archive.namelist() if name.endswith((".so", ".pyd", ".dll", ".dylib"))}
         wheels = {name for name in archive.namelist() if name.endswith(".whl")}
         if native != expected_native or wheels != {expected_wheel}:
             raise RuntimeError("Archive contains missing or foreign platform binaries")
@@ -206,6 +221,12 @@ def verify_archive(artifact, target):
                             "integrations/splat_mesh/runtime.py",
                             "integrations/splat_mesh/splatmesh_worker.py",
                             "integrations/splat_mesh/requirements-splatmesh.txt"}
+        required_surface.update(f"{ADAPTIVE_DIRECTORY}/{name}" for name in
+                                ("__init__.py", "backend.py", "support.py", "adaptive.cpp", "provenance.json"))
+        provenance = json.loads(archive.read(ADAPTIVE_DIRECTORY + "/provenance.json"))
+        for name, expected in provenance["files"].items():
+            if hashlib.sha256(archive.read(ADAPTIVE_DIRECTORY + "/" + name)).hexdigest() != expected:
+                raise RuntimeError("Shared adaptive mesher source hash mismatch")
         if not required_surface.issubset(archive.namelist()):
             raise RuntimeError("Archive is missing packaged splat-to-mesh modules")
         if not {"features/remesh/lods.py", "features/remesh/textured_exchange.py",

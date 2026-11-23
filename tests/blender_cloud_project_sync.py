@@ -91,7 +91,12 @@ try:
  assert {o.name for o in scene.objects}==scene_before
  # Duplicating a shared mesh must create a new shared identity.
  with bpy.context.temp_override(scene=scene,view_layer=scene.view_layers[0]):
-  source=next(a for a in board.catalog.assets.values() if a.kind=='MESH')
+  source=next((a for a in board.catalog.assets.values() if a.kind=='MESH' and a.state=='READY'),None)
+  if source is None:
+   for obj in scene.objects:obj.select_set(obj==cube)
+   bpy.context.view_layer.objects.active=cube
+   source=canvas.add_selected_objects(bpy.context)[0]
+   wait(lambda:bool(board_sync.marker(source).get('file_id')))
   duplicates=canvas.duplicate_assets(bpy.context,[source.id]);duplicate=duplicates[0]
   wait(lambda:bool(board_sync.marker(duplicate).get('file_id')))
   assert board_sync.marker(duplicate)['card_id']!=board_sync.marker(source)['card_id']
@@ -122,11 +127,11 @@ try:
  from uuid import uuid4
  image_job=member.api('POST','/jobs',payload={'operation':'generate_image','inputMode':'single','inputFileIds':[],'prompt':'Fixture cube','options':{'seed':0,'width':256,'height':256},'budget':{'currency':'EUR','maxCostMicros':1000000}},headers={'Idempotency-Key':'fixture-'+uuid4().hex})['job']
  with bpy.context.temp_override(scene=scene,view_layer=scene.view_layers[0]):
-  wait(lambda:any(board_sync.marker(a).get('card_id')==image_job['id'] and board_sync.marker(a).get('file_id') for a in board.catalog.assets.values()))
+  wait(lambda:any(board_sync.marker(a).get('card_id')==image_job['id'] and a.state=='READY' and Path(a.artifact).is_file() for a in board.catalog.assets.values()))
   image_asset=next(a for a in board.catalog.assets.values() if board_sync.marker(a).get('card_id')==image_job['id'])
   assert image_asset.kind=='IMAGE' and Path(image_asset.artifact).is_file()
   three=member.api('POST','/jobs',payload={'operation':'generate','inputMode':'single','inputFileIds':[board_sync.marker(image_asset)['file_id']],'options':{'seed':0,'gaussianCount':32768},'budget':{'currency':'EUR','maxCostMicros':1000000}},headers={'Idempotency-Key':'fixture-'+uuid4().hex})['job']
-  wait(lambda:any(board_sync.marker(a).get('card_id')==three['id'] and board_sync.marker(a).get('file_id') for a in board.catalog.assets.values()))
+  wait(lambda:any(board_sync.marker(a).get('card_id')==three['id'] and a.state=='READY' and Path(a.artifact).is_file() for a in board.catalog.assets.values()))
   generated=next(a for a in board.catalog.assets.values() if board_sync.marker(a).get('card_id')==three['id'])
   assert generated.kind=='SPLAT' and generated.parent==image_asset.id
   assert generated.operation=='' and board.runner.job is None

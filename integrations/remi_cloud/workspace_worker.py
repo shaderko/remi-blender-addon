@@ -103,7 +103,7 @@ class WorkspaceWorker:
         self.receipts={};self.errors={};self.uploads={};self.chain={}
         self.selected="default";self.revision=0;self.message="Connecting to shared projects…"
         self.retry_at={};self.ready=False
-        self.transfer=None;self.available_files={};self.download_retry={};self.download_errors={};self.chains={}
+        self.transfer=None;self.available_files={};self.download_retry={};self.download_errors={};self.chains={};self.announced=set()
         for path in sorted(self.outbox.glob("*.error"))[-1000:]:
             try:self.errors[path.stem]=json.loads(path.read_text())
             except (OSError,ValueError):pass
@@ -192,7 +192,9 @@ class WorkspaceWorker:
                 self.uploads["team-"+team_id]={"team":self.session.api("GET","/teams/"+team_id)}
             self.changed.set();return
         if command.get("project_id","default")!=self.selected:raise CloudError("Select the original project before syncing this edit.",code="project_changed")
-        if action=="positions":self.client.patch(command["cards"],only_missing=command.get("only_missing",False))
+        if action=="announce":
+            self.client.announce(command["card_id"],command["kind"],command.get("title","Asset"),command["upload_id"],status=command.get("status","uploading"))
+        elif action=="positions":self.client.patch(command["cards"],only_missing=command.get("only_missing",False))
         elif action=="asset":
             upload_asset(command,self.client,self.root,self.snapshot,self.chain,self.uploads)
         elif action=="delete":
@@ -231,6 +233,10 @@ class WorkspaceWorker:
         if not isinstance(error,CloudError):
             error=CloudError("A local board edit could not sync. The local file is kept.",retryable=True)
         self.message=str(error)
+        if command.get("action")=="asset" and not error.retryable:
+            command_id=command.get("id","")
+            kind=command.get("kind") or ("image" if Path(command.get("path","")).suffix.lower() in (".png",".jpg",".jpeg",".webp") else "splat" if Path(command.get("path","")).suffix.lower() in (".npz",".splat") else "mesh")
+            atomic_json(self.outbox/(command_id+"-failed.json"),{**command,"id":command_id+"-failed","action":"announce","upload_id":command_id,"kind":kind,"status":"failed"})
         if error.retryable and command.get("action") not in ("create_project","create_team","invite"):
             self.retry_at[str(path)]=time.monotonic()+5
         else:
@@ -288,7 +294,7 @@ class WorkspaceWorker:
             except Exception:
                 self.command_error(path,{},CloudError("The saved sync command is invalid. Local asset files are kept.",code="invalid_command"))
         # Selection and small edits must not sit behind a queue of big meshes.
-        priority={"switch":0,"refresh":1,"create_project":1,"create_team":1,"asset":3}
+        priority={"switch":0,"refresh":1,"create_project":1,"create_team":1,"announce":2,"asset":4}
         commands.sort(key=lambda row:priority.get(row[1].get("action"),2))
         blocked=set()
         if self.transfer and self.transfer["kind"]=="upload":
@@ -306,7 +312,7 @@ class WorkspaceWorker:
                     raise CloudError("Project command belongs to another account.")
                 if key[0]!=self.selected and command.get("action") not in ("switch","refresh","create_project","create_team"):continue
                 if command.get("action")=="asset":
-                    if self.transfer or not self.ready:
+                    if self.transfer or not self.ready or command.get("id") not in self.announced:
                         blocked.add(key);continue
                     client=self.transfer_client(key[0])
                     snapshot=self.snapshot;chain=self.chain
@@ -319,6 +325,25 @@ class WorkspaceWorker:
             except Exception as error:
                 self.command_error(path,command,error)
                 if key[1]:blocked.add(key)
+
+        announced_at=time.monotonic()
+        for path,command in commands:
+            if time.monotonic()-announced_at>.5:break
+            if not path.exists():continue
+            if (command.get("action")!="asset" or command.get("id") in self.announced or
+                    command.get("project_id","default")!=self.selected or command.get("user_id")!=self.session.profile["user_id"] or
+                    command.get("base_url")!=self.session.base_url or self.retry_at.get("announce:"+str(path),0)>time.monotonic()):continue
+            try:
+                kind=command.get("kind") or ("image" if Path(command["path"]).suffix.lower() in (".png",".jpg",".jpeg",".webp") else "splat" if Path(command["path"]).suffix.lower() in (".npz",".splat") else "mesh")
+                self.client.announce(command["card_id"],kind,command.get("title","Asset"),command["id"])
+                self.announced.add(command["id"])
+            except CloudError as error:
+                # A previous server may not have upload cards yet. File sync
+                # remains compatible while the matching Cloud deploy rolls out.
+                if error.status in (404,405,503) or error.code=="capability_unavailable":self.announced.add(command["id"])
+                elif error.retryable:self.retry_at["announce:"+str(path)]=time.monotonic()+5
+                else:self.command_error(path,command,error)
+            except Exception:self.retry_at["announce:"+str(path)]=time.monotonic()+5
 
     def download_next(self):
         if self.transfer or not self.ready:return

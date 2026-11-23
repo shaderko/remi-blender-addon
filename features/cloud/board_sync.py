@@ -127,11 +127,10 @@ class BoardSync:
                     cid=self.command(context,"delete",local_id=asset.id,card_id=meta["card_id"],input=bool(meta.get("input")),job=bool(meta.get("job")))
                     if cid:self.pending[cid]={"kind":"delete","local_id":asset.id};self.deleted_pending[asset.id]=cid
                 continue
-            if asset.state!="READY" or not asset.artifact or not signature(asset):continue
-            if meta.get("job") and not meta.get("file_id"):continue
             key=meta.get("card_id") or "asset-"+hashlib.sha256((self.scope+asset.id).encode()).hexdigest()[:40]
             stamp=signature(asset)
-            if stamp!=meta.get("signature") and self.asset_pending.get(asset.id)!=stamp:
+            uploadable=asset.state=="READY" and bool(stamp) and not (meta.get("job") and not meta.get("file_id"))
+            if uploadable and stamp!=meta.get("signature") and self.asset_pending.get(asset.id)!=stamp:
                 cid=self.command(context,"asset",local_id=asset.id,card_id=key,path=asset.artifact,signature=stamp,title=asset.label or asset.title or asset.kind.title(),expected_file_id=meta.get("file_id"))
                 if cid:
                     self.pending[cid]={"kind":"asset","local_id":asset.id,"signature":stamp,"card_id":key}
@@ -182,7 +181,7 @@ class BoardSync:
             local_id=aliases.get(key,"cloud-"+key);asset=board.catalog.assets.get(local_id)
             if asset and local_id in self.deleted_pending:continue
             if asset is None:
-                kind=(file or {}).get("kind") or ("image" if job and job["operation"]=="generate_image" else "splat" if job and job["operation"]=="generate" else "mesh")
+                kind=(file or {}).get("kind") or remote.get("kind") or ("image" if job and job["operation"]=="generate_image" else "splat" if job and job["operation"]=="generate" else "mesh")
                 asset=Asset(local_id,{"image":"IMAGE","splat":"SPLAT","mesh":"MESH"}[kind],title=remote["title"],operation="")
                 board.catalog.assets[local_id]=asset;aliases[key]=local_id
             meta=marker(asset)
@@ -205,9 +204,13 @@ class BoardSync:
                     asset.state="SYNCING"
                     asset.status=remote.get("downloadError") or "Downloading shared asset…"
                     asset.progress=0.0
+                if remote.get("uploadStatus"):
+                    asset.state="SYNCING" if remote["uploadStatus"]=="uploading" else "ERROR"
+                    asset.status="Uploading on another device…" if asset.state=="SYNCING" else "Upload failed on the source device; its local file is kept."
+                    asset.progress=0.0
                 if file:
                     asset.kind={"image":"IMAGE","mesh":"MESH","splat":"SPLAT"}[file["kind"]]
-                asset.settings["cloud"]={"scope":self.scope,"card_id":key,"file_id":file["id"] if file else None,"sha256":file["sha256"] if file else None,"input":key in {i["id"] for i in snapshot.get("inputs",[])},"job":bool(job),"signature":signature(asset)}
+                asset.settings["cloud"]={"scope":self.scope,"card_id":key,"file_id":file["id"] if file else None,"sha256":file["sha256"] if file else None,"input":bool(remote.get("uploadStatus")) or key in {i["id"] for i in snapshot.get("inputs",[])},"job":bool(job),"signature":signature(asset)}
             if local_id not in board.order:board.order.append(local_id)
         pending_positions={p["card_id"] for p in self.pending.values() if p["kind"]=="position"}
         for key,remote in incoming.items():
@@ -228,7 +231,7 @@ class BoardSync:
         for asset in list(board.catalog.assets.values()):
             meta=marker(asset)
             if meta.get("scope")==self.scope and meta.get("card_id") not in incoming and asset.id not in self.asset_pending and asset.id not in self.deleted_pending:
-                if (meta.get("job") and not meta.get("file_id")) or signature(asset)!=meta.get("signature"):
+                if (meta.get("job") and not meta.get("file_id")) or (signature(asset) and signature(asset)!=meta.get("signature")):
                     self.notice="A shared card was deleted while you had local edits. Your local file is kept.";continue
                 board.forget(asset.id);board.catalog.assets.pop(asset.id,None)
         self.revision=value["revision"]

@@ -61,6 +61,10 @@ class WorkspaceClient:
             card_id(asset.get("id"));CloudFile.parse(asset.get("file"))
             if not isinstance(asset.get("title"),str) or len(asset["title"])>255:raise CloudError("Invalid asset name.")
         for key in value["deletedInputIds"]:card_id(key)
+        for upload in value.get("uploads",[]):
+            card_id(upload.get("id"))
+            if upload.get("kind") not in ("image","mesh","splat") or upload.get("status") not in ("uploading","failed") or not isinstance(upload.get("title"),str):
+                raise CloudError("Invalid uploading card.")
         return value
 
     def patch(self,cards,*,only_missing=False):
@@ -78,6 +82,10 @@ class WorkspaceClient:
         file=value.get("file");parsed=CloudFile.parse(file)
         if parsed.sha256!=checksum or parsed.bytes!=len(body):raise CloudError("The upload receipt did not match the source file.")
         return file
+
+    def announce(self,key,kind,title,upload_id,*,status="uploading"):
+        if kind not in ("image","mesh","splat") or status not in ("uploading","failed"):raise CloudError("Invalid uploading card.")
+        return self.session.api("PUT","/board/uploads/"+card_id(key),payload={"title":str(title).strip()[:255] or "Asset","kind":kind,"uploadId":card_id(upload_id),"status":status},timeout=5)
 
     def attach(self,key,file_id,title,*,expected_file_id=None):
         body={"fileId":identifier(file_id),"title":str(title).strip()[:255] or "Asset"}
@@ -150,6 +158,9 @@ class WorkspaceClient:
                     self._outputs[output]=metadata
             assets.append({"id":row["id"],"title":override["title"] if override else ("Generated image" if row["operation"]=="generate_image" else "3D source" if row["operation"]=="generate" else "Mesh"),"job":row,"file":metadata})
         assets.extend({"id":a["id"],"title":a["title"],"file":a["file"]} for a in inputs.values())
+        existing={asset["id"] for asset in assets}
+        assets.extend({"id":u["id"],"title":u["title"],"kind":u["kind"],"uploadStatus":u["status"],"file":None}
+                      for u in board.get("uploads",[]) if u["id"] not in existing and u["id"] not in board["deletedInputIds"])
         if download_files:
             for asset in assets:
                 if asset["file"]:asset["path"]=self.file(asset["file"])

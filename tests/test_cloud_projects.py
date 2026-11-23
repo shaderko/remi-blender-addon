@@ -123,6 +123,7 @@ class ResponsiveSyncTests(unittest.TestCase):
             worker.start()
             try:
                 self.assertTrue(state.started.wait(2))
+                self.assertEqual(client.announce.call_count,9,"Queued cards were hidden until file upload")
                 self.command(worker,"100","positions",card_id="mesh-0",cards={"mesh-0":{"x":4,"y":9}})
                 self.wait_for(lambda:bool(state.patched))
                 self.command(worker,"101","switch",project=project)
@@ -173,6 +174,18 @@ class ResponsiveSyncTests(unittest.TestCase):
             restarted,_,_,_=self.fixture(root)
             self.assertEqual(restarted.errors["001"]["code"],"file_too_large")
             self.assertTrue((worker.outbox/"001.failed").exists())
+
+    def test_local_ready_card_is_preserved_while_remote_placeholder_uploads(self):
+        # The Blender adapter has separate coverage for pending-card merging.
+        # This check ensures failed transfers announce the same remote identity.
+        with tempfile.TemporaryDirectory() as temporary:
+            worker,client,state,project=self.fixture(Path(temporary))
+            command=self.command(worker,"001","asset",card_id="card",local_id="local",path=str(Path(temporary)/"missing.glb"))
+            worker.command_error(worker.outbox/"001.json",command,CloudError("No source",code="invalid_source"))
+            failed=json.loads((worker.outbox/"001-failed.json").read_text())
+            self.assertEqual((failed["card_id"],failed["upload_id"],failed["status"]),("card","001","failed"))
+            worker.process_commands()
+            client.announce.assert_called_once_with("card","mesh","Asset","001",status="failed")
 
     def test_transfer_session_is_project_bound_and_has_its_own_transport(self):
         from integrations.remi_cloud.sdk.embedded import CloudSession

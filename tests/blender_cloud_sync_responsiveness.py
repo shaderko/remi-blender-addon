@@ -1,5 +1,6 @@
 """Partial file availability must not block the shared board or lose card edits."""
 import importlib.util
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -48,7 +49,33 @@ with tempfile.TemporaryDirectory() as temporary:
     assert asset.state=="READY" and asset.artifact==str(new) and old.is_file()
     # Local edits must still win over metadata and downloads of a remote change.
     new.write_bytes(b"my local edited mesh")
+    stamp=new.stat();os.utime(new,ns=(stamp.st_atime_ns,stamp.st_mtime_ns+2_000_000_000))
     remote["path"]=str(old);remote["file"]={**file,"id":str(uuid4())}
     value["revision"]=7;sync.apply(bpy.context,value)
     assert asset.artifact==str(new) and new.read_bytes()==b"my local edited mesh"
+    # Another device sees an upload card before a file exists.
+    board.catalog=Catalog();board.order=[];board.positions={};board.scales={}
+    sync=BoardSync(board);sync.scope="fixture"
+    remote={"id":"pending","title":"Queued mesh","kind":"mesh","uploadStatus":"uploading","file":None}
+    value={"snapshot":{"assets":[remote],"cards":{"pending":{"x":12,"y":8}},"inputs":[]},"revision":1}
+    sync.apply(bpy.context,value)
+    pending=board.catalog.assets["cloud-pending"]
+    assert pending.state=="SYNCING" and "Uploading" in pending.status and pending.kind=="MESH"
+    assert pending.settings["cloud"]["input"] and not pending.artifact
+    board.positions[pending.id]=[900,100]
+    value.update({"base_url":"https://fixture.test/api/v1","user_id":"fixture","project_id":"default","ready":True})
+    from unittest.mock import patch
+    from remi.features.cloud import board_sync as adapter
+    sync.scope=adapter.scope(value)
+    with patch.object(adapter,"current",return_value=value),patch.object(sync,"command",return_value="move-placeholder") as command:
+        sync.collect(bpy.context)
+    assert command.call_args.args[1]=="positions", "Moving a placeholder queued a nonexistent file upload"
+    assert command.call_args.kwargs["cards"]["pending"]==adapter.web_position([900,100])
+    remote["uploadStatus"]="failed";value["revision"]=2;sync.apply(bpy.context,value)
+    assert pending.state=="ERROR" and "Upload failed" in pending.status
+    # A locally ready file wins over its own uploading announcement.
+    pending.artifact=str(new);pending.state="READY"
+    sync.asset_pending[pending.id]="local-upload"
+    remote["uploadStatus"]="uploading";value["revision"]=3;sync.apply(bpy.context,value)
+    assert pending.state=="READY" and pending.artifact==str(new)
 print("REMI_CLOUD_SYNC_RESPONSIVENESS_OK")

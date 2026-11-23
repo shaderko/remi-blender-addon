@@ -10,7 +10,7 @@
     "embedded.py": "b00bee91a431e75064188ce928ba1d1df8600ca290d37a37ebcda40ff2c3bafb",
     "workflow.py": "43b8c523b49cc98e4e13aeaa6986ba036aed488e0f96388ab1df03feabfad297",
     "realtime.py": "20a0eec3a1c17bb519ae292ce9844f0ecd5285de6e8d3c83dca31166fc17691d",
-    "workspace.py": "017980efe0d3c3a2b0709ba005113e97b5f6c49a5b81c4acf5a8e7977f969e66",
+    "workspace.py": "cba92c4b4936144b95260b5786162cb6043492f65c1624099487314bef5b100f",
     "_vendor/__init__.py": "698c7aade4ea0c472029043f51fc8e1a27c9a74a7dd6961d3511b7e63fc500c4",
     "_vendor/websockets/LICENSE": "3d6a0c050d8bec52fabad502e45fb25bd02bcadbd70dea34d447b6a0ff4e6da8",
     "_vendor/websockets/__init__.py": "002d87abddae49cfd63a8f7fc6f213a46b2127b0f2d0c7799b6ff2c2c752b7f6",

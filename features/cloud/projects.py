@@ -25,7 +25,7 @@ def busy(context):
     board=canvas.BOARD
     from ..board.editing import editing_scene
     if editing_scene(context) is not None:return True
-    return bool(runtime.pending or (board and (getattr(board,"running",None) or getattr(board,"queue",None) or getattr(getattr(board,"runner",None),"job",None) is not None)))
+    return bool(context.window_manager.remi_image.busy or runtime.pending or (board and (getattr(board,"running",None) or getattr(board,"queue",None) or getattr(getattr(board,"runner",None),"job",None) is not None)))
 
 
 def changed(self,context):

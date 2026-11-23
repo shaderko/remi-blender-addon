@@ -23,6 +23,18 @@ def _output_default():
 
 
 class RemiImageSettings(PropertyGroup):
+    provider: EnumProperty(
+        name="Image provider",
+        items=[("DEFAULT", "Remi", "Use the selected Remi Local or Cloud backend"),
+               ("CODEX", "Codex (experimental)", "Generate through a local ChatGPT connection; then share the image with your project")],
+        default="DEFAULT",
+    )
+    codex_quality: EnumProperty(
+        name="Quality",
+        items=[("low", "Low", "Faster image generation"), ("medium", "Medium", "Balanced quality"),
+               ("high", "High", "More detailed image generation")],
+        default="low",
+    )
     prompt: StringProperty(
         name="Prompt",
         description="Describe the image; plain descriptive English works best",

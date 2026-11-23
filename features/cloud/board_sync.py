@@ -62,7 +62,7 @@ class BoardSync:
         from ..board import canvas
         board=self.board;wanted=scope(value)
         if wanted==self.scope:return True
-        if board.running or board.queue or board.runner.job is not None:
+        if context.window_manager.remi_image.busy or board.running or board.queue or board.runner.job is not None:
             self.notice="Finish local jobs before switching the shared project.";return False
         if self.scope:
             canvas.save_layout(context)

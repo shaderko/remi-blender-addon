@@ -215,9 +215,19 @@ class REMI_BOARD_OT_settings(Operator):
                     bpy.ops.remi.edit_flow_preset()
                     self.scroll = 0
                 else:
-                    self.finish()
                     category, name = target.operator.split(".")
-                    getattr(getattr(bpy.ops, category), name)("INVOKE_DEFAULT", **target.kwargs)
+                    try:
+                        result = getattr(getattr(bpy.ops, category), name)("INVOKE_DEFAULT", **target.kwargs)
+                    except RuntimeError as error:
+                        # Blender raises when a child operator reports ERROR,
+                        # including normal preflight failures. Keep the settings
+                        # open and show the message in our existing error row.
+                        self.error = str(error).removeprefix("Error: ").strip()
+                        return
+                    if "CANCELLED" in result:
+                        self.error = "The action could not start. Check its settings and try again."
+                        return
+                    self.finish()
 
     def modal(self, context, event):
         if active_window is not self:

@@ -15,6 +15,7 @@ from ...integrations.iris3b import IrisDownloadJob, IrisJob
 from ...integrations.iris3b.constants import MODEL_BYTES, MODEL_LABELS, SIZE_BUCKETS, TEXT_ENCODER_BYTES
 from .gallery import gallery
 from .settings import dimensions
+from ...integrations.codex_images.client import session as codex_session
 
 
 class ImageRuntime:
@@ -88,7 +89,7 @@ def can_generate(context):
 
 
 class _JobOperator:
-    label = "Iris"
+    label = "Image generation"
 
     def _start_modal(self, context, job, status):
         state = context.window_manager.remi_image
@@ -150,7 +151,7 @@ class _JobOperator:
 class Remi_OT_GenerateImage(_JobOperator, Operator):
     bl_idname = "remi.generate_image"
     bl_label = "Generate Image"
-    bl_description = "Generate a concept image with Iris-3B using the selected Local or API backend"
+    bl_description = "Generate an image using the selected image provider"
     bl_options = {"REGISTER"}
 
     @classmethod
@@ -167,7 +168,28 @@ class Remi_OT_GenerateImage(_JobOperator, Operator):
         try:
             width, height = dimensions(settings)
             from ..cloud.generation import is_api, start_image
-            if is_api(context):
+            if settings.provider == "CODEX":
+                from ..board import canvas
+                from ..cloud import board_sync
+                account = context.window_manager.remi_cloud
+                if account.signed_in and account.project != "LOCAL":
+                    board = canvas.BOARD
+                    value = board_sync.current(context)
+                    if board is None or board.scene != context.scene:
+                        raise ValueError("Open your project board before generating a shared Codex image")
+                    if (not value.get("ready") or context.scene.get("remi_cloud_board_scope") != board_sync.scope(value)):
+                        raise ValueError("Wait for the selected Cloud project to finish connecting")
+                if not bpy.app.online_access:
+                    raise ValueError("Enable Allow Online Access in Blender Preferences to use Codex")
+                from .references import for_request
+                references = for_request(context, canvas.BOARD)
+                job = codex_session.start(
+                    action="generate", output=bpy.path.abspath(settings.output), prompt=settings.prompt,
+                    count=settings.count, size=f"{width}x{height}", quality=settings.codex_quality,
+                    references=references,
+                )
+                job.reference_ids = [item["id"] for item in references]
+            elif is_api(context):
                 job = start_image(context)
             else:
                 job = IrisJob.start(
@@ -186,7 +208,10 @@ class Remi_OT_GenerateImage(_JobOperator, Operator):
                     memory_mode=settings.memory_mode,
                     cache_minutes=settings.cache_minutes,
                 )
-            self._start_modal(context, job, "Starting Iris worker…")
+            from ..board import canvas
+            job.board = canvas.BOARD
+            job.board_scope = context.scene.get("remi_cloud_board_scope", "")
+            self._start_modal(context, job, "Starting image generation…")
         except Exception as exc:
             runtime.stop()
             state.status, state.status_kind = str(exc), "ERROR"
@@ -210,14 +235,79 @@ class Remi_OT_GenerateImage(_JobOperator, Operator):
         state.selected = str(first) if first.is_file() else ""
         state.page = 0
         gallery.invalidate()
+        if getattr(runtime.job, "backend", "LOCAL") != "API":
+            from ..board import canvas
+            board = getattr(runtime.job, "board", None)
+            if (board is not None and board is canvas.BOARD and board.scene == context.scene
+                    and getattr(runtime.job, "board_scope", "") == context.scene.get("remi_cloud_board_scope", "")):
+                for index, item in enumerate(images):
+                    path = (directory / item["file"]).resolve()
+                    if path.parent == directory.resolve() and path.is_file():
+                        asset = board.add_image(path, meta.get("prompt", ""), consume_pending=index == 0)
+                        references = [key for key in getattr(runtime.job, "reference_ids", [])
+                                      if key in board.catalog.assets and not board.catalog.assets[key].hidden]
+                        if references:
+                            asset.parent = references[0]
+                            asset.links["image_context"] = references
+                # Consume this request's placeholder now, so queue advancement
+                # cannot accidentally remove the next request's card.
+                board.running = ""
+                canvas.save_layout(context)
         count = len(images) or 1
-        return f"Generated {count} image{'s' if count != 1 else ''} · {MODEL_LABELS.get(meta.get('model'), 'Iris-3B')}"
+        label = meta.get("model_label") or MODEL_LABELS.get(meta.get("model"), "Iris-3B")
+        return f"Generated {count} image{'s' if count != 1 else ''} · {label}"
+
+
+class Remi_OT_CodexSignIn(_JobOperator, Operator):
+    bl_idname = "remi.codex_sign_in"
+    bl_label = "Continue with ChatGPT"
+    bl_description = "Connect ChatGPT locally for this Blender session; credentials stay on this computer"
+    label = "ChatGPT sign-in"
+
+    @classmethod
+    def poll(cls, context):
+        return can_generate(context)
+
+    def execute(self, context):
+        state = context.window_manager.remi_image
+        try:
+            if not bpy.app.online_access:
+                raise ValueError("Enable Allow Online Access in Blender Preferences to sign in")
+            if context.window is None:
+                raise ValueError("ChatGPT sign-in needs an interactive Blender window")
+            job = codex_session.start(action="sign_in", output="")
+            self._start_modal(context, job, "Continue with ChatGPT in your browser…")
+            return {"RUNNING_MODAL"}
+        except Exception as error:
+            state.status, state.status_kind = str(error), "ERROR"
+            self.report({"ERROR"}, str(error))
+            return {"CANCELLED"}
+
+    def _finish(self, runtime, context):
+        runtime.job.result()
+        return "ChatGPT connected for this Blender session"
+
+
+class Remi_OT_CodexSignOut(Operator):
+    bl_idname = "remi.codex_sign_out"
+    bl_label = "Disconnect ChatGPT"
+    bl_description = "Forget this local ChatGPT connection"
+
+    @classmethod
+    def poll(cls, context):
+        return can_generate(context)
+
+    def execute(self, context):
+        codex_session.shutdown()
+        state = context.window_manager.remi_image
+        state.status, state.status_kind = "ChatGPT disconnected", "IDLE"
+        return {"FINISHED"}
 
 
 class Remi_OT_CancelImage(Operator):
     bl_idname = "remi.cancel_image"
     bl_label = "Cancel Image Generation"
-    bl_description = "Stop the local Iris worker, keeping completed files"
+    bl_description = "Stop waiting for image generation, keeping completed files"
 
     @classmethod
     def poll(cls, context):
@@ -465,7 +555,12 @@ class Remi_OT_RegenerateImage(Operator):
         settings = context.scene.remi_image
         settings.prompt = str(meta.get("prompt", ""))
         settings.negative_prompt = str(meta.get("negative_prompt", ""))
-        if meta.get("model") in {"base", "turbo"}:
+        if meta.get("model") == "codex":
+            settings.provider = "CODEX"
+            if meta.get("quality") in {"low", "medium", "high"}:
+                settings.codex_quality = meta["quality"]
+        elif meta.get("model") in {"base", "turbo"}:
+            settings.provider = "DEFAULT"
             settings.model = meta["model"]
         width, height = int(meta.get("width", 0)), int(meta.get("height", 0))
         for key, value in SIZE_BUCKETS.items():
@@ -531,6 +626,8 @@ class Remi_OT_ImagePage(Operator):
 
 classes = (
     Remi_OT_GenerateImage,
+    Remi_OT_CodexSignIn,
+    Remi_OT_CodexSignOut,
     Remi_OT_CancelImage,
     Remi_OT_DownloadIris,
     Remi_OT_AddImage,

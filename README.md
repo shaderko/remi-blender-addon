@@ -1,4 +1,8 @@
 <p align="center">
+
+Latest beta: [2.7.0-beta.15 — Local Codex images and reference context](docs/releases/2.7.0-beta.15.md).
+Requires Blender 5.3; release packages target macOS arm64 and Windows x64.
+
   <img src="assets/remi_logo.png" alt="Remi" width="150">
 </p>
 

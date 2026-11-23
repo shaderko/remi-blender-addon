@@ -165,7 +165,14 @@ def draw_create(layout, context):
     controls.prop(settings, "prompt", text="")
     from ..cloud.generation import is_api
     api = is_api(context)
-    missing = [] if api else missing_components(bpy.path.abspath(settings.models), settings.model)
+    codex = settings.provider == "CODEX"
+    if codex:
+        from ..board import canvas
+        from .references import selected_images
+        board = canvas.BOARD
+        count = len(selected_images(board)) if board is not None and board.scene == context.scene else 0
+        controls.label(text=f"{count} selected board image(s) used as context" if count else "Select board image cards to provide context", icon="IMAGE_DATA")
+    missing = [] if api or codex else missing_components(bpy.path.abspath(settings.models), settings.model)
     action = layout.row(align=True)
     action.scale_y = 1.35
     generate_row = action.row(align=True)
@@ -176,14 +183,15 @@ def draw_create(layout, context):
         action.operator("remi.cancel_image", text="", icon="CANCEL")
     width, height = dimensions(settings)
     info = layout.row(align=True)
-    info.label(text=f"{MODEL_LABELS[settings.model]} · {width}×{height} · {settings.count} image(s)", icon="INFO")
+    label = "Codex · GPT Image" if codex else MODEL_LABELS[settings.model]
+    info.label(text=f"{label} · {width}×{height} · {settings.count} image(s)", icon="INFO")
     if missing:
         warning = layout.box()
         warning.label(text=f"{MODEL_LABELS[settings.model]} is not installed", icon="INFO")
         size = 12 if settings.model == "base" else 6
         warning.label(text=f"Download about {size + 9} GB (model + Qwen3-VL text encoder)")
         warning.operator("remi.download_iris", text="Download Model", icon="IMPORT")
-    elif not api and not generation_settings.python:
+    elif not api and not codex and not generation_settings.python:
         layout.label(text="Set the external CUDA/PyTorch Python in Create settings", icon="INFO")
     if image_state.status and not image_state.busy and image_state.status_kind != "SUCCESS":
         icon = {"ERROR": "ERROR", "CANCELLED": "CANCEL"}.get(image_state.status_kind, "INFO")
@@ -217,16 +225,30 @@ class Remi_PT_ImageSettings(Panel):
         controls.enabled = not context.window_manager.remi_image.busy
         from ..cloud.generation import draw_backend, is_api
         draw_backend(controls, context)
-        controls.prop(settings, "model")
+        controls.prop(settings, "provider")
+        codex = settings.provider == "CODEX"
+        if codex:
+            controls.label(text="Local ChatGPT connection · experimental")
+            controls.prop(context.preferences.system, "use_online_access", text="Allow Online Access")
+            if not bpy.app.online_access:
+                controls.label(text="Enable online access before signing in", icon="INFO")
+            controls.operator("remi.codex_sign_in")
+            from ...integrations.codex_images.client import session
+            if session.signed_in:
+                controls.operator("remi.codex_sign_out")
+            controls.prop(settings, "codex_quality")
+        else:
+            controls.prop(settings, "model")
         controls.prop(settings, "size")
         controls.prop(settings, "count")
-        if settings.model == "base":
-            controls.prop(settings, "steps")
-            controls.prop(settings, "cfg_scale")
-            controls.prop(settings, "negative_prompt")
-        controls.prop(settings, "seed")
+        if not codex:
+            if settings.model == "base":
+                controls.prop(settings, "steps")
+                controls.prop(settings, "cfg_scale")
+                controls.prop(settings, "negative_prompt")
+            controls.prop(settings, "seed")
         controls.prop(settings, "output")
-        if not is_api(context):
+        if not is_api(context) and not codex:
             controls.prop(settings, "models")
             controls.prop(settings, "memory_mode")
             controls.prop(settings, "cache_minutes")

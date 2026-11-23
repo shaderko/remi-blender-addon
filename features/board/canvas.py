@@ -553,6 +553,7 @@ class Board:
         self.text_word_drag = False
         self.text_clicks = (0.0, 0.0, 0.0, 0)
         self.queue = []
+        self.image_request = None
         self.running = ""
         self.pending = []
         self.counter = 0
@@ -774,34 +775,38 @@ class Board:
         self.release_texture(path)
         self.dirty_previews.discard(path)
 
+    def add_image(self, image_path, prompt="", *, consume_pending=True):
+        asset = self.catalog.image(image_path, prompt)
+        path = asset.id
+        if asset.hidden:
+            return asset
+        if path in self.positions:
+            if path not in self.order:
+                self.order.append(path)
+            return asset
+        slot = self.pending.pop(0) if consume_pending and self.pending else None
+        if slot is not None:
+            key = slot["key"]
+            self.positions[path] = self.positions.pop(key, self.new_slot())
+            if key in self.scales:
+                self.scales[path] = self.scales.pop(key)
+            if key in self.order:
+                self.order[self.order.index(key)] = path
+            else:
+                self.order.append(path)
+            if key in self.selected:
+                self.selected.discard(key)
+                self.selected.add(path)
+        else:
+            self.positions[path] = self.new_slot()
+            self.order.append(path)
+        return asset
+
     def reload(self, context):
         entries = gallery_entries(context)
         self.entries = entries
         for entry in entries:
-            asset = self.catalog.image(entry.path, entry.prompt)
-            path = asset.id
-            if asset.hidden:
-                continue
-            if path in self.positions:
-                if path not in self.order:
-                    self.order.append(path)
-                continue
-            slot = self.pending.pop(0) if self.pending else None
-            if slot is not None:
-                key = slot["key"]
-                self.positions[path] = self.positions.pop(key, self.new_slot())
-                if key in self.scales:
-                    self.scales[path] = self.scales.pop(key)
-                if key in self.order:
-                    self.order[self.order.index(key)] = path
-                else:
-                    self.order.append(path)
-                if key in self.selected:
-                    self.selected.discard(key)
-                    self.selected.add(path)
-            else:
-                self.positions[path] = self.new_slot()
-                self.order.append(path)
+            self.add_image(entry.path, entry.prompt)
         self.known = len(entries)
         if not context.scene.get("remi_cloud_board_scope"):self.migrate_scene_splats(context)
         save_layout(context)
@@ -1293,6 +1298,10 @@ def draw_selection_strip(board, width):
     single = len(selected) == 1
     limit = bx + bw*0.5
     shown = 0
+    context_order = {}
+    if board.scene.remi_image.provider == "CODEX":
+        from ..images.references import selected_images
+        context_order = {asset.id: index+1 for index, asset in enumerate(selected_images(board))}
     for path in selected:
         if x + size > limit:
             break
@@ -1318,6 +1327,9 @@ def draw_selection_strip(board, width):
         else:
             draw_rect(x, y, size, size, (0.17, 0.17, 0.18, 1.0))
         draw_rect(x, y, size, 1.5, ACCENT)
+        if path in context_order:
+            draw_rect(x, y+size-15, 18, 15, (.08, .08, .09, .95))
+            draw_text(str(context_order[path]), x+4, y+size-12, 10, TEXT)
         board.strip_hits.append(((x, y, size, size), "select", path))
         x += size + gap
         shown += 1
@@ -1347,6 +1359,9 @@ def draw_composer(board, width):
     draw_rect(x, y, bar_w, bar_h, (0.105, 0.105, 0.115, 0.97))
     if board.focused:
         draw_rect(x, y, bar_w, 1.5, ACCENT)
+    state = bpy.context.window_manager.remi_image
+    if not state.busy and state.status_kind == "ERROR" and state.status:
+        draw_text(clip_text(state.status, 11, bar_w), x, y+bar_h+8, 11, (1.0, .55, .35, 1.0))
 
     total = len(lines)
     visible = board.text_visible
@@ -1409,7 +1424,14 @@ def draw_composer(board, width):
         (0.06, 0.06, 0.07, 1.0) if ready else DIM,
     )
     if bar_w > 360:
-        draw_text("Enter: create · Shift+Enter: new line", x+BAR_PAD, by+9, 10, DIM)
+        if board.scene.remi_image.provider == "CODEX":
+            from ..images.references import selected_images
+            count = len(selected_images(board))
+            hint = f"{count} context image{'s' if count != 1 else ''} · Enter: create" if count else "Select image cards for context · Enter: create"
+            color = (1.0, .55, .35, 1.0) if count > 16 else DIM
+            draw_text(clip_text(hint, 10, max(0, bx-x-BAR_PAD-10)), x+BAR_PAD, by+9, 10, color)
+        else:
+            draw_text("Enter: create · Shift+Enter: new line", x+BAR_PAD, by+9, 10, DIM)
 
 
 def remove_draw_handlers(board):
@@ -2349,13 +2371,18 @@ def start_next(context):
     state = context.window_manager.remi_image
     if state.busy:
         return
-    prompt = board.queue[0]
+    queued = board.queue[0]
+    request = queued if isinstance(queued, dict) else None
+    prompt = request["prompt"] if request else queued
     context.scene.remi_image.prompt = prompt
+    if request:
+        context.scene.remi_image.provider = request["provider"]
     if not bpy.ops.remi.generate_image.poll():
         # A mesh/texture/3D operation may temporarily own Remi while the user
         # works elsewhere. Pause the queue rather than silently discarding it.
         return
     board.queue.pop(0)
+    board.image_request = request
     try:
         result = bpy.ops.remi.generate_image("INVOKE_DEFAULT")
     except Exception:
@@ -2363,6 +2390,8 @@ def start_next(context):
         while board.pending:
             board.drop_oldest_pending()
         return
+    finally:
+        board.image_request = None
     if {"FINISHED", "RUNNING_MODAL"} & set(result):
         board.running = prompt
     else:
@@ -3031,9 +3060,20 @@ def submit_current(context):
     text = board.composer.strip()
     if not text:
         return False
+    settings = context.scene.remi_image
+    references = []
+    try:
+        if settings.provider == "CODEX":
+            from ..images.references import capture
+            references = capture(board)
+    except ValueError as error:
+        state = context.window_manager.remi_image
+        state.status, state.status_kind = str(error), "ERROR"
+        return False
     context.scene.remi_image.prompt = text
     board.add_pending(text)
-    board.queue.append(text)
+    board.queue.append({"prompt": text, "provider": settings.provider, "references": references,
+                        "scope": context.scene.get("remi_cloud_board_scope", "")})
     board.composer = ""
     board.caret = 0
     board.anchor = 0

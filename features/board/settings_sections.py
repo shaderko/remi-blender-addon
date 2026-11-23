@@ -68,6 +68,8 @@ def choices(setting, context):
 
 
 def settings_items(context, section):
+    import bpy
+
     items = []
     scene = context.scene
     generation = scene.remi_generation
@@ -91,18 +93,40 @@ def settings_items(context, section):
             action("Sign in to Remi Cloud", "remi.cloud_account")
         heading("Generation")
         prop(generation, "use_cloud", "Use Remi Cloud")
-        note("Images and 3D generation run in Remi Cloud." if cloud else "Images and 3D generation run on this computer.")
+        if image.provider == "CODEX":
+            note("Images use the local Codex connection.")
+            note("3D generation runs in Remi Cloud." if cloud else "3D generation runs on this computer.")
+        else:
+            note("Images and 3D generation run in Remi Cloud." if cloud else "Images and 3D generation run on this computer.")
         heading("Local tools")
         prop(generation, "python", "Python executable")
         note("Used by local generation, mesh conversion and texture tools.")
     elif section == "image":
-        for name in ("model", "size", "count", "seed"):
+        prop(image, "provider")
+        codex = image.provider == "CODEX"
+        if codex:
+            from ...integrations.codex_images.client import session
+            note("Uses ChatGPT locally. Generated images share with the selected project.")
+            note("Experimental access; returned image size may differ from the request.")
+            prop(context.preferences.system, "use_online_access", "Allow Online Access")
+            if not bpy.app.online_access:
+                note("Enable Allow Online Access before signing in to ChatGPT.")
+            action("Continue with ChatGPT", "remi.codex_sign_in")
+            if session.signed_in:
+                note("ChatGPT connected for this Blender session.")
+                action("Disconnect ChatGPT", "remi.codex_sign_out")
+            prop(image, "codex_quality")
+        else:
+            prop(image, "model")
+        for name in ("size", "count"):
             prop(image, name)
-        if image.model == "base":
-            for name in ("steps", "cfg_scale", "negative_prompt"):
-                prop(image, name)
+        if not codex:
+            prop(image, "seed")
+            if image.model == "base":
+                for name in ("steps", "cfg_scale", "negative_prompt"):
+                    prop(image, name)
         prop(image, "output")
-        if not cloud:
+        if not cloud and not codex:
             heading("Local model")
             for name in ("models", "memory_mode", "cache_minutes"):
                 prop(image, name)

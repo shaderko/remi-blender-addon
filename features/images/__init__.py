@@ -30,6 +30,8 @@ def register():
 def unregister():
     runtime.stop()
     shutdown_iris_server()
+    from ...integrations.codex_images.client import session as codex_session
+    codex_session.shutdown()
     gallery.close()
     if _before_load in bpy.app.handlers.load_pre:
         bpy.app.handlers.load_pre.remove(_before_load)

@@ -45,6 +45,15 @@ assert bpy.context.scene.remi_generation.backend == "LOCAL"
 assert callable(importlib.import_module(module_name + ".features.cloud.generation").start_image)
 print("REMI_INSTALLED_SHARED_CLOUD_SDK_OK")
 print("REMI_INSTALLED_IRIS_IMAGES_OK")
+codex_client = importlib.import_module(module_name + ".integrations.codex_images.client")
+image_references = importlib.import_module(module_name + ".features.images.references")
+assert bpy.context.scene.remi_image.provider == "DEFAULT"
+assert {item.identifier for item in bpy.context.scene.remi_image.bl_rna.properties["provider"].enum_items} == {"DEFAULT", "CODEX"}
+assert bpy.ops.remi.codex_sign_in.get_rna_type() and bpy.ops.remi.codex_sign_out.get_rna_type()
+assert codex_client.session.process is None
+assert image_references.capture(None) == []
+assert (Path(addon.__file__).parent / "integrations/codex_images/worker.py").is_file()
+print("REMI_INSTALLED_CODEX_CONTEXT_OK")
 board_canvas = importlib.import_module(module_name + ".features.board.canvas")
 board_workspace = importlib.import_module(module_name + ".features.board.workspace")
 board_toolbar = importlib.import_module(module_name + ".features.board.toolbar")

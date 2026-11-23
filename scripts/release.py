@@ -43,6 +43,7 @@ TESTS = (
     "blender_voxel_surface_regression.py",
     "blender_generation_regression.py",
     "blender_image_generation_regression.py",
+    "blender_codex_image_regression.py",
     "blender_cloud_generation_regression.py",
     "blender_integrated_api_generation_regression.py",
     "blender_cloud_auth_regression.py",
@@ -222,6 +223,10 @@ def verify_archive(artifact, target):
         }
         if not iris_required.issubset(archive.namelist()):
             raise RuntimeError("Archive is missing the Iris image-generation integration")
+        codex_required = {"features/images/references.py",
+                          *{f"integrations/codex_images/{name}.py" for name in ("__init__", "auth", "client", "worker")}}
+        if not codex_required.issubset(archive.namelist()):
+            raise RuntimeError("Archive is missing the local Codex image/context integration")
         if not {f"features/board/{name}.py" for name in
                 ("__init__", "canvas", "workspace", "assets", "jobs", "local_worker", "splat_preview", "editing", "texture_effects", "toolbar", "native_assets", "organization", "organizing", "layers")}.issubset(archive.namelist()):
             raise RuntimeError("Archive is missing the docked generation workspace")
@@ -349,7 +354,7 @@ def main():
             for pattern in ("test_platform_support.py", "test_model_download.py", "test_iris_setup.py",
                             "test_instant_meshes_adaptive.py", "test_surface_adaptive.py",
                             "test_surface_topology.py", "test_board_organization.py", "test_board_layers.py",
-                            "test_cloud_auth.py", "test_cloud_generation.py", "test_cloud_projects.py"):
+                            "test_cloud_auth.py", "test_cloud_generation.py", "test_cloud_projects.py", "test_codex_images.py"):
                 run(sys.executable, "-m", "unittest", "discover", "-s", ROOT / "tests",
                     "-p", pattern)
             for test in TESTS:

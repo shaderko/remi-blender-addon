@@ -175,6 +175,23 @@ class ResponsiveSyncTests(unittest.TestCase):
             self.assertEqual(restarted.errors["001"]["code"],"file_too_large")
             self.assertTrue((worker.outbox/"001.failed").exists())
 
+    def test_multiple_local_revisions_announce_and_upload_in_card_order(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);worker,client,state,project=self.fixture(root)
+            for index in range(2):
+                path=root/f"revision-{index}.glb";path.write_bytes(str(index).encode())
+                self.command(worker,f"00{index}","asset",card_id="same-card",local_id="local",path=str(path))
+            worker.start()
+            try:
+                self.assertTrue(state.started.wait(2))
+                self.assertEqual(client.announce.call_count,1)
+                state.release.set()
+                self.wait_for(lambda:len(state.attached)==2)
+                self.assertEqual(client.announce.call_count,2)
+                self.wait_for(lambda:not list(worker.outbox.glob("*.json")))
+                self.assertEqual(worker.errors,{})
+            finally:state.release.set();worker.close()
+
     def test_local_ready_card_is_preserved_while_remote_placeholder_uploads(self):
         # The Blender adapter has separate coverage for pending-card merging.
         # This check ensures failed transfers announce the same remote identity.

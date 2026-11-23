@@ -326,10 +326,14 @@ class WorkspaceWorker:
                 self.command_error(path,command,error)
                 if key[1]:blocked.add(key)
 
-        announced_at=time.monotonic()
+        announced_at=time.monotonic();announcing_cards=set()
         for path,command in commands:
             if time.monotonic()-announced_at>.5:break
             if not path.exists():continue
+            if command.get("action")=="asset":
+                card=(command.get("project_id","default"),command.get("card_id"))
+                if card in announcing_cards:continue
+                announcing_cards.add(card)
             if (command.get("action")!="asset" or command.get("id") in self.announced or
                     command.get("project_id","default")!=self.selected or command.get("user_id")!=self.session.profile["user_id"] or
                     command.get("base_url")!=self.session.base_url or self.retry_at.get("announce:"+str(path),0)>time.monotonic()):continue

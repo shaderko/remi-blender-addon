@@ -88,28 +88,10 @@ def _load_mesh(path):
 
 
 def _load_splats(path):
-    with np.load(path, allow_pickle=False) as archive:
-        for name in ("positions", "scales", "rotations", "opacities", "sh_dc"):
-            if name not in archive:
-                raise ValueError(f"Gaussian archive is missing {name}")
-        arrays = {
-            "positions": np.asarray(archive["positions"], dtype=np.float32),
-            "scales": np.asarray(archive["scales"], dtype=np.float32),
-            "rotations": np.asarray(archive["rotations"], dtype=np.float32),
-            "opacities": np.asarray(archive["opacities"], dtype=np.float32),
-            "sh_dc": np.asarray(archive["sh_dc"], dtype=np.float32),
-        }
-    count = len(arrays["positions"])
-    if not 0 < count <= 262144:
-        raise ValueError(f"Unsupported Gaussian count: {count}")
-    for name, value in arrays.items():
-        if not np.isfinite(value).all():
-            raise ValueError(f"Gaussian archive contains non-finite {name}")
-    if np.any(arrays["scales"] <= 0):
-        raise ValueError("Gaussian scales must be positive")
-    if np.any((arrays["opacities"] < 0) | (arrays["opacities"] > 1)):
-        raise ValueError("Gaussian opacity must be in [0, 1]")
-    return arrays
+    # Shared Cloud files use REMIGAUS; local generations use numeric NPZ.
+    # The common decoder validates both formats without deserializing pickle.
+    from integrations.triposplat.splat_data import load
+    return load(path, allow_legacy_npz=True)
 
 
 def run(request, output):

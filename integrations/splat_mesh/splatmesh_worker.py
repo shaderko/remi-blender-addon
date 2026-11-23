@@ -16,6 +16,12 @@ import traceback
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from runtime import check_cancel, sha256, status, write_json
 
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from integrations.triposplat.splat_data import load as load_gaussian_archive
+
 BACKEND = "remi-splat-mesh"
 REPOSITORY = "https://github.com/shaderko/remi-splat-mesh"
 INSTALL_HINT = (
@@ -27,6 +33,18 @@ QUALITY = {
     "DENSE": {"resolution": 512, "level": 0.05},
     "FAST": {"resolution": 256, "level": 0.05},
 }
+
+
+def _load_splats(path):
+    # The backend's file loader only accepts NPZ. Decode Remi's two formats
+    # ourselves and pass validated numeric arrays to its public in-memory API.
+    arrays = load_gaussian_archive(path, allow_legacy_npz=True)
+    from splatmesh import GaussianSplats
+    return GaussianSplats(
+        positions=arrays["positions"], scales=arrays["scales"],
+        rotations=arrays["rotations"], opacities=arrays["opacities"],
+        colors=arrays["sh_dc"],
+    )
 
 
 def main():
@@ -50,7 +68,7 @@ def main():
 
         status(output, "Loading remi-splat-mesh")
         try:
-            from splatmesh import (ExtractConfig, extract_mesh, load_splats,
+            from splatmesh import (ExtractConfig, extract_mesh,
                                    save_mesh_ply)
         except ModuleNotFoundError as exc:
             missing = getattr(exc, "name", "splatmesh")
@@ -72,7 +90,7 @@ def main():
         config = ExtractConfig(**options)
 
         check_cancel(output)
-        splats = load_splats(archive)
+        splats = _load_splats(archive)
         status(output, f"Extracting surface from {len(splats):,} splats",
                gaussians=len(splats),
                resolution=config.resolution, level=config.level)

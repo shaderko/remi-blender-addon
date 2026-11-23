@@ -1,6 +1,6 @@
 <p align="center">
 
-Latest beta: [2.7.0-beta.16 — Windows cache fixes, IDOL and remembered sign-in](docs/releases/2.7.0-beta.16.md).
+Latest beta: [2.7.0-beta.17 — Cloud Gaussian mesh and texture fixes](docs/releases/2.7.0-beta.17.md).
 Requires Blender 5.3; release packages target macOS arm64 and Windows x64.
 
   <img src="assets/remi_logo.png" alt="Remi" width="150">

@@ -52,7 +52,8 @@ def save_native(path, arrays):
         stream.write(values.astype("<f4",copy=False).tobytes())
 
 
-def load(path):
+def load(path, *, allow_legacy_npz=False):
+    """Decode numeric data only; legacy worker NPZs may omit the schema field."""
     path = Path(path)
     with path.open("rb") as stream:
         header = stream.read(16)
@@ -73,10 +74,15 @@ def load(path):
                              "rotations":values[:,6:10], "opacities":values[:,10], "sh_dc":values[:,11:14]})
     if path.suffix.lower() == ".splat":
         raise ValueError("Expected native Remi REMIGAUS data, not a viewer .splat file")
+    if not zipfile.is_zipfile(path):
+        raise ValueError("Expected a native REMIGAUS splat or a numeric Remi NPZ archive")
     with zipfile.ZipFile(path) as archive:
         if sum(item.file_size for item in archive.infolist()) > 32 * 1024 * 1024:
             raise ValueError("Gaussian archive exceeds the supported size")
     with np.load(path, allow_pickle=False) as archive:
-        if int(archive["schema"]) != SCHEMA:
+        if "schema" not in archive:
+            if not allow_legacy_npz:
+                raise ValueError("Gaussian archive is missing schema")
+        elif int(archive["schema"]) != SCHEMA:
             raise ValueError("Unsupported Gaussian archive schema")
         return validate({name: archive[name] for name in WIDTHS})

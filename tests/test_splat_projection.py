@@ -252,13 +252,19 @@ class ProjectionTests(unittest.TestCase):
             self.assertTrue(Path(path).is_file())
 
     def test_worker_writes_images_and_completion(self):
+        self._worker_writes_images_and_completion(native=False)
+
+    def test_worker_writes_images_and_completion_from_cloud_splat(self):
+        self._worker_writes_images_and_completion(native=True)
+
+    def _worker_writes_images_and_completion(self, native):
         with tempfile.TemporaryDirectory(prefix="remi-splat-project-") as directory:
             root = Path(directory)
             mesh_path = root / "mesh.npz"
             mesh = plane_mesh()
             np.savez(mesh_path, **mesh)
-            splat_path = root / "splats.npz"
-            splat_data.save(splat_path, plane_splats())
+            splat_path = root / ("cloud.splat" if native else "splats.npz")
+            (splat_data.save_native if native else splat_data.save)(splat_path, plane_splats())
             request = root / "request.json"
             request.write_text(
                 json.dumps(

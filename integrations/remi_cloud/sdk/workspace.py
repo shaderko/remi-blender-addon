@@ -13,6 +13,7 @@ from urllib.request import Request
 
 from .embedded import CloudError
 from .models import CloudFile, Job, identifier
+from .compression import ACCEPT_COMPRESSION, read_artifact
 
 CARD_ID=re.compile(r"[A-Za-z0-9_-]{1,100}")
 
@@ -114,13 +115,14 @@ class WorkspaceClient:
             if stamp[1]==file.bytes and hashlib.sha256(path.read_bytes()).hexdigest()==file.sha256:
                 self._verified[str(path)]=stamp;return str(path)
         headers={"Authorization":"Bearer "+self.session._token,"Accept-Encoding":"identity",
+                 "X-Remi-Accept-Compression":ACCEPT_COMPRESSION,
                  "User-Agent":"remi-cloud-embedded/0.1","Origin":self.session._origin}
         if self.session.project_id:headers["X-Remi-Project"]=self.session.project_id
         try:
             request=Request(self.session.base_url+"/files/"+file.id+"/content",headers=headers)
             with self.session._http.open(request,timeout=30) as response:
-                if response.status!=200 or response.headers.get("Content-Encoding","identity").lower() not in ("","identity"):raise ValueError
-                body=response.read(file.bytes+1)
+                if response.status!=200:raise ValueError
+                body=read_artifact(response,file.bytes)
             if len(body)!=file.bytes or hashlib.sha256(body).hexdigest()!=file.sha256:raise ValueError
             self.cache.mkdir(parents=True,exist_ok=True)
             temporary=path.with_suffix(suffix+".partial")

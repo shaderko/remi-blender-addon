@@ -14,6 +14,7 @@ import stat
 import struct
 import tempfile
 import time
+import zlib
 from datetime import datetime, timezone
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
@@ -23,6 +24,7 @@ from uuid import uuid4
 from .embedded import CloudError, api_url
 from .models import CloudFile, Job, identifier, integer, digest
 from .errors import ProtocolError
+from .compression import ACCEPT_COMPRESSION, read_artifact
 
 INPUT_LIMIT = 20 * 1024 * 1024
 OUTPUT_LIMIT = 16 * 1024 * 1024
@@ -272,7 +274,7 @@ class CloudRequest:
         return {**value,"state":"job_running","message":"Cloud generation is running."}
 
     def download(self,file_id):
-        ticket=self.session.api("POST","/files/"+identifier(file_id)+"/download")
+        ticket=self.session.api("POST","/files/"+identifier(file_id)+"/download?compression="+ACCEPT_COMPRESSION)
         size=integer(ticket.get("bytes"),minimum=1);checksum=digest(ticket.get("sha256"))
         content_type="image/png" if self.intent["operation"]=="generate_image" else "application/octet-stream"
         if size>OUTPUT_LIMIT or ticket.get("contentType")!=content_type:
@@ -292,17 +294,20 @@ class CloudRequest:
                 _=parts.port
             except (ValueError,TypeError,AttributeError): raise CloudError("Cloud returned an unsafe download location.") from None
             try:
-                request=Request(url,headers={"Accept-Encoding":"identity","User-Agent":"remi-cloud-embedded/0.1"},method="GET")
+                headers={"Accept-Encoding":"identity","User-Agent":"remi-cloud-embedded/0.1"}
+                if ticket.get("transport")==ACCEPT_COMPRESSION:
+                    url=self.session.base_url+"/files/"+identifier(file_id)+"/content"
+                    headers.update({"Authorization":"Bearer "+self.session._token,
+                                    "Origin":self.session._origin,
+                                    "X-Remi-Accept-Compression":ACCEPT_COMPRESSION})
+                    if self.session.project_id:headers["X-Remi-Project"]=self.session.project_id
+                request=Request(url,headers=headers,method="GET")
                 with self.session._http.open(request,timeout=30) as response:
                     if response.status!=200 or response.headers.get("Content-Encoding","identity").lower() not in ("","identity"):
                         raise CloudError("Cloud result download was not verified. Resume downloading this request.")
-                    deadline=time.monotonic()+30;parts=[];received=0
-                    while received<=size:
-                        if time.monotonic()>=deadline: raise CloudError("Cloud download exceeded its time limit. Resume this saved request.")
-                        chunk=response.read1(min(65536,size+1-received))
-                        if not chunk: break
-                        parts.append(chunk);received+=len(chunk)
-                    body=b"".join(parts)
+                    try:body=read_artifact(response,size)
+                    except (ValueError,zlib.error):
+                        raise CloudError("Cloud result compression could not be verified. Resume downloading this request.") from None
             except HTTPError as error:
                 error.close()
                 raise CloudError("Cloud result download was interrupted. Resume this request, not a new generation.") from None

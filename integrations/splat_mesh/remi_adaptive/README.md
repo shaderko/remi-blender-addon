@@ -35,5 +35,9 @@ reduction and 20.4% fewer triangles relative to the accepted dense quality
 prototype. The 512 lantern changed 15.94→9.10 CPU seconds and 7.19M→5.24M
 triangles. The controls show a small accuracy loss. Most speedup comes from
 sparse/native evaluation; coarsening alone added about 6–7% on the lantern.
+The local Linux amd64 image profile then fell from 15.38→12.23 reconstruction CPU
+seconds (extraction 11.41→8.37, contour faces 6.16→3.09) after replacing
+temporary contour vectors with fixed-capacity rings and reserving the edge set.
+The 512 lantern remained byte-identical.
 These are local regression measurements, not independent holdout guarantees
 or Cloud hardware timings. The simpler fixed-threshold original remains faster.

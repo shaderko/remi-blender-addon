@@ -179,8 +179,25 @@ struct Leaf {
 struct Edge {
   int x, y, z, a, s;
 };
+template <size_t Capacity>
+struct SmallIndices {
+  std::array<int, Capacity> data{};
+  size_t count = 0;
+  size_t size() const { return count; }
+  bool empty() const { return count == 0; }
+  int &operator[](size_t index) { return data[index]; }
+  int operator[](size_t index) const { return data[index]; }
+  int front() const { return data[0]; }
+  int back() const { return data[count - 1]; }
+  void push_back(int value) { data[count++] = value; }
+  void pop_back() { count--; }
+  int *begin() { return data.data(); }
+  int *end() { return data.data() + count; }
+};
+using PolygonIndices = SmallIndices<4>;
+using RingIndices = SmallIndices<8>;
 struct Polygon {
-  std::vector<int> v;
+  PolygonIndices v;
   Edge e;
 };
 
@@ -1342,8 +1359,7 @@ struct Context {
           insert[a.first][a.second] = insert[b.first][b.second] = id;
         }
       }
-    std::vector<std::vector<int>> rings(polys.size());
-    std::unordered_set<uint64_t> used;
+    std::vector<RingIndices> rings(polys.size());
     auto key = [](int a, int b) {
       return ((uint64_t)std::min(a, b) << 32) | (uint32_t)std::max(a, b);
     };
@@ -1355,9 +1371,15 @@ struct Context {
         if (insert[i][j] >= 0)
           v.push_back(insert[i][j]);
       }
+    }
+    size_t edge_count = 0;
+    for (const auto &v : rings)
+      edge_count += v.size();
+    std::unordered_set<uint64_t> used;
+    used.reserve(edge_count);
+    for (const auto &v : rings)
       for (size_t j = 0; j < v.size(); j++)
         used.insert(key(v[j], v[(j + 1) % v.size()]));
-    }
     for (size_t i = 0; i < polys.size(); i++) {
       auto &v = rings[i];
       if (v.size() == 3) {

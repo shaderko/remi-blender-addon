@@ -1,4 +1,4 @@
-"""Nonblocking Blender adapter for an isolated, session-only OAuth connection."""
+"""Nonblocking Blender adapter for an isolated OAuth connection with optional OS-protected persistence."""
 import atexit
 import json
 import os
@@ -17,6 +17,7 @@ class CodexSession:
         self.pending = None
         self.signed_in = False
         self.retired = []
+        self.credential_root = None
 
     def start(self, *, action, output, **options):
         if self.pending is not None and self.pending.poll() is None:
@@ -34,7 +35,7 @@ class CodexSession:
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 env={key: value for key, value in os.environ.items() if key in {"PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE", "HOME", "USERPROFILE"}},
             )
-        if action == "sign_in":
+        if action in {"sign_in", "restore", "disconnect"}:
             directory = Path(tempfile.mkdtemp(prefix="remi-codex-signin-"))
         else:
             directory = Path(output).resolve() / ("codex_" + uuid.uuid4().hex)
@@ -42,7 +43,8 @@ class CodexSession:
         os.chmod(directory, 0o700)
         self.pending = job = CodexJob(self, directory, action)
         try:
-            self.process.stdin.write((json.dumps({**options, "action": action, "directory": str(directory)}) + "\n").encode())
+            self.process.stdin.write((json.dumps({**options, "action": action, "directory": str(directory),
+                **({"credential_root": str(self.credential_root)} if self.credential_root else {})}) + "\n").encode())
             self.process.stdin.flush()
         except (OSError, BrokenPipeError):
             self.shutdown()

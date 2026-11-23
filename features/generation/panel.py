@@ -88,20 +88,25 @@ def draw_generation_settings(layout, context, include_backend=True):
     settings = context.scene.remi_generation
     from ..cloud.generation import draw_backend, is_api
     controls.label(text="3D Generation", icon="OUTLINER_OB_POINTCLOUD")
-    if include_backend:
-        draw_backend(controls, context)
-    controls.prop(settings, "model")
+    controls.prop(settings, "engine")
+    if is_api(context, "generate"):
+        from ...integrations.remi_cloud.client import runtime
+        model = runtime.status().get("capabilities", {}).get("modelGeneration", {}).get("model")
+        controls.label(text=f"Cloud model: {model or 'Connect to discover'}", icon="INFO")
     controls.prop(settings, "gaussians")
     controls.prop(settings, "seed")
+    if settings.model == "idol" and not is_api(context, "generate"):
+        controls.prop(settings, "idol_steps")
     if settings.model == "triposplat":
         controls.prop(settings, "triposplat_steps")
         controls.prop(settings, "triposplat_guidance")
         controls.prop(settings, "triposplat_shift")
     controls.separator()
-    if not is_api(context):
+    if not is_api(context, "generate"):
         controls.prop(settings, "python")
         controls.prop(settings, "models")
-        controls.prop(settings, "download_url")
+        if settings.model != "idol":
+            controls.prop(settings, "download_url")
         controls.operator("remi.download_models", text="Download Models", icon="IMPORT")
         controls.prop(settings, "model_cache_minutes", text="Keep Model Loaded (min)")
         if settings.model_cache_minutes:
@@ -110,7 +115,7 @@ def draw_generation_settings(layout, context, include_backend=True):
     controls.separator()
     controls.label(text="Reconstructed Mesh")
     controls.prop(settings, "mesh_quality")
-    controls.label(text="Native Gaussian rendering · Blender 5.3+ · Windows x64", icon="INFO")
+    controls.label(text="Native Gaussian rendering · Blender 5.3+", icon="INFO")
     controls.label(text="Needs remi-splat-mesh in the external Python", icon="INFO")
     controls.prop(settings, "mesh_output")
 

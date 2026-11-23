@@ -25,7 +25,7 @@ class RemiCloudState(PropertyGroup):
     message: StringProperty(default="Sign in to Remi Cloud.",options={"SKIP_SAVE"})
     user_code: StringProperty(options={"SKIP_SAVE"})
     verification_url: StringProperty(options={"SKIP_SAVE"})
-    operation: EnumProperty(name="Generate",items=[("generate_image","Image","Iris-3B Turbo"),("generate","3D","Custom rand6_100_ncm native Gaussians")],default="generate_image",options={"SKIP_SAVE"})
+    operation: EnumProperty(name="Generate",items=[("generate_image","Image","Iris-3B Turbo"),("generate","3D","IDOL Cloud native Gaussians")],default="generate_image",options={"SKIP_SAVE"})
     prompt: StringProperty(name="Prompt",maxlen=2000,options={"SKIP_SAVE"})
     image: StringProperty(name="Input Image",subtype="FILE_PATH",options={"SKIP_SAVE"})
     seed: IntProperty(name="Seed",default=0,min=0,max=2147483647,options={"SKIP_SAVE"})
@@ -51,6 +51,11 @@ def tick():
     state = getattr(bpy.context.window_manager,"remi_cloud",None)
     if state is None: return None
     board_sync.configure_cache()
+    if not bpy.app.background and bpy.app.online_access:
+        try:
+            runtime.restore_once(state.base_url)
+        except (CloudError, RuntimeError, OSError) as error:
+            state.message = str(error)
     value = runtime.status()
     state.busy = runtime.pending
     state.signed_in = value.get("signed_in",value.get("state")=="signed_in")
@@ -119,7 +124,7 @@ class Remi_OT_CloudLogout(Operator):
     def execute(self,context):
         try:
             if runtime.pending: runtime.stop()
-            else: runtime.command("logout",context.window_manager.remi_cloud.base_url)
+            runtime.command("logout",context.window_manager.remi_cloud.base_url)
         except (CloudError,RuntimeError,OSError) as error:
             self.report({"ERROR"},str(error)); return {"CANCELLED"}
         return {"FINISHED"}

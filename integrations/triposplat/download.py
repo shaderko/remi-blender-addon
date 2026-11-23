@@ -179,6 +179,10 @@ def download_chunks(url, expected_bytes, opener):
 
 def download_models(base, models, report=lambda phase: None, *, model=DEFAULT_MODEL,
                     token=None, opener=open_url):
+    if model == "idol":
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+        from integrations.idol.download import download
+        return download(models, report, opener=opener)
     base = model_base(base)
     models = Path(models).resolve()
     token = token or uuid.uuid4().hex

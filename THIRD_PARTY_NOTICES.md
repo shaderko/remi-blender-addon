@@ -244,3 +244,13 @@ target. The upstream snapshot contains no `NOTICE` file.
 pybind11 is a build dependency rather than a vendored source tree, but its
 headers are incorporated into the compiled extension, so its binary
 redistribution notice is included here.
+
+
+## IDOL SDK
+
+The local IDOL runtime vendors speridlabs/idol-sdk at commit
+`8db700349a5570aac390e4780fa32e3eed6b587a`, matching the pinned Remi Cloud IDOL
+source. Licensed under Apache-2.0; the original license and full source integrity
+record are in `integrations/idol/vendor/LICENSE` and `integrations/idol/source-lock.json`.
+Model weights are separately downloaded from their pinned upstream revisions;
+no weights are included in the Blender extension.

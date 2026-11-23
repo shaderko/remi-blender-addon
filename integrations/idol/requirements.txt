@@ -1,0 +1,11 @@
+# Install into the configured external CUDA/PyTorch Python, never Blender.
+# Install matching CUDA torch/torchvision wheels for your GPU first.
+plyfile==1.1.3
+tensordict==0.15.6
+diffusers==0.43.0
+transformers==5.24.0
+huggingface-hub==1.32.0
+safetensors
+Pillow
+numpy
+tqdm

@@ -1,0 +1,32 @@
+{
+  "model": "Idol",
+  "revision": "2731c2291fc65a797c5cb627a5e5526fc1490902",
+  "files": {
+    "birefnet.safetensors": {
+      "bytes": 444466856,
+      "sha256": "44bbc97b041f879975d0d6d538b8e66a25eb04d1f49aab40697544cdd97eaa8e",
+      "url": "https://huggingface.co/speridlabs/idol/resolve/2731c2291fc65a797c5cb627a5e5526fc1490902/birefnet.safetensors"
+    },
+    "decoder.safetensors": {
+      "bytes": 203171696,
+      "sha256": "9da4d7676bfcadb1c3fdfbff796e6257dadf82d26ec05be7717c79b2b13a1c4e",
+      "url": "https://huggingface.co/speridlabs/idol/resolve/2731c2291fc65a797c5cb627a5e5526fc1490902/decoder.safetensors"
+    },
+    "decoder_gs.safetensors": {
+      "bytes": 949083036,
+      "sha256": "3087eb8ee5763206a53e4078acf2a1bf382dab5147d407ec13a2cf39c04cc544",
+      "url": "https://huggingface.co/speridlabs/idol/resolve/2731c2291fc65a797c5cb627a5e5526fc1490902/decoder_gs.safetensors"
+    },
+    "denoiser.safetensors": {
+      "bytes": 1482258308,
+      "sha256": "ded2cacf671bf3978ebc62729087abdbd318ef4752e6805b4c9fc8ffa51fe716",
+      "url": "https://huggingface.co/speridlabs/idol/resolve/2731c2291fc65a797c5cb627a5e5526fc1490902/denoiser.safetensors"
+    },
+    "config.json": {
+      "bytes": 1335,
+      "sha256": "ddd89dcc6dcf4a5ac8d951b8c59afa1eceafe377615c5912c59f4e1f5ae35b32",
+      "url": "https://huggingface.co/speridlabs/idol/resolve/2731c2291fc65a797c5cb627a5e5526fc1490902/config.json"
+    }
+  },
+  "sourceCommit": "8db700349a5570aac390e4780fa32e3eed6b587a"
+}

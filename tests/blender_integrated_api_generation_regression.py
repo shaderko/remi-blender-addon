@@ -42,7 +42,7 @@ class Layout:
 server=FixtureServer();root=tempfile.TemporaryDirectory(prefix='remi-integrated-api-')
 try:
     context=bpy.context;gs=context.scene.remi_generation;ims=context.scene.remi_image;state=context.window_manager.remi_cloud
-    gs.backend='API';gs.model='rand6_100_ncm';gs.seed=77;gs.gaussians='32768';gs.models='';gs.python='';gs.output=str(Path(root.name)/'models')
+    gs.backend='API';gs.engine='IDOL_CLOUD';gs.seed=77;gs.gaussians='32768';gs.models='';gs.python='';gs.output=str(Path(root.name)/'models')
     ims.models='';ims.output=str(Path(root.name)/'images');ims.model='turbo';ims.prompt='A blue teapot';ims.seed=11;ims.count=2;ims.size='SQUARE'
     state.base_url=server.api;state.max_cost_eur='0.001'
     assert bpy.ops.remi.cloud_login()=={'FINISHED'}
@@ -99,7 +99,7 @@ try:
     assert last['operation']=='generate' and last['options']=={'seed':77,'gaussianCount':32768}
     assert not context.window_manager.remi_generation.busy
     # Local/API is a choice of execution, not a second generation settings object.
-    gs.model="rand6_100_ncm"
+    gs.engine="NCM_LOCAL"
     gs.backend='LOCAL';local_layout=Layout();draw_generation_settings(local_layout,context)
     assert ('prop','python') in local_layout.log and ('prop','gaussians') in local_layout.log
     gs.backend='API';before=len(server.jobs)

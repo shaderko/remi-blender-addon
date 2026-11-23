@@ -42,6 +42,7 @@ TESTS = (
     "blender_uv_small_faces_regression.py",
     "blender_voxel_surface_regression.py",
     "blender_generation_regression.py",
+    "blender_idol_generation_regression.py",
     "blender_image_generation_regression.py",
     "blender_codex_image_regression.py",
     "blender_cloud_generation_regression.py",
@@ -163,9 +164,16 @@ def stage_extension(stage, target, wheel):
     native = [native_file(ROOT, directory, module, target)
               for directory, module in NATIVE_MODULES.items()]
     # Never include another platform's binary, build caches, tests, or developer files.
-    shutil.copytree(ROOT, stage, ignore=shutil.ignore_patterns(
+    excluded = shutil.ignore_patterns(
         ".*", "__pycache__", "*.pyc", "*.so", "*.pyd", "*.whl", "*.zip",
-        "dist", "scripts", "tests", "native", "weppy-project-sync", "models", "generations"))
+        "dist", "scripts", "tests", "native", "weppy-project-sync", "models", "generations")
+    def ignored(directory, names):
+        result = set(excluded(directory, names))
+        # These are pinned Python model definitions, not downloaded weights.
+        if Path(directory) == ROOT / "integrations/idol/vendor/idol":
+            result.discard("models")
+        return result
+    shutil.copytree(ROOT, stage, ignore=ignored)
     for source in native:
         shutil.copy2(source, stage / source.relative_to(ROOT))
     shutil.copy2(wheel, stage / "wheels" / wheel.name)
@@ -223,13 +231,24 @@ def verify_archive(artifact, target):
         }
         if not iris_required.issubset(archive.namelist()):
             raise RuntimeError("Archive is missing the Iris image-generation integration")
-        codex_required = {"features/images/references.py",
+        codex_required = {"features/images/references.py", "features/images/login.py",
+                          "integrations/credentials/vault.py", "integrations/remi_cloud/credentials.py",
                           *{f"integrations/codex_images/{name}.py" for name in ("__init__", "auth", "client", "worker")}}
         if not codex_required.issubset(archive.namelist()):
             raise RuntimeError("Archive is missing the local Codex image/context integration")
         if not {f"features/board/{name}.py" for name in
                 ("__init__", "canvas", "workspace", "assets", "jobs", "local_worker", "splat_preview", "editing", "texture_effects", "toolbar", "native_assets", "organization", "organizing", "layers")}.issubset(archive.namelist()):
             raise RuntimeError("Archive is missing the docked generation workspace")
+        idol_required = {"integrations/idol/runtime.py", "integrations/idol/download.py",
+                         "integrations/idol/model-lock.json", "integrations/idol/encoder-lock.json",
+                         "integrations/idol/source-lock.json", "integrations/idol/vendor/LICENSE"}
+        if not idol_required.issubset(archive.namelist()):
+            raise RuntimeError("Archive is missing the pinned local IDOL runtime")
+        idol_source = json.loads(archive.read("integrations/idol/source-lock.json"))
+        for name, metadata in idol_source["files"].items():
+            data = archive.read("integrations/idol/vendor/"+name)
+            if hashlib.sha256(data).hexdigest() != metadata["sha256"]:
+                raise RuntimeError("Pinned IDOL source hash mismatch")
         cloud_required={"features/cloud/__init__.py","features/cloud/jobs.py","features/cloud/projects.py","features/cloud/board_sync.py",
             *{f"integrations/remi_cloud/{name}.py" for name in ("protocol","client","worker","workspace_worker","jobs")},
             *{f"integrations/remi_cloud/contract/{name}" for name in ("__init__.py","models.py","errors.py","provenance.json")},
@@ -354,7 +373,7 @@ def main():
             for pattern in ("test_platform_support.py", "test_model_download.py", "test_iris_setup.py",
                             "test_instant_meshes_adaptive.py", "test_surface_adaptive.py",
                             "test_surface_topology.py", "test_board_organization.py", "test_board_layers.py",
-                            "test_cloud_auth.py", "test_cloud_generation.py", "test_cloud_projects.py", "test_codex_images.py"):
+                            "test_cloud_auth.py", "test_cloud_generation.py", "test_cloud_projects.py", "test_codex_images.py", "test_idol_generation.py", "test_persistent_login.py"):
                 run(sys.executable, "-m", "unittest", "discover", "-s", ROOT / "tests",
                     "-p", pattern)
             for test in TESTS:

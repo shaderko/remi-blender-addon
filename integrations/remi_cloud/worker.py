@@ -1,4 +1,4 @@
-"""Isolated shared-SDK network process. Never writes a session/device secret to disk."""
+"""Isolated shared-SDK process. Persistent sessions use OS-protected storage."""
 import json
 from pathlib import Path
 import signal
@@ -9,6 +9,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from protocol import CloudError, CloudSession
 from jobs import CloudRequest
 from sdk.errors import ProtocolError
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from integrations.credentials.vault import Vault, StorageError
+from credentials import scope as credential_scope, save as save_credential, restore as restore_credential
 
 stopping = False
 
@@ -26,6 +29,8 @@ def main(directory):
     request_path = None
     caps = None
     workspace = None
+    vault = None
+    persistence_notice = ""
     def connected(profile):
         nonlocal caps,workspace
         # Account authentication does not depend on the generation API being
@@ -37,7 +42,7 @@ def main(directory):
             message = "Signed in. Generation availability could not be checked. Refresh to retry."
         else:
             message = "Cloud connected." if caps["enabled"] else "Signed in. Cloud generation is not enabled on this server yet."
-        publish({"state":"signed_in", **profile, "message":message})
+        publish({"state":"signed_in", **profile, "message":message + persistence_notice})
         cache=command.get("workspace_cache")
         if cache and workspace is None:
             from workspace_worker import WorkspaceWorker
@@ -63,21 +68,57 @@ def main(directory):
                 request_id = command.get("request_id",0)
                 action = command.get("action")
                 if action == "close": break
-                if action == "login":
+                if command.get("credential_root"):
+                    vault = Vault(command["credential_root"])
+                if action == "restore":
+                    if vault is None:
+                        publish({"state":"signed_out","message":"Sign in to Remi Cloud."})
+                        continue
+                    restored = restore_credential(vault, command["base_url"])
+                    if restored is None:
+                        publish({"state":"signed_out","message":"Sign in to Remi Cloud."})
+                    else:
+                        session = restored
+                        connected(session.profile)
+                elif action == "login":
                     if session is not None and session.base_url != command["base_url"]:
                         if workspace:workspace.close();workspace=None
-                        if not session.logout(): raise CloudError("Previous session revocation was not confirmed. Review your Remi Cloud sessions.")
+                        # Switching endpoints keeps each saved login isolated.
+                        session.clear()
                         session = None
                         caps = None
+                    if session is None and vault is not None:
+                        try:
+                            session = restore_credential(vault, command["base_url"])
+                        except StorageError as error:
+                            persistence_notice = " " + str(error)
+                        except CloudError:
+                            # Keep saved credentials on a temporary network failure.
+                            raise
                     session = session or CloudSession(command["base_url"])
                     profile = session.login(publish,lambda:stopping)
+                    if vault is not None:
+                        try:
+                            save_credential(vault, session)
+                        except StorageError as error:
+                            persistence_notice = " " + str(error)
                     connected(profile)
                 elif action == "status":
+                    if session is None and vault is not None:
+                        session = restore_credential(vault, command["base_url"])
                     if session is None or session.base_url != command["base_url"]:
                         raise CloudError("Sign in to the original Remi Cloud server first.")
                     profile = session.status()
                     connected(profile)
                 elif action == "logout":
+                    # Clear durable credentials first so automatic restoration
+                    # cannot undo explicit sign-out, even if revocation fails.
+                    if vault is not None:
+                        saved = vault.load(credential_scope(command["base_url"]))
+                        vault.clear(credential_scope(command["base_url"]))
+                        if session is None and isinstance(saved, dict) and isinstance(saved.get("token"), str):
+                            session = CloudSession(command["base_url"])
+                            session._token = saved["token"]
                     if workspace:workspace.close();workspace=None
                     revoked = session.logout() if session is not None else True
                     session = None
@@ -108,13 +149,15 @@ def main(directory):
                     for result in work.watch(cancelled=lambda:stopping):
                         publish(result)
                 else: raise CloudError("Unsupported Cloud command.")
+            except StorageError as error:
+                publish({"state":"error","message":str(error),"error_code":"credential_store_unavailable","retryable":False})
             except CloudError as error:
                 publish({"state":"error","message":str(error),"error_code":error.code,"retryable":error.retryable})
             except (OSError,ValueError,KeyError,TypeError,ProtocolError):
                 publish({"state":"error","message":"The Cloud request failed. No result was imported."})
     finally:
         if workspace:workspace.close()
-        if session is not None: session.logout()
+        if session is not None: session.clear()
 
 
 if __name__ == "__main__":

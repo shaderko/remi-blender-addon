@@ -125,7 +125,8 @@ try:
         bpy.ops.wm.open_mainfile(filepath=str(blend))
         cloud.tick()
         assert not bpy.context.window_manager.remi_cloud.signed_in and runtime.process is None
-    wait(lambda: fixture.server.revoked)
+    wait(lambda: not runtime.retired)
+    assert not fixture.server.revoked, "Loading a .blend must not revoke the account session"
     state = bpy.context.window_manager.remi_cloud
     state.base_url = fixture.api
     fixture.server.revoked = False

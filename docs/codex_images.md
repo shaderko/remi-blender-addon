@@ -17,8 +17,9 @@ The output links to the first reference on the board; all reference IDs and loca
 snapshots are recorded in its job metadata. Normal project upload sync shares the
 completed result and its first-source board connection.
 
-The connection lasts for this Blender session. Disconnect ChatGPT to forget it.
-Generation also opens sign-in if no connection exists. Blender's Allow Online Access must be enabled.
+Remi remembers this connection across Blender restarts using macOS Keychain or
+Windows user-bound DPAPI encryption. Disconnect ChatGPT removes the saved login.
+Generation opens sign-in only if no usable saved connection exists. Blender's Allow Online Access must be enabled.
 No separate Python, Node installation, model download, API key, or Codex CLI is needed.
 
 Image requests run on this computer in an isolated worker using the prototype's native
@@ -29,11 +30,13 @@ registration and returned 401 with its own OSS registration. Being local and ope
 source does not establish supported third-party image access. Availability can change.
 See [OpenAI preview limitations](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations).
 
-OAuth tokens and refresh tokens stay in worker memory. They are never put in a
-.blend file, image metadata, IPC file, log, or Remi server request. The worker verifies
+OAuth tokens and refresh tokens stay in the isolated worker and OS-protected
+credential storage. They never appear in a .blend file, image metadata, IPC
+status file, log, or Remi server request. Refresh-token rotations are serialized
+across Blender processes; temporary outages preserve saved credentials. The worker verifies
 the ID-token signature and identity, nonce and PKCE state. It binds the sign-in
 callback to loopback port 1455; another sign-in using that port must finish first.
-Cancel terminates the local worker and forgets the connection. An upstream image
+Cancel terminates the local worker but keeps the saved login. Disconnect removes it. An upstream image
 request may already have consumed plan usage; cancellation does not refund it.
 
 Completed PNG files are validated and enter the selected board as ordinary images.

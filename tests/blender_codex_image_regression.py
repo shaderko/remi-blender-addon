@@ -97,7 +97,7 @@ worker=importlib.util.module_from_spec(spec);spec.loader.exec_module(worker)
 class Connection:
     tokens=None
     def sign_in(self,progress):self.tokens={'synthetic':True}
-    def authorize(self,progress):
+    def authorize(self,progress,**kwargs):
         if self.tokens is None:self.sign_in(progress)
         return {'Authorization':'Bearer synthetic-memory-only'}
 worker.Connection=Connection

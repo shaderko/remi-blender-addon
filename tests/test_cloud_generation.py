@@ -78,7 +78,7 @@ class Handler(BaseHTTPRequestHandler):
             else:value={"user":{"id":s.user,"email":"fixture@example.test"},"session":{"expiresAt":"2099-01-01T00:00:00+00:00","token":TOKEN}}
         elif path=="/api/auth/sign-out":s.revoked=True;value={"success":True}
         elif path=="/api/v1/capabilities":
-            value={"apiVersion":"v1","enabled":s.enabled,"operations":{name:s.enabled and name in ("generate_image","generate") for name in ("generate_image","generate","reconstruct","optimize","pipeline")},"inputModes":{"single":True,"batch":True,"multiview":False},"billing":{"currency":"EUR","spendCapsRequired":True}}
+            value={"apiVersion":"v1","enabled":s.enabled,"operations":{name:s.enabled and name in ("generate_image","generate") for name in ("generate_image","generate","reconstruct","optimize","pipeline")},"inputModes":{"single":True,"batch":True,"multiview":False},"billing":{"currency":"EUR","spendCapsRequired":True},"modelGeneration":{"model":"Idol"}}
         elif path=="/artifact":
             body=s.artifact
             if s.fault=="corrupt":body=b"bad artifact"

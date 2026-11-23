@@ -99,13 +99,16 @@ class CodexTests(unittest.TestCase):
         self.assertEqual(callbacks,[400,200])
         self.assertEqual(connection.tokens["refresh_token"],"synthetic-refresh")
 
-    def test_refresh_rotation_and_failed_refresh_forgets_connection(self):
+    def test_refresh_rotation_and_temporary_failure_preserves_connection(self):
         connection=auth.Connection();connection._accept({"access_token":token(),"refresh_token":"old","expires_in":0})
         with patch.object(auth,"request_json",return_value={"access_token":token(),"refresh_token":"new","expires_in":600}):
             self.assertIn("Authorization",connection.authorize(lambda message:None))
         self.assertEqual(connection.tokens["refresh_token"],"new")
         connection.expires=0
         with patch.object(auth,"request_json",side_effect=RuntimeError("denied")):
+            with self.assertRaises(RuntimeError):connection.authorize(lambda message:None)
+        self.assertEqual(connection.tokens["refresh_token"],"new")
+        with patch.object(auth,"request_json",side_effect=auth.OAuthRejected("expired")):
             with self.assertRaises(RuntimeError):connection.authorize(lambda message:None)
         self.assertIsNone(connection.tokens)
 

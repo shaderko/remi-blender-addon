@@ -246,11 +246,12 @@ class Runner:
 
 def generation_options(context):
     settings = context.scene.remi_generation
-    return {"backend": settings.backend, "python": bpy.path.abspath(settings.python) if settings.python else default_python(),
+    from ..generation.settings import execution_backend, execution_model
+    return {"backend": execution_backend(settings), "python": bpy.path.abspath(settings.python) if settings.python else default_python(),
             "models": bpy.path.abspath(settings.models), "output": bpy.path.abspath(settings.output),
             "gaussians": int(settings.gaussians), "seed": settings.seed,
-            "model": settings.model,
-            "steps": settings.triposplat_steps,
+            "model": execution_model(settings),
+            "steps": settings.idol_steps if settings.model == "idol" else settings.triposplat_steps,
             "guidance": settings.triposplat_guidance,
             "shift": settings.triposplat_shift,
             "cache_minutes": settings.model_cache_minutes,

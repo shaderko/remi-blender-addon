@@ -24,6 +24,8 @@ def local_position(point):
 
 
 def configure_cache():
+    if runtime.credential_root is None and not bpy.app.background:
+        runtime.credential_root = Path(bpy.utils.user_resource("CONFIG", path="remi/credentials", create=True))
     if runtime.workspace_cache is None:
         runtime.workspace_cache=Path(bpy.utils.user_resource("DATAFILES",path="remi/cloud-workspaces",create=True))
 
@@ -89,6 +91,11 @@ class BoardSync:
             except (OSError,ValueError,KeyError,TypeError):continue
         self.applying=True
         try:
+            generation = getattr(board.scene, "remi_generation", None)
+            if generation is not None and generation.three_d_backend == "INHERIT":
+                # A fresh account/project defaults to its advertised Cloud model;
+                # an explicit local IDOL/NCM choice survives project switches.
+                generation.backend = "API"
             board.cleanup()
             board.scene[SCOPE_KEY]=wanted
             board.scene[PROJECT_KEY]=value["project_id"]

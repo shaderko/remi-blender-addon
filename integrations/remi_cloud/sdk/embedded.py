@@ -239,7 +239,9 @@ class CloudSession:
             parsed = Capabilities.parse(value)
         except (ValueError,ProtocolError):
             raise CloudError("Remi Cloud returned invalid generation capabilities.")
-        return {"enabled":parsed.enabled,"operations":parsed.operations,"inputModes":parsed.input_modes}
+        return {"enabled":parsed.enabled,"operations":parsed.operations,"inputModes":parsed.input_modes,
+                **({"imageGeneration":parsed.image_generation} if parsed.image_generation else {}),
+                **({"modelGeneration":parsed.model_generation} if parsed.model_generation else {})}
 
     def api(self, method, path, *, payload=None, body=None, headers=None):
         control=(method=="GET" and (path=="/capabilities" or path.startswith("/jobs"))) or (method=="POST" and (path=="/jobs" or path.endswith("/cancel") or path.endswith("/download")))

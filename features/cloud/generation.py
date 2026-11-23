@@ -13,7 +13,10 @@ from ...integrations.remi_cloud.client import runtime
 from ...integrations.remi_cloud.protocol import CloudError
 
 
-def is_api(context):
+def is_api(context, operation=None):
+    if operation == "generate":
+        from ..generation.settings import execution_backend
+        return execution_backend(context.scene.remi_generation) == "API"
     return getattr(context.scene.remi_generation, "backend", "LOCAL") == "API"
 
 
@@ -37,9 +40,13 @@ def validate_settings(context, operation, options=None):
     if state.request_path and state.request_path != runtime.completed_request:
         raise CloudError("Resume the previous API request from the account menu before generating again.")
     if operation == "generate":
-        model = (options or {}).get("model", context.scene.remi_generation.model)
-        if model != "rand6_100_ncm":
-            raise CloudError("The API currently runs Remi NCM. Choose Remi NCM or switch to Local for TripoSplat.")
+        from ..generation.settings import execution_model
+        model = (options or {}).get("model", execution_model(context.scene.remi_generation))
+        if model != "idol":
+            raise CloudError("NCM and TripoSplat run locally. Select IDOL · Cloud for Cloud generation.")
+        advertised = runtime.status().get("capabilities", {}).get("modelGeneration", {}).get("model")
+        if not isinstance(advertised, str) or advertised.lower() != "idol":
+            raise CloudError("This Cloud server has not advertised IDOL. Refresh the account connection or choose a local engine.")
     else:
         settings = context.scene.remi_image
         if settings.model != "turbo":
@@ -162,7 +169,8 @@ class ApiGenerationJob:
 def start_3d(context, *, image, output, options=None):
     settings = context.scene.remi_generation
     source = dict(options or {})
-    selection = {"model": source.get("model", settings.model)}
+    from ..generation.settings import execution_model
+    selection = {"model": source.get("model", execution_model(settings))}
     return ApiGenerationJob(context, operation="generate", image=image, output=output, selection=selection,
         options={"seed": source.get("seed", settings.seed), "gaussianCount": int(source.get("gaussians", settings.gaussians))})
 

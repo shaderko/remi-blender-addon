@@ -4,6 +4,13 @@
   "sdkVersion": "0.1.0a3",
   "files": {
     "__init__.py": "c3c7e7804456ca79174949bbb69c9cdd2a44576e85ffc4577d1ec34c86bf17aa",
+    "_version.py": "0789fa1b8097bb86d1a3093a9de1e742590a3af9355e6cf256f93aac9a577431",
+    "models.py": "5454c5d980691a3222bc9a81fdc82a2cd04744cf7dc2a9cf2404f19a4eb848cc",
+    "errors.py": "7a3c6c605e5e8c0b04770d5d5238fb3fab404adce638d1b503e6ed5eed559d08",
+    "embedded.py": "3fabe85728158817622efecdbea05427968f4dbccb0e8f50a090458c49f83eaf",
+    "workflow.py": "43b8c523b49cc98e4e13aeaa6986ba036aed488e0f96388ab1df03feabfad297",
+    "realtime.py": "20a0eec3a1c17bb519ae292ce9844f0ecd5285de6e8d3c83dca31166fc17691d",
+    "workspace.py": "647ba315f10f74ccc3b61e33ab23ff91beb7c5a2c23ee98969ee35cf2edcb88a",
     "_vendor/__init__.py": "698c7aade4ea0c472029043f51fc8e1a27c9a74a7dd6961d3511b7e63fc500c4",
     "_vendor/websockets/LICENSE": "3d6a0c050d8bec52fabad502e45fb25bd02bcadbd70dea34d447b6a0ff4e6da8",
     "_vendor/websockets/__init__.py": "002d87abddae49cfd63a8f7fc6f213a46b2127b0f2d0c7799b6ff2c2c752b7f6",
@@ -22,6 +29,7 @@
     "_vendor/websockets/http11.py": "6b6204bd353a13952da33a9db56a1a9b7d6b2a7d4f395285c2095a7930528ee6",
     "_vendor/websockets/imports.py": "4ff07d4d4987a1c78a310f8f36985d410007d97771031c1240d790120a882e41",
     "_vendor/websockets/protocol.py": "172a20d44b15f31b619c9757dcc1fdf9b1db10680f442d2dab019608f2b826b8",
+    "_vendor/websockets/provenance.json": "4c0a501c6a21558a31d8f233af55f064b9abefecc01285b4d6c750d772757bb1",
     "_vendor/websockets/server.py": "a3694f42063bb201daaacb7ec0c703b6c8b1684b2c6a95bf03bc991c60732e21",
     "_vendor/websockets/streams.py": "91c234257351a953e854484bebbfaeac80b08b4b202cdc8fc9675c705cc1b955",
     "_vendor/websockets/sync/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -34,14 +42,6 @@
     "_vendor/websockets/typing.py": "d59b763fe9574c2dca2613a1cd6d882f2128d48e5947d8c754fedbfeb9c9c90b",
     "_vendor/websockets/uri.py": "3297488a064823b469c3bffeeb50e2b19c03b55fbaf2fe187b1ccf9913fc2e19",
     "_vendor/websockets/utils.py": "6691f75892ec412dbd25fe51ea54da7317ff84f77c138cd2d89986c8da60e1b0",
-    "_vendor/websockets/version.py": "3ce864661d56d11715a2a5d9996507051fbee21afcf81c7fdfe5c39f25e8b6e8",
-    "_version.py": "0789fa1b8097bb86d1a3093a9de1e742590a3af9355e6cf256f93aac9a577431",
-    "embedded.py": "71c8587dd39f845257e92c69b24c663c339078a9db4603e659db088552092ad2",
-    "errors.py": "7a3c6c605e5e8c0b04770d5d5238fb3fab404adce638d1b503e6ed5eed559d08",
-    "models.py": "bbe910f22a36d0687d13e14b77e63fb55be3371ee1a267f6bebaddd2805035e8",
-    "realtime.py": "20a0eec3a1c17bb519ae292ce9844f0ecd5285de6e8d3c83dca31166fc17691d",
-    "workflow.py": "43b8c523b49cc98e4e13aeaa6986ba036aed488e0f96388ab1df03feabfad297",
-    "workspace.py": "348cc521da05e06d347496644df644b18a31beefa456ee2db85706b52e4d77de",
-    "_vendor/websockets/provenance.json": "4c0a501c6a21558a31d8f233af55f064b9abefecc01285b4d6c750d772757bb1"
+    "_vendor/websockets/version.py": "3ce864661d56d11715a2a5d9996507051fbee21afcf81c7fdfe5c39f25e8b6e8"
   }
 }

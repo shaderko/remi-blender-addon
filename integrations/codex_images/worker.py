@@ -13,6 +13,8 @@ import zlib
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from auth import AccessDenied, Connection, IMAGE_URL, request_json
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from integrations.credentials.vault import Vault
 
 
 def write_json(path, value):
@@ -148,19 +150,30 @@ def main():
     for line in sys.stdin:
         request = json.loads(line)
         directory = Path(request["directory"])
+        if request.get("credential_root"):
+            connection.vault = Vault(request["credential_root"])
         def progress(message):
             write_json(directory / "status.json", {"phase": message})
         try:
             if request["action"] == "sign_in":
-                connection.sign_in(progress)
+                connection.authorize(progress)
+            elif request["action"] == "restore":
+                connection.authorize(progress, allow_sign_in=False)
+            elif request["action"] == "disconnect":
+                connection.disconnect()
             elif request["action"] == "generate":
                 generate(connection, request, progress)
             else:
                 raise ValueError("Unknown local Codex command.")
-            write_json(directory / "status.json", {"phase": "Complete", "done": True, "signed_in": bool(connection.tokens)})
+            write_json(directory / "status.json", {"phase": getattr(connection, "persistence_notice", "") or "Complete", "done": True, "signed_in": bool(connection.tokens)})
         except Exception as error:
             if isinstance(error, AccessDenied):
                 connection.tokens = None
+                if getattr(connection, "vault", None) is not None:
+                    try:
+                        connection.vault.clear(connection._scope())
+                    except RuntimeError:
+                        pass
             # Only our bounded errors reach disk. Other exceptions may include
             # request headers or OAuth callback details in their representation.
             message = str(error) if isinstance(error, (RuntimeError, ValueError)) and not isinstance(error, json.JSONDecodeError) else "The local Codex connection failed. Check your connection and sign in again."

@@ -54,6 +54,14 @@ assert codex_client.session.process is None
 assert image_references.capture(None) == []
 assert (Path(addon.__file__).parent / "integrations/codex_images/worker.py").is_file()
 print("REMI_INSTALLED_CODEX_CONTEXT_OK")
+credential_vault = importlib.import_module(module_name + ".integrations.credentials.vault")
+assert callable(credential_vault.Vault)
+assert callable(importlib.import_module(module_name + ".integrations.remi_cloud.credentials").restore)
+print("REMI_INSTALLED_PERSISTENT_LOGIN_OK")
+idol_local = importlib.import_module(module_name + ".integrations.idol.runtime")
+assert callable(idol_local.IdolGenerator)
+assert "IDOL_LOCAL" in {item.identifier for item in bpy.context.scene.remi_generation.bl_rna.properties["engine"].enum_items}
+print("REMI_INSTALLED_IDOL_ENGINE_OK")
 board_canvas = importlib.import_module(module_name + ".features.board.canvas")
 board_workspace = importlib.import_module(module_name + ".features.board.workspace")
 board_toolbar = importlib.import_module(module_name + ".features.board.toolbar")

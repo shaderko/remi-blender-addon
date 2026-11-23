@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock,MagicMock,patch
 from uuid import uuid4
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -34,6 +34,25 @@ class CloudProjectTests(unittest.TestCase):
             restarted.client.upload.assert_not_called()
             restarted.client.attach.assert_called_once_with('shared-card',file['id'],'Mesh',expected_file_id=command['expected_file_id'])
             self.assertEqual(restarted.uploads['edit-1']['file'],file)
+
+    def test_fresh_windows_cache_fits_max_path_and_verifies_download(self):
+        from pathlib import PureWindowsPath
+        from integrations.remi_cloud.sdk.workspace import WorkspaceClient
+        body=b'fixture image';checksum=hashlib.sha256(body).hexdigest();file_id=str(uuid4())
+        metadata={'id':file_id,'kind':'image','filename':'image.png','contentType':'image/png','bytes':len(body),'sha256':checksum,'createdAt':'2026-11-22T00:00:00Z'}
+        session=MagicMock();session.project_id=None;session._token='fixture';session.base_url='http://127.0.0.1:9/api/v1';session._origin='http://127.0.0.1:9'
+        response=session._http.open.return_value.__enter__.return_value;response.status=200;response.headers={};response.read.return_value=body
+        windows=PureWindowsPath('C:/Users/Martin/AppData/Roaming/Blender Foundation/Blender/5.3/datafiles/remi/cloud-workspaces')/('a'*64)/'files'
+        self.assertGreaterEqual(len(str(windows/(file_id+'-'+checksum+'.png.partial'))),260)
+        with tempfile.TemporaryDirectory() as temporary:
+            client=WorkspaceClient(session,Path(temporary));original=Path.write_bytes
+            def write(path,data):
+                if len(str(windows/path.name))>=260:raise FileNotFoundError(2,'No such file or directory',str(path))
+                return original(path,data)
+            with patch.object(Path,'write_bytes',write):path=Path(client.file(metadata))
+            self.assertEqual(path.read_bytes(),body)
+            self.assertLess(len(str(windows/(path.name+'.partial'))),260)
+            self.assertEqual(client.file(metadata),str(path));session._http.open.assert_called_once()
 
     def test_portable_gaussian_conversion_preserves_every_array(self):
         with tempfile.TemporaryDirectory() as temporary:

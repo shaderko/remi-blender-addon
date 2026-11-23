@@ -58,6 +58,7 @@ class Capabilities:
     operations: dict[str, bool]
     input_modes: dict[str, bool]
     image_generation: dict[str, Any] | None = None
+    model_generation: dict[str, Any] | None = None
 
     @classmethod
     def parse(cls, value: Any) -> Capabilities:
@@ -83,7 +84,13 @@ class Capabilities:
                     or type(image.get("maxReferenceBytes")) is not int or not 1 <= image["maxReferenceBytes"] <= 20 * 1024 * 1024
                     or type(image.get("editing")) is not bool):
                 raise ProtocolError("Invalid image context capabilities.")
-        return cls(value["enabled"], dict(operations), dict(modes), dict(image) if image else None)
+        model = value.get("modelGeneration")
+        if model is not None:
+            model = object_value(model)
+            if not isinstance(model.get("model"), str) or not 1 <= len(model["model"]) <= 80:
+                raise ProtocolError("Invalid 3D model capabilities.")
+        return cls(value["enabled"], dict(operations), dict(modes), dict(image) if image else None,
+                   dict(model) if model else None)
 
 
 @dataclass(frozen=True)

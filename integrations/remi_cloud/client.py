@@ -35,6 +35,8 @@ class CloudProcess:
         self.completed_request = None
         self.paused = False
         self.workspace_cache = None
+        self.credential_root = None
+        self.restore_attempted = set()
 
     def reap(self):
         for process,directory in list(self.retired):
@@ -65,7 +67,10 @@ class CloudProcess:
 
     def command(self, action, base_url=DEFAULT_API, **payload):
         url = api_url(base_url)
+        if action in {"login", "logout", "restore", "status"}:
+            self.restore_attempted.add(url)
         if self.workspace_cache:payload.setdefault("workspace_cache",str(self.workspace_cache))
+        if self.credential_root:payload.setdefault("credential_root",str(self.credential_root))
         self.start()
         if self.pending: raise RuntimeError("Wait for the current Cloud request or cancel sign-in.")
         self.paused=False
@@ -103,6 +108,15 @@ class CloudProcess:
         if value.get("state") in ("job_ready","job_failed"):
             self.completed_request=value.get("request_path")
         return {**value,"message":"Stopped waiting locally. Cloud work may continue; resume the saved request."} if self.paused else value
+
+    def restore_once(self, base_url=DEFAULT_API):
+        base_url = api_url(base_url)
+        if not self.credential_root or base_url in self.restore_attempted or self.pending:
+            return
+        if self.process is not None and self.process.poll() is None:
+            return
+        self.restore_attempted.add(base_url)
+        self.command("restore", base_url)
 
     def workspace_status(self):
         if self.directory is None:return {}
@@ -144,6 +158,7 @@ class CloudProcess:
         self.latest = {}
         self.completed_request = None
         self.paused = False
+        self.restore_attempted.clear()
         if process is not None or directory is not None:
             self.retired.append((process,directory))
         return process,directory

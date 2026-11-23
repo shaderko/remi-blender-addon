@@ -15,10 +15,12 @@ SHARED_COMPONENTS = (
     "ckpts/background_removal/birefnet.safetensors",
 )
 MODEL_COMPONENTS = {
+    "idol": ("idol/config.json", "idol/denoiser.safetensors", "idol/decoder.safetensors", "idol/decoder_gs.safetensors", "idol/birefnet.safetensors"),
     "rand6_100_ncm": ("best_weights.pt",),
     "triposplat": ("ckpts/diffusion_models/triposplat_fp16.safetensors",),
 }
 MODEL_LABELS = {
+    "idol": "IDOL",
     "rand6_100_ncm": "Remi NCM",
     "triposplat": "TripoSplat",
 }
@@ -28,7 +30,7 @@ COMPONENTS = MODEL_COMPONENTS[DEFAULT_MODEL] + SHARED_COMPONENTS
 
 def components_for_model(model):
     try:
-        return MODEL_COMPONENTS[model] + SHARED_COMPONENTS
+        return MODEL_COMPONENTS[model] + (SHARED_COMPONENTS[:2] if model == "idol" else SHARED_COMPONENTS)
     except KeyError:
         raise ValueError(f"Unknown generation model: {model}") from None
 
@@ -258,11 +260,18 @@ class Generator:
         )
 
 
+def create_generator(models, model, output):
+    if model == "idol":
+        # Direct worker launch has no package context under isolated Python.
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+        from integrations.idol.runtime import IdolGenerator
+        return IdolGenerator(models, status_output=output)
+    return Generator(models, model=model, status_output=output)
+
+
 def generate(request, output):
     """One-shot compatibility path: load once and generate once."""
-    generator = Generator(
-        request["models"], model=request.get("model", DEFAULT_MODEL), status_output=output
-    )
+    generator = create_generator(request["models"], request.get("model", DEFAULT_MODEL), output)
     generator.generate(request, output)
 
 
@@ -302,9 +311,15 @@ def serve(cache_dir, models, idle_timeout, default_model=DEFAULT_MODEL):
             try:
                 request = json.loads(request_path.read_text(encoding="utf-8"))
                 model = str(request.get("model", default_model))
+                if generator is not None and ((generator.model_id == "idol") != (model == "idol")):
+                    generator = None
+                    import gc
+                    gc.collect()
+                    import torch
+                    torch.cuda.empty_cache()
                 if generator is None:
                     status(output, "Loading model")
-                    generator = Generator(models, model=model, status_output=output)
+                    generator = create_generator(models, model, output)
                 else:
                     status(output, "Using cached model")
                 generator.generate(request, output)

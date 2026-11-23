@@ -21,7 +21,8 @@ class Remi_OT_DownloadModels(Operator):
         settings = context.scene.remi_generation
         try:
             self._check_access()
-            model_base(settings.download_url)
+            if settings.model != "idol":
+                model_base(settings.download_url)
             if not settings.models:
                 raise ValueError("Choose a Model Folder first")
         except Exception as exc:
@@ -40,11 +41,14 @@ class Remi_OT_DownloadModels(Operator):
         label = MODEL_LABELS.get(settings.model, settings.model)
         self.layout.label(text=f"Download {label} generation weights?", icon="IMPORT")
         self.layout.label(text="Verified existing files are reused; only missing files download.")
-        self.layout.label(text="About 4.5 GB for a fresh Remi NCM install or 3.8 GB for TripoSplat.")
+        if settings.model == "idol":
+            self.layout.label(text="About 5.1 GB for a fresh IDOL install; shared encoders are reused.")
+        else:
+            self.layout.label(text="About 4.5 GB for a fresh Remi NCM install or 3.8 GB for TripoSplat.")
         if settings.model == "triposplat":
             self.layout.label(text="Requires a multi-model release (bundle schema 2).", icon="INFO")
         self.layout.label(text="Your images are not uploaded.")
-        self.layout.label(text=settings.download_url)
+        self.layout.label(text="Pinned IDOL weights and shared image encoders" if settings.model == "idol" else settings.download_url)
         self.layout.label(text=bpy.path.abspath(settings.models))
 
     def execute(self, context):

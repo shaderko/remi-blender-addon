@@ -1,4 +1,4 @@
-"""Loopback PKCE sign-in. Credentials stay in the isolated worker's memory."""
+"""Loopback PKCE sign-in with isolated memory and OS-protected persistence."""
 import base64
 import hashlib
 import hmac
@@ -24,6 +24,10 @@ MAX_RESPONSE = 96 * 1024 * 1024
 
 
 class AccessDenied(RuntimeError):
+    pass
+
+
+class OAuthRejected(AccessDenied):
     pass
 
 
@@ -61,6 +65,14 @@ def request_json(url, *, data=None, headers=None, form=False):
             raw = response.read(MAX_RESPONSE + 1)
     except HTTPError as error:
         # Never persist an upstream body, which might contain credentials or prompts.
+        if url == ISSUER + "/oauth/token":
+            try:
+                body = json.loads(error.read(8192))
+                code = body.get("error")
+            except (ValueError, OSError):
+                code = None
+            if code in {"invalid_grant", "invalid_refresh_token", "refresh_token_expired", "refresh_token_reused", "refresh_token_invalidated", "token_expired"}:
+                raise OAuthRejected("ChatGPT sign-in expired or was disconnected. Continue with ChatGPT again.") from None
         if error.code in (401, 403):
             raise AccessDenied("Codex image access was denied. Sign in again; your account may not support this experimental endpoint.") from None
         if error.code == 429:
@@ -119,7 +131,9 @@ def validate_identity(token, nonce, *, now=None):
 
 
 class Connection:
-    def __init__(self):
+    def __init__(self, vault=None):
+        self.vault = vault
+        self.persistence_notice = ""
         self.tokens = None
         self.expires = 0
         self.account_headers = {}
@@ -191,6 +205,50 @@ class Connection:
         })
         validate_identity(tokens.get("id_token"), nonce)
         self._accept(tokens)
+        self._persist()
+
+    def _scope(self):
+        return "chatgpt-codex:" + CLIENT_ID
+
+    def _persist(self):
+        if self.vault is None:
+            return
+        try:
+            self.vault.save(self._scope(), {"tokens": self.tokens, "expires_at": self.expires})
+            self.persistence_notice = ""
+        except RuntimeError as error:
+            self.persistence_notice = str(error)
+            try:
+                self.vault.clear(self._scope())
+            except RuntimeError:
+                pass
+
+    def restore(self):
+        if self.vault is None:
+            return False
+        value = self.vault.load(self._scope())
+        if value is None:
+            return False
+        try:
+            if not isinstance(value, dict) or not isinstance(value.get("tokens"), dict):
+                raise ValueError
+            expires = value["expires_at"]
+            if not isinstance(expires, (int, float)) or not math.isfinite(expires):
+                raise ValueError
+            self._accept(value["tokens"])
+            self.expires = expires
+        except (ValueError, KeyError, TypeError):
+            self.vault.clear(self._scope())
+            self.tokens = None
+            raise ValueError("The saved ChatGPT login is invalid. Continue with ChatGPT again.") from None
+        return True
+
+    def disconnect(self):
+        if self.vault is not None:
+            with self.vault.lock(self._scope()):
+                self.vault.clear(self._scope())
+        self.tokens = None
+        self.expires = 0
 
     def _accept(self, tokens):
         if not isinstance(tokens.get("access_token"), str) or not tokens["access_token"]:
@@ -210,20 +268,43 @@ class Connection:
         self.expires = time.time() + lifetime
         self.account_headers = headers
 
-    def authorize(self, progress):
-        if self.tokens and self.expires < time.time() + 60:
-            refresh = self.tokens.get("refresh_token")
-            if not refresh:
-                self.tokens = None
-            else:
+    def authorize(self, progress, *, allow_sign_in=True):
+        from contextlib import nullcontext
+        guard = self.vault.lock(self._scope()) if self.vault is not None else nullcontext()
+        with guard:
+            # Always read the latest rotation. Another Blender process may have
+            # refreshed or explicitly disconnected this saved connection.
+            if self.vault is not None and not self.persistence_notice:
                 try:
-                    updated = request_json(ISSUER + "/oauth/token", form=True, data={
-                        "grant_type": "refresh_token", "client_id": CLIENT_ID, "refresh_token": refresh,
-                    })
-                    self._accept({**self.tokens, **updated})
-                except Exception:
+                    restored = self.restore()
+                except RuntimeError as error:
+                    self.persistence_notice = str(error)
+                    restored = False
+                if not restored and not self.persistence_notice:
                     self.tokens = None
-                    raise RuntimeError("ChatGPT connection expired. Continue with ChatGPT again.") from None
-        if not self.tokens:
-            self.sign_in(progress)
-        return {"Authorization": "Bearer " + self.tokens["access_token"], **self.account_headers}
+            if self.tokens and self.expires < time.time() + 60:
+                refresh = self.tokens.get("refresh_token")
+                if not refresh:
+                    self.tokens = None
+                    if self.vault is not None:
+                        self.vault.clear(self._scope())
+                else:
+                    try:
+                        updated = request_json(ISSUER + "/oauth/token", form=True, data={
+                            "grant_type": "refresh_token", "client_id": CLIENT_ID, "refresh_token": refresh,
+                        })
+                    except (OAuthRejected, AccessDenied):
+                        self.tokens = None
+                        if self.vault is not None:
+                            self.vault.clear(self._scope())
+                        raise
+                    except Exception:
+                        # Keep rotating credentials through transient failures.
+                        raise RuntimeError("ChatGPT connection could not be refreshed. Check your connection and try again.") from None
+                    self._accept({**self.tokens, **updated})
+                    self._persist()
+            if not self.tokens:
+                if not allow_sign_in:
+                    return None
+                self.sign_in(progress)
+            return {"Authorization": "Bearer " + self.tokens["access_token"], **self.account_headers}

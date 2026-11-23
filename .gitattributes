@@ -4,3 +4,6 @@ integrations/triposplat/vendor/** text eol=lf
 # Hash-pinned embedded SDK and compatibility snapshots must retain exact bytes.
 integrations/remi_cloud/sdk/** text eol=lf
 integrations/remi_cloud/contract/* text eol=lf
+
+# Pinned IDOL SDK integrity must match on Windows and macOS.
+integrations/idol/vendor/** text eol=lf

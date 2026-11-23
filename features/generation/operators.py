@@ -122,9 +122,9 @@ class Remi_OT_GenerateSplats(Operator):
             if not image or not Path(image).is_file():
                 raise ValueError("Choose an image first")
             from ..cloud.generation import is_api, start_3d
-            if not settings.output or (not is_api(context) and not settings.models):
+            if not settings.output or (not is_api(context, "generate") and not settings.models):
                 raise ValueError("Choose an output folder and, for Local, a model folder in Create settings")
-            if is_api(context):
+            if is_api(context, "generate"):
                 runtime.job = start_3d(context, image=image, output=bpy.path.abspath(settings.output))
             else:
                 runtime.job = GenerationJob.start(
@@ -133,7 +133,7 @@ class Remi_OT_GenerateSplats(Operator):
                     image=image, output=bpy.path.abspath(settings.output),
                     gaussians=int(settings.gaussians), seed=settings.seed,
                     model=settings.model,
-                    steps=settings.triposplat_steps,
+                    steps=settings.idol_steps if settings.model == "idol" else settings.triposplat_steps,
                     guidance=settings.triposplat_guidance,
                     shift=settings.triposplat_shift,
                     cache_minutes=int(settings.model_cache_minutes),

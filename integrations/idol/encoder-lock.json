@@ -1,0 +1,14 @@
+{
+  "ckpts/clip_vision/dino_v3_vit_h.safetensors": {
+    "sha256": "a29ef35101a16966972a0d50732a6f3a608ff7cfffb2afa9bbe9007cb842cc53",
+    "bytes": 1681247696,
+    "url": "https://remipublic.hel1.your-objectstorage.com/models/triposplat-rand6_100_ncm-step1500-af36bcb6-v1/blender/ckpts/clip_vision/dino_v3_vit_h.safetensors",
+    "algorithm": "sha256"
+  },
+  "ckpts/vae/flux2-vae.safetensors": {
+    "sha256": "d64f3a68e1cc4f9f4e29b6e0da38a0204fe9a49f2d4053f0ec1fa1ca02f9c4b5",
+    "bytes": 336213556,
+    "url": "https://remipublic.hel1.your-objectstorage.com/models/triposplat-rand6_100_ncm-step1500-af36bcb6-v1/blender/ckpts/vae/flux2-vae.safetensors",
+    "algorithm": "sha256"
+  }
+}

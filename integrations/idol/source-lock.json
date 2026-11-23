@@ -1,0 +1,67 @@
+{
+  "repository": "https://github.com/speridlabs/idol-sdk",
+  "commit": "8db700349a5570aac390e4780fa32e3eed6b587a",
+  "license": "Apache-2.0",
+  "files": {
+    "LICENSE": {
+      "bytes": 11358,
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    "idol/preprocess.py": {
+      "bytes": 2043,
+      "sha256": "b6ef41020760b1d1ffbee2f82a2eb22752797d8c474f7b3eaa25f2a6413a1ffe"
+    },
+    "idol/device.py": {
+      "bytes": 496,
+      "sha256": "353e48eb5634932819f10a75ae1538708c944fcf5610093e2970ff346070ba82"
+    },
+    "idol/__init__.py": {
+      "bytes": 101,
+      "sha256": "609efc7390b29f2eb504e70dd274bf07e03e92d2e6a7adaff054b9abd7778e27"
+    },
+    "idol/camera.py": {
+      "bytes": 826,
+      "sha256": "5576043593454e492403b821d1e355433e71f515a2d4406a51c53c30fc097935"
+    },
+    "idol/pipeline.py": {
+      "bytes": 8743,
+      "sha256": "23b93ba70ab7c1ac8a91662eb088ee2c8bed2cc7139af83e3d9458de154c5ba2"
+    },
+    "idol/sample.py": {
+      "bytes": 3312,
+      "sha256": "a2d09191a9691630ca611e8df499976f99a026655a147b2dea327ece53fd4fb2"
+    },
+    "idol/conditioning.py": {
+      "bytes": 5031,
+      "sha256": "924fc62a32c2a9038a7e2b1b00c6cea5d2f713b83a0da6545ac9ef461414f2d3"
+    },
+    "idol/sampler.py": {
+      "bytes": 1498,
+      "sha256": "532987b5599be678361c2fcf566335bb3e1b0171696f985818d10b7460bfc8b0"
+    },
+    "idol/gaussian.py": {
+      "bytes": 3516,
+      "sha256": "f181ae2eaf5e44fee3055bd032d57b5545ad2e38e4d2315ae3c21a2fb4f85217"
+    },
+    "idol/models/decoder.py": {
+      "bytes": 9913,
+      "sha256": "ffaf304f0924360782f902a126efac72084ff907b23db8721b4937f0c3175bbd"
+    },
+    "idol/models/birefnet.py": {
+      "bytes": 20772,
+      "sha256": "7c8e5e1021978225740bc9e0a94beef2fba1545a2ffc739235fab6aadc244068"
+    },
+    "idol/models/__init__.py": {
+      "bytes": 148,
+      "sha256": "228d5d073a601cbd20e188bcee45135ee3313eafc2537549d0b33d5325436b4a"
+    },
+    "idol/models/layers.py": {
+      "bytes": 15644,
+      "sha256": "2dbf24107396194636c9a2e89e7acee1bcf91b14dba1b4cde0318cb85b3f482f"
+    },
+    "idol/models/dit.py": {
+      "bytes": 5782,
+      "sha256": "fbe725cc478b0acd245d9404ac8d9df327ebfbf79fe51c954d94b005c5bd6af4"
+    }
+  }
+}

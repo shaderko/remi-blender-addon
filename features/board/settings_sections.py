@@ -95,9 +95,10 @@ def settings_items(context, section):
         prop(generation, "use_cloud", "Use Remi Cloud")
         if image.provider == "CODEX":
             note("Images use the local Codex connection.")
-            note("3D generation runs in Remi Cloud." if cloud else "3D generation runs on this computer.")
         else:
-            note("Images and 3D generation run in Remi Cloud." if cloud else "Images and 3D generation run on this computer.")
+            note("Images run in Remi Cloud." if cloud else "Images run on this computer.")
+        from ..generation.settings import execution_backend
+        note("3D generation runs in Remi Cloud." if execution_backend(generation) == "API" else "3D generation runs on this computer.")
         heading("Local tools")
         prop(generation, "python", "Python executable")
         note("Used by local generation, mesh conversion and texture tools.")
@@ -113,7 +114,7 @@ def settings_items(context, section):
                 note("Enable Allow Online Access before signing in to ChatGPT.")
             action("Continue with ChatGPT", "remi.codex_sign_in")
             if session.signed_in:
-                note("ChatGPT connected for this Blender session.")
+                note("ChatGPT connected; sign-in is remembered securely.")
                 action("Disconnect ChatGPT", "remi.codex_sign_out")
             prop(image, "codex_quality")
         else:
@@ -132,7 +133,15 @@ def settings_items(context, section):
                 prop(image, name)
             action("Download image model", "remi.download_iris")
     elif section == "generate3d":
-        for name in ("model", "gaussians", "seed", "output"):
+        from ..generation.settings import execution_backend
+        cloud = execution_backend(generation) == "API"
+        prop(generation, "engine")
+        if cloud:
+            from ...integrations.remi_cloud.client import runtime
+            note("Cloud model: " + runtime.status().get("capabilities", {}).get("modelGeneration", {}).get("model", "Connect to discover"))
+        elif generation.model == "idol":
+            prop(generation, "idol_steps")
+        for name in ("gaussians", "seed", "output"):
             prop(generation, name)
         if generation.model == "triposplat":
             for name in ("triposplat_steps", "triposplat_guidance", "triposplat_shift"):

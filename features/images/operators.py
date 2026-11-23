@@ -47,6 +47,12 @@ class ImageRuntime:
 runtime = ImageRuntime()
 
 
+def _configure_codex_credentials():
+    if bpy.app.background:
+        return
+    codex_session.credential_root = Path(bpy.utils.user_resource("CONFIG", path="remi/credentials", create=True))
+
+
 def _generation_settings(context):
     return context.scene.remi_generation
 
@@ -183,6 +189,7 @@ class Remi_OT_GenerateImage(_JobOperator, Operator):
                     raise ValueError("Enable Allow Online Access in Blender Preferences to use Codex")
                 from .references import for_request
                 references = for_request(context, canvas.BOARD)
+                _configure_codex_credentials()
                 job = codex_session.start(
                     action="generate", output=bpy.path.abspath(settings.output), prompt=settings.prompt,
                     count=settings.count, size=f"{width}x{height}", quality=settings.codex_quality,
@@ -261,7 +268,7 @@ class Remi_OT_GenerateImage(_JobOperator, Operator):
 class Remi_OT_CodexSignIn(_JobOperator, Operator):
     bl_idname = "remi.codex_sign_in"
     bl_label = "Continue with ChatGPT"
-    bl_description = "Connect ChatGPT locally for this Blender session; credentials stay on this computer"
+    bl_description = "Connect ChatGPT locally and remember it securely on this computer"
     label = "ChatGPT sign-in"
 
     @classmethod
@@ -275,6 +282,7 @@ class Remi_OT_CodexSignIn(_JobOperator, Operator):
                 raise ValueError("Enable Allow Online Access in Blender Preferences to sign in")
             if context.window is None:
                 raise ValueError("ChatGPT sign-in needs an interactive Blender window")
+            _configure_codex_credentials()
             job = codex_session.start(action="sign_in", output="")
             self._start_modal(context, job, "Continue with ChatGPT in your browser…")
             return {"RUNNING_MODAL"}
@@ -285,10 +293,11 @@ class Remi_OT_CodexSignIn(_JobOperator, Operator):
 
     def _finish(self, runtime, context):
         runtime.job.result()
-        return "ChatGPT connected for this Blender session"
+        notice = runtime.job.status().get("phase", "")
+        return "ChatGPT connected" if notice == "Complete" else "ChatGPT connected. " + notice
 
 
-class Remi_OT_CodexSignOut(Operator):
+class Remi_OT_CodexSignOut(_JobOperator, Operator):
     bl_idname = "remi.codex_sign_out"
     bl_label = "Disconnect ChatGPT"
     bl_description = "Forget this local ChatGPT connection"
@@ -298,10 +307,18 @@ class Remi_OT_CodexSignOut(Operator):
         return can_generate(context)
 
     def execute(self, context):
-        codex_session.shutdown()
-        state = context.window_manager.remi_image
-        state.status, state.status_kind = "ChatGPT disconnected", "IDLE"
-        return {"FINISHED"}
+        try:
+            _configure_codex_credentials()
+            job = codex_session.start(action="disconnect", output="")
+            self._start_modal(context, job, "Removing saved ChatGPT login…")
+            return {"RUNNING_MODAL"}
+        except Exception as error:
+            self.report({"ERROR"}, str(error))
+            return {"CANCELLED"}
+
+    def _finish(self, runtime, context):
+        runtime.job.result()
+        return "ChatGPT disconnected; saved login removed"
 
 
 class Remi_OT_CancelImage(Operator):

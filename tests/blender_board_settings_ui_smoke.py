@@ -124,7 +124,7 @@ def advance():
                     if item.kind == "property":
                         assert item.rna.type in {"BOOLEAN", "ENUM", "STRING", "INT", "FLOAT"}
                         if item.rna.type == "ENUM": assert choices(item, bpy.context)
-            host.dropdown = next(item for item in settings_items(bpy.context,"generate3d") if item.name == "model")
+            host.dropdown = next(item for item in settings_items(bpy.context,"generate3d") if item.name == "engine")
         elif step == 7:
             screenshot("settings-local-dropdown.png")
             settings_window.active_window.finish()

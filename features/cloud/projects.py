@@ -41,7 +41,8 @@ def changed(self,context):
         if self.project!="LOCAL":
             cid=runtime.workspace_command("switch",self.base_url,project_id=self.project)
             _requested=(cid,self.project)
-        if hasattr(context.scene,"remi_generation"):context.scene.remi_generation.backend="LOCAL" if self.project=="LOCAL" else "API"
+        if hasattr(context.scene,"remi_generation"):
+            context.scene.remi_generation.backend="LOCAL" if self.project=="LOCAL" else "API"
     except RuntimeError as error:self.message=str(error)
 
 

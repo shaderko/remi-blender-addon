@@ -41,7 +41,7 @@ def _models_default():
 
 def _model_default():
     value = os.environ.get("REMI_TRIPOSPLAT_MODEL") or _LOCAL_DEFAULTS.get("model")
-    return value if value in {"rand6_100_ncm", "triposplat"} else "rand6_100_ncm"
+    return value if value in {"idol", "rand6_100_ncm", "triposplat"} else "idol"
 
 
 def _cache_changed(self, context):
@@ -56,7 +56,40 @@ def _cache_changed(self, context):
         context.area.tag_redraw()
 
 
+def execution_backend(settings):
+    value = settings.three_d_backend
+    return settings.backend if value == "INHERIT" else value
+
+
+def execution_model(settings):
+    return "idol" if execution_backend(settings) == "API" else settings.model
+
+
+def _get_engine(self):
+    if execution_backend(self) == "API":
+        return 1
+    return 2 if self.model == "rand6_100_ncm" else 3 if self.model == "triposplat" else 0
+
+
+def _set_cloud(self, value):
+    self.backend = "API" if value else "LOCAL"
+
+
+def _set_engine(self, value):
+    self.three_d_backend = "API" if value == 1 else "LOCAL"
+    self.model = "rand6_100_ncm" if value == 2 else "triposplat" if value == 3 else "idol"
+
+
 class RemiGenerationSettings(PropertyGroup):
+    three_d_backend: EnumProperty(items=[("INHERIT", "Default", "Use the existing generation backend"),
+        ("LOCAL", "Local", "Run 3D locally"), ("API", "Cloud", "Run 3D in Cloud")], default="INHERIT", options={"HIDDEN"})
+    engine: EnumProperty(name="3D engine", items=[
+        ("IDOL_LOCAL", "IDOL · Local", "Generate with IDOL on this computer", 0),
+        ("IDOL_CLOUD", "IDOL · Cloud", "Generate with IDOL through Remi Cloud", 1),
+        ("NCM_LOCAL", "NCM · Local", "Generate with Remi NCM on this computer", 2),
+        ("TRIPOSPLAT_LOCAL", "TripoSplat · Local", "Original local TripoSplat compatibility option", 3),
+    ], get=_get_engine, set=_set_engine)
+    idol_steps: IntProperty(name="IDOL Steps", default=20, min=1, max=100)
     backend: EnumProperty(name="Run Generation", items=[
         ("LOCAL", "Local", "Run the selected model on this computer"),
         ("API", "API", "Run the same model through your signed-in Remi Cloud account"),
@@ -65,7 +98,7 @@ class RemiGenerationSettings(PropertyGroup):
         name="Use Remi Cloud",
         description="Generate with your Remi Cloud account; uncheck to run on this computer",
         get=lambda self: self.backend == "API",
-        set=lambda self, value: setattr(self, "backend", "API" if value else "LOCAL"),
+        set=_set_cloud,
     )
     image: StringProperty(name="Image", subtype="FILE_PATH")
     python: StringProperty(
@@ -76,6 +109,7 @@ class RemiGenerationSettings(PropertyGroup):
     model: EnumProperty(
         name="Model",
         items=[
+            ("idol", "IDOL", "Pinned IDOL image-to-Gaussian model"),
             ("rand6_100_ncm", "Remi NCM · Fast",
              "Remi NCM flow transplant; eight-level single-pass generation"),
             ("triposplat", "TripoSplat · Upstream",

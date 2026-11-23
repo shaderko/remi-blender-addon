@@ -25,9 +25,13 @@ def register():
     bpy.types.Scene.remi_image = PointerProperty(type=RemiImageSettings)
     bpy.types.WindowManager.remi_image = PointerProperty(type=RemiImageState)
     bpy.app.handlers.load_pre.append(_before_load)
+    from . import login
+    login.register()
 
 
 def unregister():
+    from . import login
+    login.unregister()
     runtime.stop()
     shutdown_iris_server()
     from ...integrations.codex_images.client import session as codex_session

@@ -96,7 +96,10 @@ class WorkspaceClient:
         if file.bytes>limit:raise CloudError("The shared asset exceeds its file limit.")
         suffix={"image/png":".png","image/jpeg":".jpg","image/webp":".webp","model/gltf-binary":".glb","application/ply":".ply","application/octet-stream":".splat"}.get(file.content_type)
         if suffix is None:raise CloudError("Unsupported shared asset format.")
-        path=self.cache/(file.id+"-"+file.sha256+suffix)
+        # A UUID plus full SHA under the account scope exceeds MAX_PATH on a
+        # fresh Windows Blender profile. Content-addressed short names still
+        # verify the full digest below and preserve durable account/outbox paths.
+        path=self.cache/(file.sha256[:32]+suffix)
         if path.is_file():
             stamp=(path.stat().st_mtime_ns,path.stat().st_size)
             if self._verified.get(str(path))==stamp:return str(path)
@@ -111,6 +114,7 @@ class WorkspaceClient:
                 if response.status!=200 or response.headers.get("Content-Encoding","identity").lower() not in ("","identity"):raise ValueError
                 body=response.read(file.bytes+1)
             if len(body)!=file.bytes or hashlib.sha256(body).hexdigest()!=file.sha256:raise ValueError
+            self.cache.mkdir(parents=True,exist_ok=True)
             temporary=path.with_suffix(suffix+".partial")
             temporary.write_bytes(body);temporary.replace(path)
             self._verified[str(path)]=(path.stat().st_mtime_ns,path.stat().st_size)

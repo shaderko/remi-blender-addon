@@ -1,6 +1,6 @@
 <p align="center">
 
-Latest beta: [2.7.0-beta.17 — Gaussian editing and Cloud fixes](docs/releases/2.7.0-beta.17.md).
+Latest beta: [2.7.0-beta.18 — Responsive sync with large mesh queues](docs/releases/2.7.0-beta.18.md).
 Requires Blender 5.3; release packages target macOS arm64 and Windows x64.
 
   <img src="assets/remi_logo.png" alt="Remi" width="150">

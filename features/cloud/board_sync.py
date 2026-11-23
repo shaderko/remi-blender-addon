@@ -49,7 +49,9 @@ def marker(asset):
 
 
 def signature(asset):
+    if not asset.artifact:return ""
     path=Path(asset.artifact).resolve()
+    if not path.is_file():return ""
     try:stamp=path.stat();return f"{path}:{stamp.st_mtime_ns}:{stamp.st_size}"
     except OSError:return ""
 
@@ -74,7 +76,7 @@ class BoardSync:
         # Restore unsent moves before accepting the first remote snapshot.
         from ...integrations.remi_cloud.workspace_worker import scope_key
         outbox=Path(runtime.workspace_cache)/scope_key(value["base_url"],value["user_id"])/"outbox"
-        for path in sorted(outbox.glob("*.json")):
+        for path in sorted([*outbox.glob("*.json"), *outbox.glob("*.failed")]):
             try:
                 command=json.loads(path.read_text())
                 if command.get("project_id","default")!=value["project_id"]:continue
@@ -184,11 +186,12 @@ class BoardSync:
                 asset=Asset(local_id,{"image":"IMAGE","splat":"SPLAT","mesh":"MESH"}[kind],title=remote["title"],operation="")
                 board.catalog.assets[local_id]=asset;aliases[key]=local_id
             meta=marker(asset)
-            dirty=bool(meta.get("signature") and signature(asset)!=meta["signature"])
+            dirty=bool(meta.get("signature") and signature(asset) and signature(asset)!=meta["signature"])
             if meta.get("job") and not meta.get("file_id"):dirty=False
             if not dirty and local_id not in self.asset_pending:
                 path=remote.get("path","")
-                if path and path!=asset.artifact and (not file or meta.get("file_id")!=file["id"] or not signature(asset)):
+                waiting=asset.state=="SYNCING"
+                if path and path!=asset.artifact and (not file or meta.get("file_id")!=file["id"] or not signature(asset) or asset.state=="SYNCING"):
                     board.unload_preview(local_id);board.release_texture(local_id)
                     asset.artifact=path;asset.native_artifact=asset.package_artifact=asset.preview="";asset.preview_view=[]
                     board.dirty_previews.add(local_id)
@@ -197,6 +200,11 @@ class BoardSync:
                 asset.state={"succeeded":"READY","failed":"ERROR","canceled":"CANCELLED","queued":"QUEUED","running":"RUNNING"}.get(state,"RUNNING")
                 asset.status="Ready" if asset.state=="READY" else job.get("stage","Working") if job else "Ready"
                 asset.progress=float(job.get("progress",0)) if job else 1.0
+                if file and state=="succeeded" and not path and (
+                        not signature(asset) or meta.get("file_id")!=file["id"] or waiting):
+                    asset.state="SYNCING"
+                    asset.status=remote.get("downloadError") or "Downloading shared asset…"
+                    asset.progress=0.0
                 if file:
                     asset.kind={"image":"IMAGE","mesh":"MESH","splat":"SPLAT"}[file["kind"]]
                 asset.settings["cloud"]={"scope":self.scope,"card_id":key,"file_id":file["id"] if file else None,"sha256":file["sha256"] if file else None,"input":key in {i["id"] for i in snapshot.get("inputs",[])},"job":bool(job),"signature":signature(asset)}

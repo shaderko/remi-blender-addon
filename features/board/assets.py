@@ -8,7 +8,7 @@ import uuid
 
 
 KINDS = {"IMAGE", "SPLAT", "MESH"}
-STATES = {"QUEUED", "RUNNING", "READY", "ERROR", "CANCELLED", "INTERRUPTED"}
+STATES = {"QUEUED", "RUNNING", "READY", "ERROR", "CANCELLED", "INTERRUPTED", "SYNCING"}
 OBJECT_ASSET_KEY = "remi_board_asset_id"
 OBJECT_REVISION_KEY = "remi_board_asset_artifact"
 SCENE_ASSETS_KEY = "remi_board_assets_v1"

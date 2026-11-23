@@ -40,6 +40,7 @@ owner = bpy.context.scene
 original_objects = set(owner.objects)
 with tempfile.TemporaryDirectory(prefix="remi-splat-edit-") as temporary:
     root = Path(temporary)
+    owner.remi_image.output = str(root / "images")
     os.environ["REMI_BOARD_LAYOUT"] = str(root / "layout.json")
     source = root / "cloud.splat"
     arrays = {"positions": np.array([[0, 0, 0], [1, 2, 3], [-1, -.5, .2]], np.float32),

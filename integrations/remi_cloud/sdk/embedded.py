@@ -109,7 +109,7 @@ class CloudSession:
                     ssl_context=verified_https_context(), project_id=self.project_id)
             return self._socket
 
-    def _request(self, method, path, *, auth=False, payload=None, api=False, body=None, headers=None):
+    def _request(self, method, path, *, auth=False, payload=None, api=False, body=None, headers=None, timeout=20):
         extra = headers or {}
         headers = {"Accept": "application/json", "Origin": self._origin,
                    "User-Agent": "remi-cloud-embedded/0.1"}
@@ -127,7 +127,7 @@ class CloudSession:
                           data=body, headers=headers, method=method)
         try:
             try:
-                response = self._http.open(request, timeout=20)
+                response = self._http.open(request, timeout=timeout)
             except HTTPError as error:
                 response = error
             with response:
@@ -243,7 +243,7 @@ class CloudSession:
                 **({"imageGeneration":parsed.image_generation} if parsed.image_generation else {}),
                 **({"modelGeneration":parsed.model_generation} if parsed.model_generation else {})}
 
-    def api(self, method, path, *, payload=None, body=None, headers=None):
+    def api(self, method, path, *, payload=None, body=None, headers=None, timeout=20):
         control=(method=="GET" and (path=="/capabilities" or path.startswith("/jobs"))) or (method=="POST" and (path=="/jobs" or path.endswith("/cancel") or path.endswith("/download")))
         if self._realtime_enabled and control:
             from .errors import APIError, RemiError
@@ -256,7 +256,7 @@ class CloudSession:
             except RemiError:
                 raise CloudError("The live Cloud connection was interrupted. Resume the same saved request; no work was resubmitted.", code="realtime_unavailable", retryable=True) from None
         else:
-            status, value = self._request(method,path,auth=True,api=True,payload=payload,body=body,headers=headers)
+            status, value = self._request(method,path,auth=True,api=True,payload=payload,body=body,headers=headers,timeout=timeout)
         if status not in (200,201):
             messages = {401:"Your Cloud session expired or was revoked. Sign in again.",
                         402:"Cloud spending or payment access does not cover this request.",

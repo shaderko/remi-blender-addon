@@ -74,7 +74,7 @@ class WorkspaceClient:
         body=path.read_bytes()
         if len(body)>limit:raise CloudError("The source grew past its upload limit.")
         checksum=hashlib.sha256(body).hexdigest()
-        value=self.session.api("POST","/files?"+urlencode({"filename":"asset"+path.suffix.lower()}),body=body,headers={"Content-Type":content_type,"Idempotency-Key":key})
+        value=self.session.api("POST","/files?"+urlencode({"filename":"asset"+path.suffix.lower()}),body=body,headers={"Content-Type":content_type,"Idempotency-Key":key},timeout=300)
         file=value.get("file");parsed=CloudFile.parse(file)
         if parsed.sha256!=checksum or parsed.bytes!=len(body):raise CloudError("The upload receipt did not match the source file.")
         return file
@@ -122,7 +122,8 @@ class WorkspaceClient:
             raise CloudError("The shared asset download could not be verified. Retry syncing.",code="download_interrupted",retryable=True) from None
         return str(path)
 
-    def snapshot(self):
+    def snapshot(self, *, download_files=True):
+        """Read board metadata; embedded UIs may transfer file bytes separately."""
         board=self.board();jobs=[];cursor=None;seen=set()
         while True:
             page=self.session.api("GET","/jobs"+("?"+urlencode({"cursor":cursor}) if cursor else ""))
@@ -149,6 +150,7 @@ class WorkspaceClient:
                     self._outputs[output]=metadata
             assets.append({"id":row["id"],"title":override["title"] if override else ("Generated image" if row["operation"]=="generate_image" else "3D source" if row["operation"]=="generate" else "Mesh"),"job":row,"file":metadata})
         assets.extend({"id":a["id"],"title":a["title"],"file":a["file"]} for a in inputs.values())
-        for asset in assets:
-            if asset["file"]:asset["path"]=self.file(asset["file"])
+        if download_files:
+            for asset in assets:
+                if asset["file"]:asset["path"]=self.file(asset["file"])
         return {**board,"assets":assets,"jobs":jobs}

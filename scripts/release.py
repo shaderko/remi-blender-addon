@@ -48,6 +48,7 @@ TESTS = (
     "blender_cloud_generation_regression.py",
     "blender_integrated_api_generation_regression.py",
     "blender_cloud_auth_regression.py",
+    "blender_cloud_sync_responsiveness.py",
     "blender_mesh_conversion_regression.py",
     "blender_workspace_ui_regression.py",
     "blender_board_assets_regression.py",

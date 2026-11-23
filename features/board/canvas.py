@@ -2143,7 +2143,7 @@ def _draw_board(board, width, height, background_width, background_height):
         asset = board.catalog.assets.get(path)
         if board.texture_drop is not None and path == board.texture_drop["source"]:
             continue  # The lifted source is a small thumbnail, not a mesh-sized occluder.
-        working = asset is not None and asset.state in {"QUEUED", "RUNNING"}
+        working = asset is not None and asset.state in {"QUEUED", "RUNNING", "SYNCING"}
         if path.startswith("pending") or working:
             if asset is not None and asset.operation == "TEXTURE":
                 texture_effects.draw_working_card(board, asset, (x, y, w, h), now)

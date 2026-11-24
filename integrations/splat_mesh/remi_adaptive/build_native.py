@@ -18,6 +18,8 @@ def build(output=None):
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="remi-adaptive-build-") as temporary:
         command = ["cmake", "-S", str(ROOT), "-B", temporary, "-DCMAKE_BUILD_TYPE=Release"]
+        if platform.system() == "Darwin":
+            command += ["-DCMAKE_OSX_DEPLOYMENT_TARGET=11.0"]
         if platform.system() == "Windows":
             command += ["-A", "x64"]
         subprocess.run(command, check=True)

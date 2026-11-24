@@ -50,9 +50,10 @@ def marker(asset):
 
 def signature(asset):
     if not asset.artifact:return ""
-    path=Path(asset.artifact).resolve()
-    if not path.is_file():return ""
-    try:stamp=path.stat();return f"{path}:{stamp.st_mtime_ns}:{stamp.st_size}"
+    try:
+        path=Path(asset.artifact).resolve()
+        if not path.is_file():return ""
+        stamp=path.stat();return f"{path}:{stamp.st_mtime_ns}:{stamp.st_size}"
     except OSError:return ""
 
 
@@ -257,6 +258,13 @@ class BoardSync:
     def tick(self,context):
         value=current(context)
         if not value or not value.get("ready"):
+            if value and value.get('stale') and self.scope==scope(value):
+                for asset in self.board.catalog.assets.values():
+                    meta=marker(asset)
+                    if meta.get('download_pending') or asset.state=='SYNCING' and meta.get('file_id'):
+                        asset.state='ERROR';asset.status='Cloud sync stopped responding. Check the Cloud connection to reconnect.'
+                        meta.update(download_failed=True,download_pending=True)
+                self.stale=True
             account=runtime.status()
             if self.scope and (not account.get("signed_in") or getattr(context.window_manager.remi_cloud,"project",None)=="LOCAL" or
                     self.scope.split("|")[1:2]!=[account.get("user_id")]):

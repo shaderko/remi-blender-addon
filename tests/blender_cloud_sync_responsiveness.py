@@ -109,4 +109,12 @@ with tempfile.TemporaryDirectory() as temporary:
     assert generated.state=='ERROR' and 'reconnect' in generated.status
     value['stale']=False;sync.apply(bpy.context,value)
     assert generated.state=='SYNCING'
+    value.update(base_url='https://fixture.test/api/v1',user_id='fixture',project_id='default',ready=False,stale=True)
+    sync.scope=adapter.scope(value)
+    context=SimpleNamespace(window_manager=SimpleNamespace(remi_cloud=SimpleNamespace(project='default')))
+    with patch.object(adapter,'current',return_value=value),patch.object(adapter.runtime,'status',return_value={'signed_in':True,'user_id':'fixture'}):
+        sync.tick(context)
+    assert generated.state=='ERROR', 'A stale metadata refresh left cards pending forever'
+    with patch.object(Path,'resolve',side_effect=PermissionError(13,'Windows path temporarily locked')):
+        assert signature(pending)==''
 print("REMI_CLOUD_SYNC_RESPONSIVENESS_OK")

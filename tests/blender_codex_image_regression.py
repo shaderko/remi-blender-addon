@@ -102,6 +102,12 @@ class Connection:
         return {'Authorization':'Bearer synthetic-memory-only'}
 worker.Connection=Connection
 worker.request_json=lambda *args,**kwargs:{'data':[{'b64_json':%r}]}
+generate=worker.generate
+def checked_generate(*args,**kwargs):
+    try:return generate(*args,**kwargs)
+    except Exception as error:
+        raise RuntimeError('Synthetic worker failed: '+type(error).__name__+': '+str(error)) from error
+worker.generate=checked_generate
 worker.main()
 ''' % (str(ROOT/'integrations/codex_images'),base64.b64encode(PNG).decode()))
     original_popen=subprocess.Popen

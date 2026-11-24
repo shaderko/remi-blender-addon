@@ -5,5 +5,8 @@ integrations/triposplat/vendor/** text eol=lf
 integrations/remi_cloud/sdk/** text eol=lf
 integrations/remi_cloud/contract/* text eol=lf
 
+# Shared adaptive sources and their compiled source hash must retain exact bytes.
+integrations/splat_mesh/remi_adaptive/** text eol=lf
+
 # Pinned IDOL SDK integrity must match on Windows and macOS.
 integrations/idol/vendor/** text eol=lf

@@ -38,6 +38,8 @@ class Downloads:
                     record.pop('error', None)
 
     def start(self, key, record):
+        if self.closed:
+            return
         future = Future()
         cancel = threading.Event()
         self.active[key] = {'future': future, 'cancel': cancel}
@@ -57,7 +59,7 @@ class Downloads:
                     last, phase = now, value.get('state')
 
             try:
-                future.set_result(self.download(key[0], record['file'], progress, cancel.is_set))
+                future.set_result(self.download(key[0], record['file'], progress, lambda: self.closed or cancel.is_set()))
             except Exception as error:
                 future.set_exception(error)
 
@@ -163,5 +165,10 @@ class Downloads:
 
     def close(self):
         self.closed = True
-        for task in self.active.values():
+        for task in tuple(self.active.values()):
             task['cancel'].set()
+
+    def cancel_except(self, project):
+        for key, task in tuple(self.active.items()):
+            if key[0] != project:
+                task['cancel'].set()

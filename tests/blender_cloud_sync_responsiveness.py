@@ -96,12 +96,15 @@ with tempfile.TemporaryDirectory() as temporary:
     board.catalog=Catalog();board.order=[];board.positions={};board.scales={}
     sync=BoardSync(board);sync.scope='fixture'
     reference={'id':str(uuid4()),'kind':'splat'}
+    image_reference={'id':str(uuid4()),'kind':'image'}
+    image={'id':'source-image','title':'Source image','file':None,'fileRef':image_reference}
     remote={'id':'generated','title':'Generated source','file':None,'fileRef':reference,
-            'job':{'status':'succeeded','operation':'generate','progress':1,'inputFileIds':[]}}
-    value={'snapshot':{'assets':[remote],'cards':{},'inputs':[]},'revision':1}
+            'job':{'status':'succeeded','operation':'generate','progress':1,'inputFileIds':[image_reference['id']]}}
+    value={'snapshot':{'assets':[image,remote],'cards':{},'inputs':[]},'revision':1}
     sync.apply(bpy.context,value)
     generated=board.catalog.assets['cloud-generated']
     assert generated.state=='SYNCING' and generated.kind=='SPLAT'
+    assert generated.parent=='cloud-source-image', 'Pending file tickets lost the image/source link'
     value['stale']=True;sync.apply(bpy.context,value)
     assert generated.state=='ERROR' and 'reconnect' in generated.status
     value['stale']=False;sync.apply(bpy.context,value)

@@ -150,6 +150,7 @@ class WorkspaceWorker:
             self.session.select_project(None if value=="default" else value)
             if self.watcher:self.watcher.join(timeout=2)
             self.cancel_watch=threading.Event();self.selected=value
+            self.downloads.cancel_except(value)
             self.snapshot={};self.ready=False;self.chain=self.chains.setdefault(value,{})
             atomic_json(self.root/"selected-project.json",{"id":value})
             self.cancel_watch=threading.Event();self.watcher=None

@@ -176,7 +176,7 @@ class BoardSync:
                 board.forget(asset.id);board.catalog.assets.pop(asset.id,None)
         incoming={a["id"]:a for a in snapshot.get("assets",[])}
         self.remote_ids=set(incoming)
-        file_owners={a.get("file",{}).get("id"):key for key,a in incoming.items() if a.get("file")}
+        file_owners={(a.get('file') or a['fileRef'])['id']:key for key,a in incoming.items() if a.get('file') or a.get('fileRef')}
         for key,remote in incoming.items():
             file=remote.get("file");job=remote.get("job")
             reference=file or remote.get('fileRef')
@@ -223,8 +223,8 @@ class BoardSync:
                     asset.state="SYNCING" if remote["uploadStatus"]=="uploading" else "ERROR"
                     asset.status="Uploading on another device…" if asset.state=="SYNCING" else "Upload failed on the source device; its local file is kept."
                     asset.progress=0.0
-                if file:
-                    asset.kind={"image":"IMAGE","mesh":"MESH","splat":"SPLAT"}[file["kind"]]
+                if reference:
+                    asset.kind={"image":"IMAGE","mesh":"MESH","splat":"SPLAT"}[reference["kind"]]
                 asset.settings["cloud"]={"scope":self.scope,"card_id":key,"file_id":reference["id"] if reference else None,"sha256":file["sha256"] if file else None,"input":bool(remote.get("uploadStatus")) or key in {i["id"] for i in snapshot.get("inputs",[])},"job":bool(job),"signature":signature(asset),
                                          'download_failed':bool(remote.get('download',{}).get('state')=='failed' or value.get('stale') and reference and not path)}
                 asset.settings['cloud']['download_pending']=bool(reference and not path and (waiting or asset.state in ('SYNCING','ERROR')))

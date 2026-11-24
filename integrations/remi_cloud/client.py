@@ -33,6 +33,8 @@ class CloudProcess:
         self.retired = []
         self.following = False
         self.latest = {}
+        self.workspace_latest = {}
+        self.workspace_updated = 0
         self.completed_request = None
         self.paused = False
         self.workspace_cache = None
@@ -53,6 +55,7 @@ class CloudProcess:
         self.pending=False
         self.following=False
         self.latest={}
+        self.workspace_latest={};self.workspace_updated=0
         if self.directory: shutil.rmtree(self.directory,ignore_errors=True)
         self.directory = Path(tempfile.mkdtemp(prefix="remi-cloud-"))
         os.chmod(self.directory,0o700)
@@ -98,7 +101,7 @@ class CloudProcess:
             value = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(value,dict): raise ValueError
         except (OSError,ValueError):
-            return {"state":"connecting","message":"Connecting to Remi Cloud…"}
+            return {**self.latest,"state":"connecting","message":"Connecting to Remi Cloud…"}
         if value.get("request_id") != self.sequence:
             return {**self.latest,"state":"connecting","message":"Connecting to Remi Cloud…"}
         if value.get("state") in ("signed_in","signed_out","error","job_ready","job_failed"):
@@ -125,9 +128,13 @@ class CloudProcess:
             path=self.directory/"workspace.json"
             if path.stat().st_size>8*1024*1024:return {}
             value=json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(value,dict):value['stale']=time.time()-path.stat().st_mtime>60
+            if isinstance(value,dict):
+                self.workspace_updated=path.stat().st_mtime
+                value['stale']=time.time()-self.workspace_updated>60
+                self.workspace_latest=value
             return value if isinstance(value,dict) else {}
-        except (OSError,ValueError):return {}
+        except (OSError,ValueError):
+            return {**self.workspace_latest,'stale':time.time()-self.workspace_updated>60} if self.workspace_latest else {}
 
     def workspace_command(self,action,base_url=DEFAULT_API,**payload):
         profile=self.status()

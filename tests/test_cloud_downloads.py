@@ -19,6 +19,23 @@ from integrations.remi_cloud.sdk.embedded import CloudError
 
 
 class WindowsPublicationTests(unittest.TestCase):
+    def test_temporary_ipc_read_failure_keeps_account_and_board_until_stale(self):
+        from unittest.mock import Mock
+        from integrations.remi_cloud.client import CloudProcess
+        with tempfile.TemporaryDirectory() as directory:
+            process=CloudProcess()
+            process.process=Mock();process.process.poll.return_value=None
+            process.directory=Path(directory)
+            process.latest={'signed_in':True,'user_id':'fixture'}
+            process.workspace_latest={'ready':True,'project_id':'default','snapshot':{'assets':[]}}
+            process.workspace_updated=time.time()
+            with patch.object(Path,'stat',side_effect=PermissionError(13,'Windows reader lock')):
+                self.assertTrue(process.status()['signed_in'])
+                self.assertTrue(process.workspace_status()['ready'])
+                self.assertFalse(process.workspace_status()['stale'])
+                process.workspace_updated-=61
+                self.assertTrue(process.workspace_status()['stale'])
+
     def test_reader_sharing_violation_is_retried_without_losing_snapshot(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'workspace.json'

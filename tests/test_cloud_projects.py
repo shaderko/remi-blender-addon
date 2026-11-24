@@ -1,6 +1,7 @@
 """Lost acknowledgements must reuse receipts; native Gaussian sharing is lossless."""
 from copy import deepcopy
 import hashlib
+import io
 import threading
 import time
 import json
@@ -44,7 +45,7 @@ class CloudProjectTests(unittest.TestCase):
         body=b'fixture image';checksum=hashlib.sha256(body).hexdigest();file_id=str(uuid4())
         metadata={'id':file_id,'kind':'image','filename':'image.png','contentType':'image/png','bytes':len(body),'sha256':checksum,'createdAt':'2026-11-22T00:00:00Z'}
         session=MagicMock();session.project_id=None;session._token='fixture';session.base_url='http://127.0.0.1:9/api/v1';session._origin='http://127.0.0.1:9'
-        response=session._http.open.return_value.__enter__.return_value;response.status=200;response.headers={};response.read.return_value=body
+        response=session._http.open.return_value.__enter__.return_value;response.status=200;response.headers={};response.read1.side_effect=io.BytesIO(body).read
         windows=PureWindowsPath('C:/Users/Martin/AppData/Roaming/Blender Foundation/Blender/5.3/datafiles/remi/cloud-workspaces')/('a'*64)/'files'
         self.assertGreaterEqual(len(str(windows/(file_id+'-'+checksum+'.png.partial'))),260)
         with tempfile.TemporaryDirectory() as temporary:

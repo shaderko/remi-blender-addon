@@ -81,6 +81,12 @@ class PackagingTests(unittest.TestCase):
                     (native / "foreign.pyd").write_bytes(b"foreign")
                     (root / directory / "native").mkdir()
                     (root / directory / "native" / "build-cache").write_text("excluded")
+                adaptive = root / release.ADAPTIVE_DIRECTORY / "_native"
+                adaptive.mkdir(parents=True)
+                adaptive_name = {"windows-x64": "remi_adaptive.dll",
+                                 "macos-arm64": "libremi_adaptive.dylib",
+                                 "linux-x64": "libremi_adaptive.so"}[target]
+                (adaptive / adaptive_name).write_bytes(b"test adaptive binary")
                 wheel = root / "wheels" / release.wheel_spec(target)["filename"]
                 wheel.write_bytes(b"test target wheel")
                 (root / "wheels" / "foreign.whl").write_bytes(b"foreign")
@@ -102,6 +108,7 @@ class PackagingTests(unittest.TestCase):
                 self.assertFalse(list(stage.rglob("build-cache")))
                 self.assertFalse((stage / "models").exists())
                 self.assertFalse((stage / "generations").exists())
+                self.assertTrue((stage / release.ADAPTIVE_DIRECTORY / "_native" / adaptive_name).is_file())
                 self.assertTrue((stage / "integrations" / "triposplat" / "vendor" / "model.py").is_file())
                 missing = root / next(iter(release.NATIVE_MODULES)) / "_native"
                 next(missing.glob("*" + suffix)).unlink()

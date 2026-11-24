@@ -1,5 +1,7 @@
 """Remi Cloud browser approval UI. Credentials never enter Blender data blocks."""
 import webbrowser
+import logging
+import time
 from pathlib import Path
 
 import bpy
@@ -14,6 +16,7 @@ from . import projects,board_sync
 from .sign_in import Remi_OT_CloudSignIn, close_dialog
 
 needs_reset = False
+last_tick_error = 0
 
 
 class RemiCloudState(PropertyGroup):
@@ -44,6 +47,19 @@ class RemiCloudState(PropertyGroup):
 
 
 def tick():
+    global last_tick_error
+    try:return tick_connection()
+    except Exception as error:
+        state=getattr(bpy.context.window_manager,'remi_cloud',None)
+        if state is not None:
+            state.message='Cloud cards could not update locally; retrying. Check the Cloud connection if this continues.'
+        if time.monotonic()-last_tick_error>=60:
+            logging.getLogger(__name__).error('Cloud card update failed (%s)',type(error).__name__)
+            last_tick_error=time.monotonic()
+        return 1.0
+
+
+def tick_connection():
     global needs_reset
     if needs_reset:
         if not reset_connection(): return 0.25
@@ -128,6 +144,29 @@ class Remi_OT_CloudLogout(Operator):
         except (CloudError,RuntimeError,OSError) as error:
             self.report({"ERROR"},str(error)); return {"CANCELLED"}
         return {"FINISHED"}
+
+
+class Remi_OT_CloudRetryDownload(Operator):
+    bl_idname='remi.cloud_retry_download'
+    bl_label='Retry Download'
+    bl_description='Download this existing Cloud file again without generating or charging for a new job'
+    asset_id:StringProperty(options={'SKIP_SAVE'})
+
+    def execute(self,context):
+        from ..board import canvas
+        board=canvas.BOARD
+        asset=board.catalog.assets.get(self.asset_id) if board else None
+        if asset is None:return {'CANCELLED'}
+        try:
+            if runtime.workspace_status().get('stale'):
+                return bpy.ops.remi.cloud_refresh()
+            key=board_sync.marker(asset).get('card_id')
+            if not key or not board_sync.get_sync(board).command(context,'retry_download',card_id=key):
+                raise RuntimeError('Reconnect to this Cloud project before retrying the download.')
+        except (CloudError,RuntimeError,OSError) as error:
+            self.report({'ERROR'},str(error));return {'CANCELLED'}
+        asset.state='SYNCING';asset.status='Queued for download…';asset.progress=0
+        return {'FINISHED'}
 
 
 class Remi_OT_CloudOpenApproval(Operator):
@@ -215,7 +254,7 @@ class Remi_OT_CloudAccount(Operator):
         return {"FINISHED"}
 
 
-CLASSES = (RemiCloudState,Remi_OT_CloudLogin,Remi_OT_CloudRefresh,Remi_OT_CloudLogout,Remi_OT_CloudOpenApproval,Remi_OT_CloudSignIn,Remi_OT_CloudAccount,*JOB_CLASSES,Remi_PT_Cloud,Remi_PT_BoardCloud,*projects.CLASSES)
+CLASSES = (RemiCloudState,Remi_OT_CloudLogin,Remi_OT_CloudRefresh,Remi_OT_CloudLogout,Remi_OT_CloudRetryDownload,Remi_OT_CloudOpenApproval,Remi_OT_CloudSignIn,Remi_OT_CloudAccount,*JOB_CLASSES,Remi_PT_Cloud,Remi_PT_BoardCloud,*projects.CLASSES)
 
 
 @persistent

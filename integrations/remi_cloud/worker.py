@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from protocol import CloudError, CloudSession
 from jobs import CloudRequest
 from sdk.errors import ProtocolError
+from sdk.atomic import write_json
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from integrations.credentials.vault import Vault, StorageError
 from credentials import scope as credential_scope, save as save_credential, restore as restore_credential
@@ -47,6 +48,13 @@ def main(directory):
         if cache and workspace is None:
             from workspace_worker import WorkspaceWorker
             workspace=WorkspaceWorker(session,root,cache);workspace.start()
+        elif workspace is not None:
+            if not workspace.thread.is_alive():
+                workspace.close()
+                from workspace_worker import WorkspaceWorker
+                workspace=WorkspaceWorker(session,root,cache);workspace.start()
+            else:
+                workspace.retry_downloads.set();workspace.changed.set()
 
     def publish(value):
         # This file may contain public profile/code metadata, never a bearer,
@@ -55,9 +63,7 @@ def main(directory):
                  **({"request_path":request_path} if request_path else {}),
                  **({"capabilities":caps} if caps else {}),**value,"request_id":request_id}
         allowed = {key:value[key] for key in ("request_id","state","message","user_code","verification_url","email","user_id","capabilities","signed_in","request_path","operation","job_id","progress","billing","output_path","error_code","retryable") if key in value}
-        temporary = root / "status.partial.json"
-        temporary.write_text(json.dumps(allowed),encoding="utf-8")
-        temporary.replace(root / "status.json")
+        write_json(root/'status.json',allowed)
     try:
         publish({"state":"signed_out","message":"Sign in to Remi Cloud."})
         for line in sys.stdin:

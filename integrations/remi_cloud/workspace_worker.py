@@ -11,10 +11,14 @@ if __package__:
     from .sdk.embedded import CloudError, CloudSession
     from .sdk.models import identifier
     from .sdk.workspace import WorkspaceClient, card_id
+    from .sdk.atomic import write_json
+    from .downloads import Downloads
 else:
     from sdk.embedded import CloudError, CloudSession
     from sdk.models import identifier
     from sdk.workspace import WorkspaceClient, card_id
+    from sdk.atomic import write_json
+    from downloads import Downloads
 
 
 def scope_key(base_url,user_id):
@@ -22,10 +26,7 @@ def scope_key(base_url,user_id):
 
 
 def atomic_json(path,value):
-    path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)
-    temporary=path.with_name(path.name+".partial")
-    temporary.write_text(json.dumps(value,allow_nan=False),encoding="utf-8")
-    temporary.replace(path)
+    write_json(path,value)
 
 
 def upload_asset(command, client, root, snapshot, chain, uploads):
@@ -103,7 +104,10 @@ class WorkspaceWorker:
         self.receipts={};self.errors={};self.uploads={};self.chain={}
         self.selected="default";self.revision=0;self.message="Connecting to shared projects…"
         self.retry_at={};self.ready=False
-        self.transfer=None;self.available_files={};self.download_retry={};self.download_errors={};self.chains={};self.announced=set()
+        self.transfer=None;self.chains={};self.announced=set()
+        self.downloads=Downloads(self.download_file)
+        self.publish_pending=False;self.last_published=0
+        self.retry_downloads=threading.Event()
         for path in sorted(self.outbox.glob("*.error"))[-1000:]:
             try:self.errors[path.stem]=json.loads(path.read_text())
             except (OSError,ValueError):pass
@@ -112,14 +116,18 @@ class WorkspaceWorker:
         self.thread=threading.Thread(target=self.run,daemon=True,name="remi-projects")
         self.thread.start()
 
-    def publish(self):
+    def publish(self,*,heartbeat=False):
         if self.stopped.is_set():return
-        self.revision+=1
+        if not heartbeat:self.revision+=1
         value={"user_id":self.session.profile["user_id"] if self.session.profile else "", "base_url":self.session.base_url,
                "project_id":self.selected,"revision":self.revision,"ready":self.ready,
                "catalog":self.catalog,"snapshot":self.snapshot,"receipts":list(self.receipts)[-1000:],
-               "errors":self.errors,"uploads":self.uploads,"message":self.message}
-        atomic_json(self.ipc/"workspace.json",value)
+               "errors":self.errors,"uploads":self.uploads,"message":self.message,"updatedAt":time.time()}
+        try:atomic_json(self.ipc/"workspace.json",value)
+        except OSError:
+            self.publish_pending=True
+            return
+        self.publish_pending=False;self.last_published=time.monotonic()
 
     def watch(self,cancel):
         while not self.stopped.is_set() and not cancel.is_set():
@@ -156,23 +164,16 @@ class WorkspaceWorker:
         if self.watcher is None:
             self.watcher=threading.Thread(target=self.watch,args=(self.cancel_watch,),daemon=True,name="remi-board-events")
             self.watcher.start()
-        self.snapshot=self.client.snapshot(download_files=False);self.ready=True
-        for asset in self.snapshot.get("assets",[]):
-            file=asset.get("file")
-            cached=self.available_files.get((file["id"],file["sha256"])) if file else None
-            if cached and Path(cached).is_file():asset["path"]=cached
-            elif file and (self.selected,file["id"]) in self.download_errors:
-                asset["downloadError"]=self.download_errors[(self.selected,file["id"])]
-        if self.transfer:
-            self.message="Uploading board asset…" if self.transfer["kind"]=="upload" else "Downloading shared assets…"
-        elif not self.errors:self.message="Cloud board is up to date."
+        self.snapshot=self.client.snapshot(download_files=False,resolve_files=False);self.ready=True
+        self.downloads.apply(self.selected,self.snapshot.get('assets',[]))
+        self.update_transfer_message()
         self.publish()
 
     def execute(self,command):
         action=command.get("action")
         if action=="switch":
             self.set_project(command.get("project_id"));self.changed.set();return
-        if action=="refresh":self.changed.set();return
+        if action=="refresh":self.retry_downloads.set();self.changed.set();return
         if action in ("create_project","create_team","invite","team","remove_member","revoke_invite"):
             if action=="create_project":
                 payload={"name":command["name"],**({"teamId":identifier(command["team_id"])} if command.get("team_id") else {})}
@@ -192,7 +193,12 @@ class WorkspaceWorker:
                 self.uploads["team-"+team_id]={"team":self.session.api("GET","/teams/"+team_id)}
             self.changed.set();return
         if command.get("project_id","default")!=self.selected:raise CloudError("Select the original project before syncing this edit.",code="project_changed")
-        if action=="announce":
+        if action=='retry_download':
+            key=card_id(command['card_id'])
+            asset=next((a for a in self.snapshot.get('assets',[]) if a['id']==key),None)
+            if asset and (asset.get('file') or asset.get('fileRef')):
+                self.downloads.retry(self.selected,asset.get('file') or asset['fileRef'])
+        elif action=="announce":
             self.client.announce(command["card_id"],command["kind"],command.get("title","Asset"),command["upload_id"],status=command.get("status","uploading"))
         elif action=="positions":self.client.patch(command["cards"],only_missing=command.get("only_missing",False))
         elif action=="asset":
@@ -217,6 +223,21 @@ class WorkspaceWorker:
         session.profile=dict(self.session.profile)
         session.select_project(None if project=="default" else project)
         return WorkspaceClient(session,self.root/"files")
+
+    def download_file(self,project,file,progress,cancelled):
+        client=self.transfer_client(project)
+        if cancelled():raise InterruptedError('Download cancelled')
+        metadata=file if file.get('sha256') else client.resolve_file(file)
+        return {'path':client.file(metadata,progress=progress,cancelled=cancelled),'file':metadata}
+
+    def update_transfer_message(self):
+        if self.transfer:self.message='Uploading board asset…';return
+        states=[r['state'] for k,r in self.downloads.records.items() if k in self.downloads.wanted]
+        active=sum(s in ('downloading','verifying') for s in states)
+        if active:self.message=f'Downloading {active} shared asset(s)…'
+        elif 'queued' in states or 'retrying' in states:self.message='Waiting to retry shared downloads…'
+        elif 'failed' in states:self.message='Some downloads failed. Retry from the card menu.'
+        elif not self.errors:self.message='Cloud board is up to date.'
 
     def begin_transfer(self, kind, project, action, **details):
         future=Future()
@@ -259,28 +280,10 @@ class WorkspaceWorker:
         self.transfer=None
         try:
             result=task["future"].result()
-            if task["kind"]=="upload":
-                self.uploads[task["command"]["id"]]=result
-                self.acknowledge(task["path"],task["command"])
-            else:
-                file=task["file"]
-                self.download_errors.pop((task["project"],file["id"]),None)
-                self.available_files[(file["id"],file["sha256"])]=result
-                if task["project"]==self.selected:
-                    for asset in self.snapshot.get("assets",[]):
-                        if (asset.get("file") or {}).get("id")==file["id"]:
-                            asset["path"]=result;asset.pop("downloadError",None)
-                    self.publish()
+            self.uploads[task["command"]["id"]]=result
+            self.acknowledge(task["path"],task["command"])
         except Exception as error:
-            if task["kind"]=="upload":self.command_error(task["path"],task["command"],error)
-            else:
-                file=task["file"];self.download_retry[(task["project"],file["id"])]=time.monotonic()+30
-                self.download_errors[(task["project"],file["id"])]="Download interrupted; retrying. Other cards remain connected."
-                if task["project"]==self.selected:
-                    for asset in self.snapshot.get("assets",[]):
-                        if (asset.get("file") or {}).get("id")==file["id"]:
-                            asset["downloadError"]="Download interrupted; retrying. Other cards remain connected."
-                    self.publish()
+            self.command_error(task["path"],task["command"],error)
 
     def process_commands(self):
         commands=[]
@@ -350,13 +353,30 @@ class WorkspaceWorker:
             except Exception:self.retry_at["announce:"+str(path)]=time.monotonic()+5
 
     def download_next(self):
-        if self.transfer or not self.ready:return
-        for asset in self.snapshot.get("assets",[]):
-            file=asset.get("file")
-            if not file or asset.get("path") or self.download_retry.get((self.selected,file["id"]),0)>time.monotonic():continue
-            client=self.transfer_client(self.selected)
-            self.begin_transfer("download",self.selected,lambda f=file,c=client:c.file(f),file=file)
-            return
+        if not self.ready:return
+        if self.retry_downloads.is_set():
+            self.retry_downloads.clear();self.downloads.retry(self.selected)
+        if self.downloads.tick(self.selected,self.snapshot.get('assets',[])):
+            self.update_transfer_message();self.publish()
+
+    def step(self):
+        self.finish_transfer()
+        self.process_commands()
+        if self.changed.is_set():
+            self.changed.clear()
+            try:self.refresh()
+            except CloudError as error:
+                self.message=str(error);self.publish()
+                if error.code=='project_access_changed' or error.status in (403,404):
+                    try:self.set_project('default')
+                    except CloudError:pass
+                self.stopped.wait(1);self.changed.set()
+            except Exception:
+                self.message='Project synchronization was interrupted. Your local files are kept.';self.publish()
+                self.stopped.wait(2);self.changed.set()
+        self.download_next()
+        if self.publish_pending or time.monotonic()-self.last_published>=5:
+            self.publish(heartbeat=True)
 
     def run(self):
         self.changed.set()
@@ -367,24 +387,14 @@ class WorkspaceWorker:
             try:self.set_project(selected)
             except CloudError:self.set_project("default")
             while not self.stopped.is_set() and self.session.profile:
-                self.finish_transfer()
-                self.process_commands()
-                if self.changed.is_set():
-                    self.changed.clear()
-                    try:self.refresh()
-                    except CloudError as error:
-                        self.message=str(error);self.publish()
-                        if error.code=="project_access_changed" or error.status in (403,404):
-                            try:self.set_project("default")
-                            except CloudError:pass
-                        self.stopped.wait(1);self.changed.set()
-                    except Exception:
-                        self.message="Project synchronization was interrupted. Your local files are kept.";self.publish()
-                        self.stopped.wait(2);self.changed.set()
-                self.download_next()
+                try:self.step()
+                except Exception:
+                    self.message='Cloud sync hit a local error; reconnecting. Your local files are kept.'
+                    self.publish();self.changed.set();self.stopped.wait(1)
                 self.stopped.wait(0.2)
-        finally:self.cancel_watch.set()
+        finally:self.cancel_watch.set();self.downloads.close()
 
     def close(self):
         self.stopped.set();self.cancel_watch.set()
+        self.downloads.close()
         if self.thread:self.thread.join(timeout=2)

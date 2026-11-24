@@ -8,12 +8,15 @@ import json
 import math
 from pathlib import Path
 import re
+import zlib
+from http.client import HTTPException
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request
 
 from .embedded import CloudError
 from .models import CloudFile, Job, identifier
-from .compression import ACCEPT_COMPRESSION, read_artifact
+from .compression import ACCEPT_COMPRESSION, download_artifact
 
 CARD_ID=re.compile(r"[A-Za-z0-9_-]{1,100}")
 
@@ -99,7 +102,8 @@ class WorkspaceClient:
     def remove(self,key,*,job=False):
         return self.session.api("DELETE",("/jobs/"+identifier(key)) if job else ("/board/inputs/"+card_id(key)))
 
-    def file(self,metadata):
+    def file(self,metadata,*,progress=None,cancelled=lambda:False):
+        if cancelled():raise InterruptedError('Download cancelled')
         file=CloudFile.parse(metadata)
         limit=(20 if file.kind=="image" else 16 if file.kind=="splat" else 100)*1024*1024
         if file.bytes>limit:raise CloudError("The shared asset exceeds its file limit.")
@@ -112,27 +116,55 @@ class WorkspaceClient:
         if path.is_file():
             stamp=(path.stat().st_mtime_ns,path.stat().st_size)
             if self._verified.get(str(path))==stamp:return str(path)
-            if stamp[1]==file.bytes and hashlib.sha256(path.read_bytes()).hexdigest()==file.sha256:
-                self._verified[str(path)]=stamp;return str(path)
+            if stamp[1]==file.bytes:
+                if progress:progress({'state':'verifying'})
+                checksum=hashlib.sha256()
+                with path.open('rb') as cached:
+                    while chunk:=cached.read(65536):
+                        if cancelled():raise InterruptedError('Download cancelled')
+                        checksum.update(chunk)
+                if checksum.hexdigest()==file.sha256:
+                    self._verified[str(path)]=stamp;return str(path)
         headers={"Authorization":"Bearer "+self.session._token,"Accept-Encoding":"identity",
                  "X-Remi-Accept-Compression":ACCEPT_COMPRESSION,
                  "User-Agent":"remi-cloud-embedded/0.1","Origin":self.session._origin}
         if self.session.project_id:headers["X-Remi-Project"]=self.session.project_id
         try:
             request=Request(self.session.base_url+"/files/"+file.id+"/content",headers=headers)
-            with self.session._http.open(request,timeout=30) as response:
-                if response.status!=200:raise ValueError
-                body=read_artifact(response,file.bytes)
-            if len(body)!=file.bytes or hashlib.sha256(body).hexdigest()!=file.sha256:raise ValueError
-            self.cache.mkdir(parents=True,exist_ok=True)
-            temporary=path.with_suffix(suffix+".partial")
-            temporary.write_bytes(body);temporary.replace(path)
+            with self.session._http.open(request,timeout=15) as response:
+                if response.status!=200:
+                    raise CloudError('Cloud refused this download. Refresh the connection and retry.',
+                                     code='download_http_error',status=response.status,
+                                     retryable=response.status in (408,429) or response.status>=500)
+                download_artifact(response,path,file.bytes,file.sha256,progress=progress,cancelled=cancelled)
             self._verified[str(path)]=(path.stat().st_mtime_ns,path.stat().st_size)
-        except Exception:
+        except HTTPError as error:
+            status=error.code;error.close()
+            raise CloudError('Cloud refused this download. Refresh the connection and retry.',
+                             code='download_http_error',status=status,
+                             retryable=status in (408,429) or status>=500) from None
+        except InterruptedError:raise
+        except TimeoutError:
+            raise CloudError('Download timed out. Check the connection and retry.',code='download_timeout',retryable=True) from None
+        except PermissionError:
+            raise CloudError('Windows could not save the downloaded file. Close programs holding it and retry.',code='download_file_busy',retryable=True) from None
+        except CloudError:raise
+        except (OSError,URLError,HTTPException,ValueError,zlib.error):
             raise CloudError("The shared asset download could not be verified. Retry syncing.",code="download_interrupted",retryable=True) from None
         return str(path)
 
-    def snapshot(self, *, download_files=True):
+    def resolve_file(self, reference):
+        output=identifier(reference['id'])
+        metadata=self._outputs.get(output)
+        if metadata is None:
+            ticket=self.session.api('POST','/files/'+output+'/download')
+            metadata={k:ticket[k] for k in ('filename','bytes','sha256','contentType')}
+            metadata.update(id=output,kind=reference['kind'],createdAt=reference['createdAt'])
+            CloudFile.parse(metadata)
+            self._outputs[output]=metadata
+        return metadata
+
+    def snapshot(self, *, download_files=True, resolve_files=True):
         """Read board metadata; embedded UIs may transfer file bytes separately."""
         board=self.board();jobs=[];cursor=None;seen=set()
         while True:
@@ -148,17 +180,13 @@ class WorkspaceClient:
         for row in jobs:
             override=inputs.pop(row["id"],None)
             metadata=override["file"] if override else None
+            reference=None
             if metadata is None and row["status"]=="succeeded":
                 output=identifier(row["outputFileIds"][0])
-                metadata=self._outputs.get(output)
-                if metadata is None:
-                    ticket=self.session.api("POST","/files/"+output+"/download")
-                    kind="image" if row["operation"]=="generate_image" else "splat" if row["operation"]=="generate" else "mesh"
-                    metadata={k:ticket[k] for k in ("filename","bytes","sha256","contentType")}
-                    metadata.update({"id":output,"kind":kind,"createdAt":row["createdAt"]})
-                    CloudFile.parse(metadata)
-                    self._outputs[output]=metadata
-            assets.append({"id":row["id"],"title":override["title"] if override else ("Generated image" if row["operation"]=="generate_image" else "3D source" if row["operation"]=="generate" else "Mesh"),"job":row,"file":metadata})
+                kind="image" if row["operation"]=="generate_image" else "splat" if row["operation"]=="generate" else "mesh"
+                reference={'id':output,'kind':kind,'createdAt':row['createdAt']}
+                if resolve_files or download_files:metadata=self.resolve_file(reference)
+            assets.append({"id":row["id"],"title":override["title"] if override else ("Generated image" if row["operation"]=="generate_image" else "3D source" if row["operation"]=="generate" else "Mesh"),"job":row,"file":metadata,**({'fileRef':reference} if reference and metadata is None else {})})
         assets.extend({"id":a["id"],"title":a["title"],"file":a["file"]} for a in inputs.values())
         existing={asset["id"] for asset in assets}
         assets.extend({"id":u["id"],"title":u["title"],"kind":u["kind"],"uploadStatus":u["status"],"file":None}

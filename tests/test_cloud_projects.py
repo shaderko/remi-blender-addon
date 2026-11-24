@@ -102,7 +102,7 @@ class ResponsiveSyncTests(unittest.TestCase):
                 body=Path(path).read_bytes()
                 return {"id":str(uuid4()),"sha256":hashlib.sha256(body).hexdigest(),"bytes":len(body)}
             def attach(*args,**kwargs):state.attached.append((selected,args))
-            def file_path(metadata):
+            def file_path(metadata,**options):
                 state.started.set();state.release.wait(3)
                 raise CloudError("Download interrupted",retryable=True)
             bound.upload.side_effect=upload;bound.attach.side_effect=attach;bound.file.side_effect=file_path
@@ -147,14 +147,14 @@ class ResponsiveSyncTests(unittest.TestCase):
                 self.assertTrue(state.started.wait(2))
                 self.assertTrue(worker.ready)
                 self.assertIsNotNone(worker.watcher)
-                client.snapshot.assert_called_with(download_files=False)
+                client.snapshot.assert_called_with(download_files=False,resolve_files=False)
                 self.command(worker,"001","positions",cards={"remote":{"x":1,"y":2}})
                 self.wait_for(lambda:bool(state.patched))
                 self.command(worker,"002","switch",project=project)
                 self.wait_for(lambda:worker.selected==project and worker.ready)
                 self.assertFalse(state.release.is_set())
                 state.release.set()
-                self.wait_for(lambda:bool(worker.download_retry))
+                self.wait_for(lambda:any(r['state']=='retrying' for r in worker.downloads.records.values()))
                 self.assertTrue(worker.ready)
             finally:state.release.set();worker.close()
 

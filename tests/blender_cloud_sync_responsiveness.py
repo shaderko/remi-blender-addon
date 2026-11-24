@@ -44,9 +44,23 @@ with tempfile.TemporaryDirectory() as temporary:
     assert asset.state=="SYNCING" and asset.artifact==str(old)
     value["revision"]=5;sync.apply(bpy.context,value)
     assert asset.state=="SYNCING"
+    remote['download']={'state':'failed','error':'Connection interrupted'}
+    value['revision']=6;sync.apply(bpy.context,value)
+    assert asset.state=='ERROR' and 'retry' in asset.status
+    value['revision']=7;sync.apply(bpy.context,value)
+    assert asset.state=='ERROR', 'A failed new revision appeared ready using the old file'
+    remote['download']={'state':'queued'}
+    value['revision']=8;sync.apply(bpy.context,value)
+    assert asset.state=='SYNCING' and 'Queued' in asset.status
     new=root/"new.glb";new.write_bytes(b"new verified fixture");remote["path"]=str(new)
     value["revision"]=6;sync.apply(bpy.context,value)
     assert asset.state=="READY" and asset.artifact==str(new) and old.is_file()
+    # A cached file that arrives at the same path still clears a saved pending state.
+    asset.state='SYNCING';asset.settings['cloud']['download_pending']=True
+    asset.settings['cloud']['signature']='older cached revision'
+    stamp=new.stat();remote['pathStamp']=[stamp.st_mtime_ns,stamp.st_size]
+    sync.apply(bpy.context,value)
+    assert asset.state=='READY'
     # Local edits must still win over metadata and downloads of a remote change.
     new.write_bytes(b"my local edited mesh")
     stamp=new.stat();os.utime(new,ns=(stamp.st_atime_ns,stamp.st_mtime_ns+2_000_000_000))
@@ -78,4 +92,18 @@ with tempfile.TemporaryDirectory() as temporary:
     sync.asset_pending[pending.id]="local-upload"
     remote["uploadStatus"]="uploading";value["revision"]=3;sync.apply(bpy.context,value)
     assert pending.state=="READY" and pending.artifact==str(new)
+    # Generated file tickets are resolved by the download queue, not board loading.
+    board.catalog=Catalog();board.order=[];board.positions={};board.scales={}
+    sync=BoardSync(board);sync.scope='fixture'
+    reference={'id':str(uuid4()),'kind':'splat'}
+    remote={'id':'generated','title':'Generated source','file':None,'fileRef':reference,
+            'job':{'status':'succeeded','operation':'generate','progress':1,'inputFileIds':[]}}
+    value={'snapshot':{'assets':[remote],'cards':{},'inputs':[]},'revision':1}
+    sync.apply(bpy.context,value)
+    generated=board.catalog.assets['cloud-generated']
+    assert generated.state=='SYNCING' and generated.kind=='SPLAT'
+    value['stale']=True;sync.apply(bpy.context,value)
+    assert generated.state=='ERROR' and 'reconnect' in generated.status
+    value['stale']=False;sync.apply(bpy.context,value)
+    assert generated.state=='SYNCING'
 print("REMI_CLOUD_SYNC_RESPONSIVENESS_OK")

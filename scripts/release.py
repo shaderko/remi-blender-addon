@@ -396,7 +396,7 @@ def main():
             for pattern in ("test_platform_support.py", "test_model_download.py", "test_iris_setup.py",
                             "test_instant_meshes_adaptive.py", "test_surface_adaptive.py",
                             "test_surface_topology.py", "test_board_organization.py", "test_board_layers.py",
-                            "test_splat_worker_formats.py", "test_splat_projection.py", "test_cloud_auth.py", "test_cloud_generation.py", "test_cloud_projects.py", "test_codex_images.py", "test_idol_generation.py", "test_persistent_login.py"):
+                            "test_splat_worker_formats.py", "test_splat_projection.py", "test_cloud_auth.py", "test_cloud_generation.py", "test_cloud_projects.py", "test_cloud_downloads.py", "test_codex_images.py", "test_idol_generation.py", "test_persistent_login.py"):
                 run(sys.executable, "-m", "unittest", "discover", "-s", ROOT / "tests",
                     "-p", pattern)
             for test in TESTS:

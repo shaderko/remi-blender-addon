@@ -62,6 +62,10 @@ class Layout:
 try:
     state = bpy.context.window_manager.remi_cloud
     state.base_url = fixture.api
+    with patch.object(cloud.board_sync,'tick',side_effect=PermissionError(13,'Windows reader lock')):
+        assert cloud.tick()>0
+        assert 'could not update' in state.message
+    assert cloud.tick()>0, 'A transient local update error removed the Cloud timer'
     original_scene = (set(bpy.data.objects.keys()), set(bpy.data.workspaces.keys()))
     layout = Layout()
     with patch.object(canvas, "BOARD", SimpleNamespace()), patch.object(canvas, "board_area", return_value=bpy.context.area):

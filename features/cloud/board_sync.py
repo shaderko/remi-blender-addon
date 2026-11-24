@@ -61,6 +61,7 @@ class BoardSync:
         self.board=board;self.scope="";self.revision=0;self.applying=False
         self.last_positions={};self.pending={};self.asset_pending={};self.deleted_pending={}
         self.remote_ids=set();self.notice="";self.previous_connected=False
+        self.stale=False
 
     def switch(self,context,value):
         from ..board import canvas
@@ -178,18 +179,24 @@ class BoardSync:
         file_owners={a.get("file",{}).get("id"):key for key,a in incoming.items() if a.get("file")}
         for key,remote in incoming.items():
             file=remote.get("file");job=remote.get("job")
+            reference=file or remote.get('fileRef')
             local_id=aliases.get(key,"cloud-"+key);asset=board.catalog.assets.get(local_id)
             if asset and local_id in self.deleted_pending:continue
             if asset is None:
-                kind=(file or {}).get("kind") or remote.get("kind") or ("image" if job and job["operation"]=="generate_image" else "splat" if job and job["operation"]=="generate" else "mesh")
+                kind=(reference or {}).get("kind") or remote.get("kind") or ("image" if job and job["operation"]=="generate_image" else "splat" if job and job["operation"]=="generate" else "mesh")
                 asset=Asset(local_id,{"image":"IMAGE","splat":"SPLAT","mesh":"MESH"}[kind],title=remote["title"],operation="")
                 board.catalog.assets[local_id]=asset;aliases[key]=local_id
             meta=marker(asset)
             dirty=bool(meta.get("signature") and signature(asset) and signature(asset)!=meta["signature"])
             if meta.get("job") and not meta.get("file_id"):dirty=False
+            if meta.get('download_pending') and remote.get('path')==asset.artifact and remote.get('pathStamp'):
+                try:
+                    stamp=Path(asset.artifact).stat()
+                    if [stamp.st_mtime_ns,stamp.st_size]==remote['pathStamp']:dirty=False
+                except OSError:pass
             if not dirty and local_id not in self.asset_pending:
                 path=remote.get("path","")
-                waiting=asset.state=="SYNCING"
+                waiting=asset.state=="SYNCING" or meta.get('download_pending',False)
                 if path and path!=asset.artifact and (not file or meta.get("file_id")!=file["id"] or not signature(asset) or asset.state=="SYNCING"):
                     board.unload_preview(local_id);board.release_texture(local_id)
                     asset.artifact=path;asset.native_artifact=asset.package_artifact=asset.preview="";asset.preview_view=[]
@@ -199,18 +206,28 @@ class BoardSync:
                 asset.state={"succeeded":"READY","failed":"ERROR","canceled":"CANCELLED","queued":"QUEUED","running":"RUNNING"}.get(state,"RUNNING")
                 asset.status="Ready" if asset.state=="READY" else job.get("stage","Working") if job else "Ready"
                 asset.progress=float(job.get("progress",0)) if job else 1.0
-                if file and state=="succeeded" and not path and (
-                        not signature(asset) or meta.get("file_id")!=file["id"] or waiting):
+                if reference and state=="succeeded" and not path and (
+                        not signature(asset) or meta.get("file_id")!=reference["id"] or waiting):
                     asset.state="SYNCING"
-                    asset.status=remote.get("downloadError") or "Downloading shared asset…"
-                    asset.progress=0.0
+                    download=remote.get('download',{})
+                    phase=download.get('state')
+                    asset.status={'queued':'Queued for download…','downloading':'Downloading shared asset…',
+                                  'verifying':'Verifying download…','retrying':'Download interrupted; retrying…',
+                                  'failed':'Download failed. Right-click to retry.'}.get(phase) or remote.get('downloadError') or 'Queued for download…'
+                    asset.progress=min(.95,download.get('receivedBytes',0)/max(download.get('totalBytes',0),1))
+                    if phase=='failed':
+                        asset.state='ERROR';asset.status=download.get('error','Download failed.')+' Right-click to retry.'
+                    elif value.get('stale'):
+                        asset.state='ERROR';asset.status='Cloud sync stopped responding. Check the Cloud connection to reconnect.'
                 if remote.get("uploadStatus"):
                     asset.state="SYNCING" if remote["uploadStatus"]=="uploading" else "ERROR"
                     asset.status="Uploading on another device…" if asset.state=="SYNCING" else "Upload failed on the source device; its local file is kept."
                     asset.progress=0.0
                 if file:
                     asset.kind={"image":"IMAGE","mesh":"MESH","splat":"SPLAT"}[file["kind"]]
-                asset.settings["cloud"]={"scope":self.scope,"card_id":key,"file_id":file["id"] if file else None,"sha256":file["sha256"] if file else None,"input":bool(remote.get("uploadStatus")) or key in {i["id"] for i in snapshot.get("inputs",[])},"job":bool(job),"signature":signature(asset)}
+                asset.settings["cloud"]={"scope":self.scope,"card_id":key,"file_id":reference["id"] if reference else None,"sha256":file["sha256"] if file else None,"input":bool(remote.get("uploadStatus")) or key in {i["id"] for i in snapshot.get("inputs",[])},"job":bool(job),"signature":signature(asset),
+                                         'download_failed':bool(remote.get('download',{}).get('state')=='failed' or value.get('stale') and reference and not path)}
+                asset.settings['cloud']['download_pending']=bool(reference and not path and (waiting or asset.state in ('SYNCING','ERROR')))
             if local_id not in board.order:board.order.append(local_id)
         pending_positions={p["card_id"] for p in self.pending.values() if p["kind"]=="position"}
         for key,remote in incoming.items():
@@ -235,6 +252,7 @@ class BoardSync:
                     self.notice="A shared card was deleted while you had local edits. Your local file is kept.";continue
                 board.forget(asset.id);board.catalog.assets.pop(asset.id,None)
         self.revision=value["revision"]
+        self.stale=bool(value.get('stale'))
 
     def tick(self,context):
         value=current(context)
@@ -251,7 +269,7 @@ class BoardSync:
                 finally:self.applying=False
             return
         if not self.switch(context,value):return
-        if self.revision!=value.get("revision") and not self.board.navigating() and self.board.orbit_drag is None:
+        if (self.revision!=value.get("revision") or self.stale!=bool(value.get('stale'))) and not self.board.navigating() and self.board.orbit_drag is None:
             self.applying=True
             try:
                 self.apply(context,value)

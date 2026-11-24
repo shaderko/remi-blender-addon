@@ -12,6 +12,7 @@ import time
 import uuid
 
 from .protocol import DEFAULT_API, api_url
+from .sdk.atomic import write_json
 
 
 def bundled_python():
@@ -124,6 +125,7 @@ class CloudProcess:
             path=self.directory/"workspace.json"
             if path.stat().st_size>8*1024*1024:return {}
             value=json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(value,dict):value['stale']=time.time()-path.stat().st_mtime>60
             return value if isinstance(value,dict) else {}
         except (OSError,ValueError):return {}
 
@@ -136,8 +138,8 @@ class CloudProcess:
         root=Path(self.workspace_cache)/key/"outbox";root.mkdir(parents=True,exist_ok=True)
         command_id=f"{time.time_ns():020d}-{uuid.uuid4().hex}"
         value={**payload,"action":action,"base_url":base_url,"user_id":profile["user_id"],"id":command_id}
-        path=root/(command_id+".json");temporary=path.with_suffix(".partial")
-        temporary.write_text(json.dumps(value,allow_nan=False),encoding="utf-8");temporary.replace(path)
+        path=root/(command_id+".json")
+        write_json(path,value)
         return command_id
 
     def stop(self):

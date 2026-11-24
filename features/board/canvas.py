@@ -3663,6 +3663,8 @@ class REMI_BOARD_MT_image(Menu):
             op = layout.operator("remi_board.tool_action", text="Job Files", icon="FILE_FOLDER")
             op.action, op.asset_id = "logs", identifier
         if asset.state in {"ERROR", "INTERRUPTED"} or asset.status.startswith("Preview unavailable"):
+            if asset.settings.get('cloud',{}).get('download_failed'):
+                layout.operator('remi.cloud_retry_download',text='Retry Download',icon='FILE_REFRESH').asset_id=identifier
             op = layout.operator("remi_board.tool_action", text="Details", icon="INFO")
             op.action, op.asset_id = "details", identifier
         layout.separator()

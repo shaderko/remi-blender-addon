@@ -15,12 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from auth import AccessDenied, Connection, IMAGE_URL, request_json
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from integrations.credentials.vault import Vault
-
-
-def write_json(path, value):
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(value, allow_nan=False), encoding="utf-8")
-    temporary.replace(path)
+from integrations.remi_cloud.sdk.atomic import write_json
 
 
 def png_dimensions(data):
